@@ -294,37 +294,37 @@ ipcMain.handle('i18n:lang', (_e, newValue = null) => {
 	}
 	return serveIPC.l10n.currentLocale
 })
-ipcMain.handle('i18n:get', async (_, key) => {
+ipcMain.handle('i18n:get', async (_, key, version = 22) => {
 	switch (key) {
 		case 'app_name':
-			return serveIPC.l10n.getTextOverride(key, { prefix : '<i class="fsico-ma-large"></i>' })
+			return serveIPC.l10n.getTextOverride(key, 22, { prefix : '<i class="fsico-ma-large"></i>' })
 		case 'app_version' :
-			return serveIPC.l10n.getTextOverride(key, { newText : !app.isPackaged ? app.getVersion().toString() : '' })
+			return serveIPC.l10n.getTextOverride(key, 22, { newText : !app.isPackaged ? app.getVersion().toString() : '' })
 		case 'game_icon' :
-			return serveIPC.l10n.getTextOverride(key, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
+			return serveIPC.l10n.getTextOverride(key, 22, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
 		case 'game_icon_lg' :
-			return serveIPC.l10n.getTextOverride(key, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
+			return serveIPC.l10n.getTextOverride(key, 22, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
 		case 'clean_cache_size' : {
 			try {
 				const cacheSize = fs.statSync(path.join(app.getPath('userData'), 'mod_cache.json')).size/(1024*1024)
 				const iconSize  = fs.statSync(path.join(app.getPath('userData'), 'mod_icons.json')).size/(1024*1024)
-				return serveIPC.l10n.getTextOverride(key, { suffix : ` ${cacheSize.toFixed(2)}MB / ${iconSize.toFixed(2)}MB` })
+				return serveIPC.l10n.getTextOverride(key, 22, { suffix : ` ${cacheSize.toFixed(2)}MB / ${iconSize.toFixed(2)}MB` })
 			} catch {
-				return serveIPC.l10n.getTextOverride(key, { suffix : ' 0.00MB' })
+				return serveIPC.l10n.getTextOverride(key, 22, { suffix : ' 0.00MB' })
 			}
 		}
 		case 'clean_detail_cache_size' : {
 			try {
 				const cacheSize = fs.statSync(path.join(app.getPath('userData'), 'mod_detail_cache.json')).size/(1024*1024)
-				return serveIPC.l10n.getTextOverride(key, { suffix : ` ${cacheSize.toFixed(2)}MB` })
+				return serveIPC.l10n.getTextOverride(key, 22, { suffix : ` ${cacheSize.toFixed(2)}MB` })
 			} catch {
-				return serveIPC.l10n.getTextOverride(key, { suffix : ' 0.00MB' })
+				return serveIPC.l10n.getTextOverride(key, 22, { suffix : ' 0.00MB' })
 			}
 		}
 		case 'clear_malware_size' :
-			return serveIPC.l10n.getTextOverride(key, { newText : `[ ${serveIPC.storeSet.get('suppress_malware', []).join(', ')} ]` })
+			return serveIPC.l10n.getTextOverride(key, 22, { newText : `[ ${serveIPC.storeSet.get('suppress_malware', []).join(', ')} ]` })
 		default :
-			return serveIPC.l10n.getText(key)
+			return serveIPC.l10n.getText(key, version)
 	}
 })
 
@@ -340,6 +340,15 @@ ipcMain.handle('store:modColUUID', (_, fullUUID) => getStoreItems(fullUUID))
 
 
 // MARK: detail
+ipcMain.handle('detail:getMod', async (_, fullUUID) => {
+	const thisMod = await serveIPC.modCollect.detailMod(fullUUID)
+	if ( thisMod[0] === null ) { return null }
+	if ( thisMod[0].includeDetail === 2 ) {
+		return thisMod
+	}
+	return serveIPC.modCollect.getAndUpdateDetail(fullUUID)
+	// TODO : rescan just that mod.
+})
 ipcMain.on('dispatch:detail', (_, thisMod) => { openDetailWindow(thisMod) })
 
 function openDetailWindow(thisMod) {

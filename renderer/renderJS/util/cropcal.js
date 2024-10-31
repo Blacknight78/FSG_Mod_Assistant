@@ -125,7 +125,7 @@ async function clientMakeCropCalendar(theData, isSouth = false, weather = null) 
 						'crop-box',
 						`crop-row-${ evenRow ? 'even' : 'odd' }`,
 						`crop-col-${idx % 2 === 0 ? 'even' : 'odd'}`,
-						crop.plantPeriods.includes(idx) ? 'crop_plant' : ''
+						crop.plant_periods.includes(idx) ? 'crop_plant' : ''
 					]
 				))
 
@@ -134,7 +134,7 @@ async function clientMakeCropCalendar(theData, isSouth = false, weather = null) 
 						'crop-box',
 						`crop-row-${ evenRow ? 'even' : 'odd' }`,
 						`crop-col-${idx % 2 === 0 ? 'even' : 'odd'}`,
-						crop.harvestPeriods.includes(idx) ? 'crop_harvest' : ''
+						crop.harvest_periods.includes(idx) ? 'crop_harvest' : ''
 					]
 				))
 			}

@@ -38,7 +38,7 @@ const pageAPI = {
 		functions : {
 			getBinds   : ()    => ipcRenderer.invoke('collect:bindConflict'),
 			getMalware : ()    => ipcRenderer.invoke('collect:malware'),
-			getMod     : (key) => ipcRenderer.invoke('mod:modColUUID', key),
+			getMod     : (key) => ipcRenderer.invoke('detail:getMod', key),
 			getStore   : (key) => ipcRenderer.invoke('store:modColUUID', key),
 
 			sendBase    : (pageObject)   => ipcRenderer.send('dispatch:basegame', pageObject),
@@ -283,7 +283,7 @@ contextBridge.exposeInMainWorld(
 
 contextBridge.exposeInMainWorld(
 	'i18n', {
-		get  : (key)       => ipcRenderer.invoke('i18n:get', key),
+		get  : (key, ver)  => ipcRenderer.invoke('i18n:get', key, ver),
 		lang : (nv = null) => ipcRenderer.invoke('i18n:lang', nv),
 		list : ()          => ipcRenderer.invoke('i18n:langList'),
 

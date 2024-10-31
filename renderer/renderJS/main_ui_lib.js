@@ -16,6 +16,7 @@ class StateManager {
 
 	flag = {
 		activeCollect  : null,
+		currentLocale  : 'en',
 		currentVersion : 22,
 		debugMode      : false,
 		folderDirty    : false,
@@ -89,6 +90,7 @@ class StateManager {
 
 		this.track.lastPayload   = data
 		this.flag.activeCollect  = data.opts.activeCollection
+		this.flag.currentLocale  = data.opts.currentLocale
 		this.flag.currentVersion = data.appSettings.game_version
 		this.flag.debugMode      = data.opts.isDev
 		this.flag.folderDirty    = data.opts.foldersDirty
@@ -112,6 +114,14 @@ class StateManager {
 		this.mapCollectionDropdown = new Map()
 		this.mapCollectionDropdown.set(0, `--${data.opts.l10n.disable}--`)
 	}
+	doL10N(item) {
+		let returnText = item?.[this.track.currentLocale]
+		returnText ??= item?.en
+		returnText ??= item?.de
+		returnText ??= '--'
+		return DATA.escapeSpecial(returnText)
+	}
+
 	// MARK: process data
 	async updateFromData(data) {
 		this.#updateTracking(data)
@@ -160,7 +170,7 @@ class StateManager {
 
 					if ( thisModRec.filters.has('map') ) {
 						thisCol.mapList.push({
-							icon  : thisMod.modDesc.iconImageCache,
+							icon  : thisMod.modDesc.iconImage,
 							key   : thisMod.colUUID,
 							title : thisMod.fileDetail.shortName,
 						})
@@ -311,7 +321,7 @@ class StateManager {
 
 	// MARK: translated UI selects
 	async updateI18NDrops() {
-		const finds = ['find_all', 'find_author', 'find_title', 'find_name']
+		const finds = ['find_all', 'find_author', 'find_brand', 'find_cats', 'find_title', 'find_name']
 		const sorts = ['sort_name', 'sort_title', 'sort_author', 'sort_date', 'sort_version']
 
 		const findOptions = finds.map((x) =>
@@ -646,6 +656,9 @@ class StateManager {
 		btnNode.appendChild(this.#buttonMaker('check_save', 'primary', () => { window.main_IPC.dispatchSave(CKey) }))
 	}
 
+	#addExtraInfo(item) {
+		return item.length !== 0 ? DATA.escapeSpecial(item.join(', ')) : '--'
+	}
 	// MARK: addMod
 	async #addMod(thisMod, overBadges = null) {
 		const mod = {
@@ -654,9 +667,11 @@ class StateManager {
 			scroll  : document.createElement('scroller-item'),
 			search  : {
 				find_author  : DATA.escapeSpecial(thisMod.modDesc.author).toLowerCase(),
+				find_brand   : thisMod.has_brands.map((x) => x.toLowerCase()).join(' '),
+				find_cats    : thisMod.has_cats.map((x) => x.toLowerCase()).join(' '),
 				find_name    : thisMod.fileDetail.shortName.toLowerCase(),
-				find_title   : DATA.escapeSpecial(thisMod.l10n.title).toLowerCase(),
-				find_version : DATA.escapeSpecial(thisMod.modDesc.version).toLowerCase(),
+				find_title   : this.doL10N(thisMod.l10n.title).toLowerCase(),
+				find_version : this.doL10N(thisMod.modDesc.version).toLowerCase(),
 			},
 		}
 		mod.search.find_all = Object.values(mod.search).join(' ')
@@ -692,13 +707,15 @@ class StateManager {
 
 		mod.node.appendChild(DATA.templateEngine('item_mod', {
 			author     : DATA.escapeSpecial(thisMod.modDesc.author),
+			brands     : this.#addExtraInfo(thisMod.has_brands),
+			categories : this.#addExtraInfo(thisMod.has_cats),
 			fileDate   : thisMod.fileDetail.fileDate.slice(0, 10),
 			fileSize   : ( thisMod.fileDetail.fileSize > 0 ) ? await DATA.bytesToHR(thisMod.fileDetail.fileSize) : '',
 			fileTime   : thisMod.fileDetail.fileDate.slice(11, 16),
 			folderIcon : thisMod.badgeArray.includes('folder') ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
-			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImageCache)}">`,
+			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImage)}">`,
 			shortname  : thisMod.fileDetail.shortName,
-			title      : DATA.escapeSpecial(thisMod.l10n.title),
+			title      : this.doL10N(thisMod.l10n.title),
 			version    : DATA.escapeSpecial(thisMod.modDesc.version),
 		}))
 
@@ -2058,9 +2075,9 @@ class FileLib {
 	showMod_known(mod) {
 		return DATA.templateEngine('file_op_mod', {
 			folderIcon : mod.fileDetail.isFolder ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
-			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(mod.modDesc.iconImageCache)}">`,
+			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(mod.modDesc.iconImage)}">`,
 			shortname  : mod.fileDetail.shortName,
-			title      : DATA.escapeSpecial(mod.l10n.title),
+			title      : this.doL10N(mod.l10n.title),
 		})
 	}
 

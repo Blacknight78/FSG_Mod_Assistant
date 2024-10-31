@@ -32,7 +32,7 @@ function processVersions(modCollect) {
 
 			if ( thisMod.fileDetail.isFolder ) { continue }
 			modDisplayData[modName] ??= {
-				icon    : thisMod.modDesc.iconImageCache,
+				icon    : thisMod.modDesc.iconImage,
 				match   : true,
 				modhub  : modCollect.modHub.version?.[modCollect.modHub.list.mods?.[modName]] || null,
 				title   : DATA.escapeSpecial(thisMod.l10n.title),

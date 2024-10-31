@@ -5,7 +5,7 @@
    (c) 2022-present FSG Modding.  MIT License. */
 // MARK: STORE HELPER
 
-/* global client_BGData, I18N, DATA, locale, Chart, MA */
+/* global client_BGData, I18N, DATA, locale, Chart, MA, clientGetFillCat */
 
 const _f = (type, width = '2rem') => `<fillType style="font-size: ${width}" name="${type}"></fillType>`
 
@@ -208,19 +208,20 @@ const ST = {
 	getDataTypes : (type) => ( typeof ST.typeMap[type] !== 'undefined' ) ? ST.typeMap[type] : ST.typeMap.default,
 	getInfo : (thisItem) => {
 		const thisData = {
-			fillLevel  : NUM.default(thisItem.fillLevel),
-			hasPower   : NUM.default(thisItem?.specs?.power),
-			maxSpeed   : NUM.maxSpeed(thisItem?.specs?.maxspeed, thisItem?.motorInfo?.speed),
-			needPower  : NUM.default(thisItem?.specs?.neededpower),
-			price      : NUM.default(thisItem.price),
-			speedLimit : NUM.default(thisItem?.speedLimit),
-			weight     : NUM.default(thisItem.weight),
-			workWidth  : NUM.default(thisItem?.specs?.workingwidth, { float : true }),
+			fillLevel  : NUM.default(thisItem.fillSpray.fillLevel),
+			hasPower   : NUM.default(thisItem.specs?.specs?.power),
+			maxSpeed   : NUM.maxSpeed(thisItem.specs?.specs?.maxSpeed, thisItem?.motorInfo?.speed),
+			needPower  : NUM.default(thisItem.specs?.specs?.neededPower),
+			price      : NUM.default(thisItem.specs.price),
+			speedLimit : NUM.default(thisItem.specs?.specs?.speedLimit),
+			weight     : NUM.default(thisItem.specs.weight),
+			workWidth  : NUM.default(thisItem?.specs?.specs?.workingWidth, { float : true }),
 		}
+	
 		thisData.powerSpan = NUM.minMaxHP(thisData.hasPower, thisItem?.motorInfo)
 		
-		if ( typeof thisItem.sprayTypes !== 'undefined' && thisItem.sprayTypes !== null && thisItem?.sprayTypes?.length !== 0 && thisData.workWidth === 0 ) {
-			for ( const thisWidth of thisItem.sprayTypes ) {
+		if ( thisItem.fillSpray.sprayTypes.length !== 0 && thisData.workWidth === 0 ) {
+			for ( const thisWidth of thisItem.fillSpray.sprayTypes ) {
 				thisData.workWidth = Math.max(thisWidth.width, thisData.workWidth)
 			}
 		}
@@ -244,8 +245,8 @@ const ST = {
 			if ( typeof testIcon === 'string' ) {
 				if ( testIcon.startsWith('data:') ) { return testIcon }
 				if ( testIcon.startsWith('$data') ) {
-					const iconPointer = client_BGData.iconMap[testIcon.toLowerCase()]
-					const trueIcon    = client_BGData.records[iconPointer]?.icon
+					const iconPointer = testIcon.replace('.png', '.dds')
+					const trueIcon    = client_BGData.icons[iconPointer]
 					if ( typeof trueIcon === 'string' ) { return trueIcon }
 				}
 			}
@@ -273,8 +274,22 @@ const ST = {
 		const thisTypeMap = ST.typeIconMap[type]
 		return ST.markupDataRow(thisTypeMap[0], NUM.fmtType(thisTypeMap[1], value), extraLine)
 	},
+	markupFillsAll   : (fillArray, catArray, version = 22) => {
+		if (
+			(typeof fillArray !== 'object' || !Array.isArray(fillArray)) ||
+			(typeof catArray !== 'object' || !Array.isArray(catArray))
+		) { return [] }
+
+		const allFills = new Set(fillArray)
+
+		for ( const cat of catArray ) {
+			clientGetFillCat(cat, version).map((x) => allFills.add(x))
+		}
+
+		return [...allFills].map((x) => `<fillType name="${x}"></fillType>`)
+	},
 	markupFillTypes   : (fillArray) => {
-		if ( typeof fillArray !== 'object' || !Array.isArray(fillArray) ) { return [] }
+		if (typeof fillArray !== 'object' || !Array.isArray(fillArray)) { return [] }
 		return fillArray.map((x) => `<fillType name="${x}"></fillType>`)
 	},
 	markupFunctions   : ( functions ) => functions.map((x) => I18N.defer(x)).join('<br>'),
@@ -286,7 +301,7 @@ const ST = {
 		const jointHTML = []
 	
 		for ( const thisJoint of joints ) {
-			if ( ! client_BGData.joints_list.includes(thisJoint) ) {
+			if ( ! client_BGData.jointList.includes(thisJoint) ) {
 				hasCustom = true
 				continue
 			}

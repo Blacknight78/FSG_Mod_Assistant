@@ -85,7 +85,7 @@ class windowState {
 						this.fullList_data[mod.fileDetail.shortName] ??= {
 							author    : DATA.escapeSpecial(mod.modDesc.author),
 							collect   : [],
-							icon      : mod.modDesc.iconImageCache,
+							icon      : mod.modDesc.iconImage,
 							id        : mod.colUUID,
 							name      : mod.fileDetail.shortName,
 							search    : [

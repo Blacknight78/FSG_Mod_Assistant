@@ -5,29 +5,28 @@
    (c) 2022-present FSG Modding.  MIT License. */
 // MARK: DETAIL UI
 /* eslint complexity: ["error", 25] */
-/* global DATA, MA, ST, NUM, I18N, ft_doReplace, clientGetKeyMapSimple, clientGetKeyMap, clientMakeCropCalendar, client_BGData */
+/* global DATA, MA, I18N, ft_doReplace, client_BuilderPlace, clientGetKeyMapSimple, clientGetKeyMap, clientMakeCropCalendar, client_BuilderVehicle */
 
-let modName = ''
-let lookItemData = {}
-let lookItemMap  = {}
-let comboItemMap = {}
-let i18nUnits    = null
+
+window.lookItemMap  = {}
 let locale       = 'en'
 
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
-	lookItemData = {}
-	lookItemMap  = {}
-	comboItemMap = {}
+	window.lookItemMap  = {}
 
 	const urlParams = new URLSearchParams(window.location.search)
 	const modColUUID = urlParams.get('mod')
 
-	window.detail_IPC.getMod(modColUUID).then(async (thisMod) => {
-		modName   = thisMod.fileDetail.shortName
+	window.detail_IPC.getMod(modColUUID).then(async (thisResponse) => {
+		console.log(thisResponse)
+		const thisMod = thisResponse[0]
+		const storeInfo = thisResponse[1]
 
 		locale    = await window.i18n.lang()
-		i18nUnits = await window.settings.units()
+		const i18nUnits = await window.settings.units()
+
+		I18N.local_entries = storeInfo.l10n[locale] || storeInfo.l10n.en || {}
 
 		const basicPromises = [
 			step_table(thisMod),
@@ -37,43 +36,49 @@ window.addEventListener('DOMContentLoaded', () => {
 			step_crops(thisMod),
 		]
 
+		if ( thisMod.modDesc.mapImage !== null ) {
+			MA.byId('map_image_div').clsShow()
+			MA.byId('map_image').src = thisMod.modDesc.mapImage
+		}
+
 		try {
-			const storeInfo = await window.detail_IPC.getStore(modColUUID)
-
-			const storePromises = [
-				step_mapImage(storeInfo.mapImage),
-			]
-
 			MA.byIdHTML('storeitems', '')
 
-			MA.byId('store_div').clsShow(Object.keys(storeInfo.items).length !== 0)
+			MA.byId('store_div').clsShow(Object.keys(storeInfo.vehicles).length !== 0 || Object.keys(storeInfo.placeables).length !== 0)
 
-			for ( const [storeItemFile, thisItem] of Object.entries(storeInfo.items) ) {
-				if ( thisItem.masterType === 'vehicle' ) {
-					const thisUUID = crypto.randomUUID()
-					const combos   = subStep_combos(thisItem?.specs?.combination, storeInfo, thisUUID)
-					storePromises.push(subStep_vehicle(
-						thisUUID,
-						storeItemFile,
-						thisItem,
-						storeInfo.icons[storeItemFile],
-						storeInfo.brands,
-						combos
-					))
-				} else if ( thisItem.masterType === 'placeable' ) {
-					storePromises.push(subStep_placeable(
-						thisItem,
-						storeInfo.icons[storeItemFile]
-					))
-				}
+			for ( const storeItemFile of Object.keys(storeInfo.vehicles).sort() ) {
+				const thisItem    = storeInfo.vehicles[storeItemFile]
+				const thisVehicle = new client_BuilderVehicle(
+					storeItemFile,
+					thisItem,
+					thisMod.fileDetail.shortName,
+					locale,
+					thisMod.gameVersion,
+					storeInfo.brands
+				)
+
+				thisVehicle.populateCombos(storeInfo)
+
+				window.lookItemMap[thisVehicle.lookItemMap[0]] = thisVehicle.lookItemMap[1]
+
+				MA.byIdAppend('storeitems', thisVehicle.HTML)
+				thisVehicle.doCharts(i18nUnits)
 			}
 
-			basicPromises.push(...storePromises)
+			for ( const storeItemFile of Object.keys(storeInfo.placeables).sort() ) {
+				const thisItem  = storeInfo.placeables[storeItemFile]
+				const thisPlace = new client_BuilderPlace(
+					thisItem,
+					locale,
+					thisMod.gameVersion
+				)
+				MA.byIdAppend('storeitems', thisPlace.HTML)
+			}
 		} finally {
 			Promise.allSettled(basicPromises).then((results) => {
 				for ( const thisResult of results ) {
 					if ( thisResult.status === 'rejected' ) {
-						window.log.log('Issue with page build', thisResult.reason.toString())
+						window.log.log('Issue with page build', thisResult.reason.toString(), thisResult.reason?.stack)
 					}
 				}
 				ft_doReplace()
@@ -89,12 +94,6 @@ window.addEventListener('DOMContentLoaded', () => {
 	}
 })
 
-// MARK: mapImage
-async function step_mapImage(mapImage) {
-	if ( mapImage === null || typeof mapImage !== 'string') { return }
-	MA.byId('map_image_div').clsShow()
-	MA.byId('map_image').src = mapImage
-}
 
 // MARK: crops
 async function step_crops(thisMod) {
@@ -175,6 +174,15 @@ async function step_keyBinds(thisMod) {
 	
 }
 
+
+function doL10N(item) {
+	let returnText = item?.[locale]
+	returnText ??= item?.en
+	returnText ??= item?.de
+	returnText ??= '--'
+	return DATA.escapeSpecial(returnText)
+}
+
 // MARK: table (top)
 async function step_table(thisMod) {
 	const joinedArrays = {
@@ -191,8 +199,10 @@ async function step_table(thisMod) {
 		})
 	}
 
+	const tempTitle = doL10N(thisMod.l10n.title)
+
 	const idMap = {
-		description    : DATA.escapeDesc(thisMod.l10n.description),
+		description    : doL10N(thisMod.l10n.description),
 		file_date      : (new Date(Date.parse(thisMod.fileDetail.fileDate))).toLocaleString(locale, {timeZoneName : 'short'}),
 		filesize       : await DATA.bytesToHR(thisMod.fileDetail.fileSize),
 		has_scripts    : DATA.checkX(thisMod.modDesc.scriptFiles),
@@ -204,7 +214,7 @@ async function step_table(thisMod) {
 		mod_author     : DATA.escapeSpecial(thisMod.modDesc.author),
 		mod_location   : thisMod.fileDetail.fullPath,
 		store_items    : DATA.checkX(thisMod.modDesc.storeItems),
-		title          : (( thisMod.l10n.title !== null && thisMod.l10n.title !== '--' ) ? DATA.escapeSpecial(thisMod.l10n.title) : thisMod.fileDetail.shortName),
+		title          : (( tempTitle !== '--' ) ? tempTitle : thisMod.fileDetail.shortName),
 		version        : DATA.escapeSpecial(thisMod.modDesc.version),
 	}
 	for ( const [id, content] of Object.entries(idMap)) {
@@ -215,8 +225,8 @@ async function step_table(thisMod) {
 
 	MA.byIdHTMLorHide(
 		'icon_div',
-		`<img class="img-fluid" src="${thisMod.modDesc.iconImageCache}" />`,
-		thisMod.modDesc.iconImageCache
+		`<img class="img-fluid" src="${thisMod.modDesc.iconImage}" />`,
+		thisMod.modDesc.iconImage
 	)
 }
 
@@ -252,209 +262,7 @@ async function subStep_binds(bindingIssue) {
 	return problemPromises
 }
 
-// MARK: SUB combos
-function subStep_combos (combos, lookRecord, parentItem) {
-	if ( typeof combos === 'undefined' || combos === null || combos.length === 0 ) { return null }
 
-	const comboKeyList = new Set()
-	const comboNodes   = []
-
-	for ( const thisCombo of combos ) {
-		if ( thisCombo === null ) { continue }
-
-		const thisComboIsBase = thisCombo.startsWith('$data')
-		const thisComboKey    = thisComboIsBase ? thisCombo.replaceAll('$data/', '').replaceAll('/', '_').replaceAll('.xml', '') : thisCombo
-
-		if ( thisComboKey !== null ) {
-			const thisItem = thisComboIsBase ? client_BGData.records[thisComboKey] : lookRecord.items[thisComboKey]
-
-			if ( typeof thisItem === 'undefined' ) { continue }
-
-			const thisIcon = ST.resolveIcon(
-				thisItem.icon,
-				lookRecord?.icons?.[thisComboKey]
-			)
-
-			comboKeyList.add({
-				contents : thisComboIsBase ? null : thisItem,
-				internal : thisComboIsBase,
-				key      : thisComboKey,
-				source   : thisComboIsBase ? null : modName,
-			})
-
-			const thisItemData = ST.getInfo(thisItem)
-			const brandImgSRC  = ST.resolveBrand(lookRecord.brands?.[thisItem.brand]?.icon, thisItem.brand)
-
-			const thisNode = DATA.templateEngine('combo_div_source', {
-				brandImage : `<img src="${brandImgSRC}" class="img-fluid store-brand-image">`,
-				iconImage  : `<img src="${thisIcon}" class="img-fluid store-icon-image">`,
-
-				category       : I18N.defer(thisItem.category),
-				clickPage      : thisComboKey,
-				clickSource    : thisComboIsBase ? 'base' : 'internal',
-				clickType      : 'item',
-				fullName       : I18N.defer(thisItem.name),
-				
-				compareTerms   : [
-					ST.markupDataType('price', thisItemData.price),
-					ST.markupDataType('workWidth', thisItemData.workWidth),
-				].join(''),
-			}, {}, {
-				'.comboCompareButton' : MA.showTest(thisItem.masterType === 'vehicle'),
-			})
-
-			DATA.eventEngine(thisNode, '.comboItemClicker', comboItemClicker)
-			DATA.eventEngine(thisNode, '.comboItemAddClicker', comboAddSingle)
-			
-			comboNodes.push(thisNode)
-		}
-	}
-	comboItemMap[parentItem] = [...comboKeyList]
-	return comboNodes
-}
-
-// MARK: SUB vehicles
-async function subStep_vehicle(thisUUID, thisFile, thisItem, thisIcon, brands, combos) {
-	lookItemMap[thisFile] = thisUUID
-	lookItemData[thisUUID] = thisItem
-	lookItemData[thisUUID].icon = ST.resolveIcon(thisIcon, thisItem.icon)
-	lookItemData[thisUUID].brandIcon = ST.resolveBrand(brands?.[thisItem.brand]?.icon, thisItem.brand)
-	lookItemData[thisUUID].uuid_name = thisFile
-
-	const thisItemData = ST.getInfo(thisItem)
-	const fillImages   = ST.markupFillTypes(thisItem.fillTypes)
-	const sprayTypes   = ST.markupSprayTypes(thisItem?.sprayTypes, thisItemData.workWidth)
-	const chartHTML    = MA.showTestValueBool(thisItem.motorInfo) ? ST.markupChart(thisUUID) : ''
-
-	const thisItemDataHTML = ST.typeDataOrder.map((x) => ST.markupDataType(x, thisItemData[x]))
-	
-	for ( const testItem of ST.vehTestTypes ) {
-		if ( MA.showTestValueBool(thisItem[testItem[0]], testItem[1]) ) {
-			thisItemDataHTML.push(ST.markupDataRow(
-				testItem[2],
-				testItem[3] === false ?
-					thisItem[testItem[0]] :
-					I18N.defer(testItem[3], false)
-			))
-		}
-	}
-
-	if ( sprayTypes !== null ) {
-		thisItemDataHTML.push(ST.markupDataRowTrue(
-			'look-width',
-			sprayTypes
-		))
-	} else {
-		thisItemDataHTML.push(ST.markupDataType(
-			'workWidth',
-			thisItemData.workWidth
-		))
-	}
-
-	thisItemDataHTML.push(
-		ST.markupDataType(
-			'fillLevel',
-			thisItemData.fillLevel,
-			fillImages.length !== 0 ? fillImages.join('') : null
-		),
-		ST.markupDataRowTrue(
-			'cat-attach-has',
-			MA.showTestValueBool(thisItem?.joints?.canUse) ? I18N.defer('basegame_attach_has', false) : null,
-			ST.markupJoints(thisItem?.joints?.canUse, true, false)
-		),
-		ST.markupDataRowTrue(
-			'cat-attach-need',
-			MA.showTestValueBool(thisItem?.joints?.needs) ? I18N.defer('basegame_attach_need', false) : null,
-			ST.markupJoints(thisItem?.joints?.needs, false, false)
-		)
-	)
-	const infoDivNode = DATA.templateEngine('vehicle_info_div', {
-		brandImage : `<img src="${lookItemData[thisUUID].brandIcon}" class="img-fluid store-brand-image">`,
-		iconImage  : `<img src="${lookItemData[thisUUID].icon}" class="img-fluid store-icon-image">`,
-
-		category  : I18N.defer(thisItem.category),
-		functions : ST.markupFunctions(thisItem.functions),
-		itemName  : I18N.defer(thisItem.name),
-		itemTitle : thisItem.type,
-		typeDesc  : I18N.defer(thisItem.typeDesc),
-
-		chartData : chartHTML,
-		itemData  : thisItemDataHTML.join(''),
-	}, {
-		'vehicle-info-parent' : thisUUID,
-	}, {
-		'.combo-list' : MA.showTest(thisItem?.specs?.combination),
-	})
-
-	if ( combos !== null ) {
-		infoDivNode.querySelector('.combo_count').textContent = combos.length
-		const comboParent = infoDivNode.querySelector('.combo-item-list')
-		for ( const thisCombo of combos ) {
-			comboParent.appendChild(thisCombo)
-		}
-		const showHide = infoDivNode.querySelector('.inset-block-combo-show-hide')
-		showHide.addEventListener('click', () => {
-			const isShow      = showHide.querySelector('.section_hide').classList.contains('d-none')
-			comboParent.clsShow(isShow)
-			showHide.children[0].clsShow(!isShow)
-			showHide.children[1].clsShow(isShow)
-		})
-	}
-	
-	DATA.eventEngine(infoDivNode, '.action-compare-all-combo', comboAddAll)
-	DATA.eventEngine(infoDivNode, '.action-item-compare', singleAdd)
-	DATA.eventEngine(infoDivNode, '.attach_has, .attach_need', attachClicker)
-
-	MA.byIdAppend('storeitems', infoDivNode)
-
-	if ( MA.showTestValueBool(thisItem.motorInfo) ) {
-		ST.markupChartScripts(thisItem, thisUUID, i18nUnits)()
-	}
-}
-
-// MARK: sub PLACEABLE
-async function subStep_placeable(thisItem, thisIcon) {
-	const fillImages       = ST.markupFillTypes(thisItem.silo.types)
-	const thisItemIcon     = ST.resolveIcon(thisIcon, thisItem.icon)
-	const thisItemDataHTML = []
-
-	thisItemDataHTML.push(
-		ST.markupDataType('price', NUM.default(thisItem.price)),
-		ST.markupDataType('income', NUM.default(thisItem.incomePerHour)),
-		ST.markupDataType('objects', NUM.default(thisItem.objectStorage)),
-		ST.markupDataType(
-			'fillLevel',
-			NUM.default(thisItem?.silo?.capacity),
-			fillImages.length !== 0 ? fillImages.join('') : null
-		),
-		ST.markupDataType('bees', NUM.default(thisItem.beehive.radius))
-	)
-	
-	for ( const husbandType of ST.husbandTestTypes ) {
-		if ( MA.showTestValueBool(thisItem.husbandry.type, husbandType) ) {
-			thisItemDataHTML.push(ST.markupDataRow(`fill-${husbandType.toLowerCase()}`, thisItem.husbandry.capacity))
-		}
-	}
-	
-	const infoDivNode = DATA.templateEngine('place_div', {
-		category  : I18N.defer(thisItem.category),
-		functions : ST.markupFunctions(thisItem.functions),
-		iconImage : `<img src="${thisItemIcon}" class="img-fluid store-icon-image">`,
-		itemName  : I18N.defer(thisItem.name),
-		itemTitle : thisItem.type,
-		placeData : thisItemDataHTML.join(''),
-	})
-
-	if ( MA.showTestValueBool(thisItem?.productions) ) {
-		const prodLines = ST.markupProductions(thisItem?.productions)
-		const parentElement = infoDivNode.querySelector('.prodLines')
-		for ( const element of prodLines ) {
-			parentElement.appendChild(element)
-		}
-	}
-
-	MA.byIdAppend('storeitems', infoDivNode)
-}
 
 // MARK: CLICKERS
 function showHideClicker(e) {
@@ -465,75 +273,4 @@ function showHideClicker(e) {
 	section.clsShow(isShow)
 	buttonGroup.children[0].clsShow(!isShow)
 	buttonGroup.children[1].clsShow(isShow)
-}
-
-
-function itemGetInfo(target) {
-	const thisItemDIV = target.closest('.vehicleInfoBlock')
-	return thisItemDIV.id
-}
-
-function comboGetInfo(target) {
-	const thisItemDIV = target.closest('.comboItemEntry')
-	const theseVars = thisItemDIV.querySelector('.comboItemInfo').querySelectorAll('template-var')
-	const returnObj = {
-		source : null,
-		type   : null,
-		page   : null,
-	}
-	for ( const element of theseVars ) {
-		if ( element.safeAttribute('data-name') === 'clickSource' ) { returnObj.source = element.textContent }
-		if ( element.safeAttribute('data-name') === 'clickPage' ) { returnObj.page = element.textContent }
-		if ( element.safeAttribute('data-name') === 'clickType' ) { returnObj.type = element.textContent }
-	}
-	return returnObj
-}
-
-function singleAdd(e) {
-	const itemID = itemGetInfo(e.target)
-	const compareObj = {
-		contents : lookItemData[itemID],
-		internal : false,
-		key      : lookItemData[itemID].uuid_name,
-		source   : modName,
-	}
-	window.detail_IPC.sendCompare([compareObj])
-}
-
-function comboAddAll(e) {
-	const compareObjArray = comboItemMap[itemGetInfo(e.target)]
-	window.detail_IPC.sendCompare(compareObjArray)
-}
-
-function comboAddSingle(e) {
-	const { source, page } = comboGetInfo(e.target)
-	const compareObj = {
-		contents : null,
-		internal : source !== 'internal',
-		key      : page,
-		source   : source === 'internal' ? modName : null,
-	}
-	if ( source === 'internal' ) {
-		compareObj.contents = lookItemData[lookItemMap[page]]
-	}
-	window.detail_IPC.sendCompare([compareObj])
-}
-
-function comboItemClicker(e) {
-	const { source, type, page } = comboGetInfo(e.target)
-	if ( source === 'internal' ) {
-		location.hash = lookItemMap[page]
-	} else {
-		window.detail_IPC.sendBase({ type : type, page : page })
-	}
-}
-
-function attachClicker(e) {
-	const realTarget = e.target.closest('.badge')
-	if ( realTarget.classList.contains('custom') ) { return }
-	const openObject = {
-		type  : realTarget.classList.contains('attach_need') ? 'attach_need' : 'attach_has',
-		page : realTarget.safeAttribute('data-jointpage'),
-	}
-	window.detail_IPC.sendBase(openObject)
 }
