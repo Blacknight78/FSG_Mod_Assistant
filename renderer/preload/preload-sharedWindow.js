@@ -13,9 +13,10 @@ const pageName = window.location.pathname.split('/').pop().replace('.html', '').
 const pageAPI = {
 	'basegame' : {
 		functions : {
-			context     : ()         => ipcRenderer.send('context:cutCopyPaste'),
-			openFolder  : (folder)   => ipcRenderer.send('basegame:folder', folder),
-			sendCompare : (aCompare) => ipcRenderer.send('dispatch:compare', aCompare),
+			context     : ()             => ipcRenderer.send('context:cutCopyPaste'),
+			openFolder  : (folder)       => ipcRenderer.send('basegame:folder', folder),
+			sendBase    : (pageObject)   => ipcRenderer.send('dispatch:basegame', pageObject),
+			sendCompare : (compareArray) => ipcRenderer.send('dispatch:compare', compareArray),
 		},
 		validAsync : new Set(['basegame:setPage']),
 	},
@@ -39,7 +40,6 @@ const pageAPI = {
 			getBinds   : ()    => ipcRenderer.invoke('collect:bindConflict'),
 			getMalware : ()    => ipcRenderer.invoke('collect:malware'),
 			getMod     : (key) => ipcRenderer.invoke('detail:getMod', key),
-			getStore   : (key) => ipcRenderer.invoke('store:modColUUID', key),
 
 			sendBase    : (pageObject)   => ipcRenderer.send('dispatch:basegame', pageObject),
 			sendCompare : (compareArray) => ipcRenderer.send('dispatch:compare', compareArray),

@@ -382,7 +382,10 @@ async function getStoreItems(fullUUID) {
 
 
 // MARK: compare
-ipcMain.on('dispatch:compare', (_, compareArray) => openCompareWindow(compareArray))
+ipcMain.on('dispatch:compare', (_, compareArray) => {
+	const compareSet = new Set(compareArray)
+	openCompareWindow([...compareSet])
+})
 ipcMain.handle('compare:get', () => Object.fromEntries(serveIPC.compareMap))
 ipcMain.handle('compare:clear', () => {
 	serveIPC.compareMap.clear()

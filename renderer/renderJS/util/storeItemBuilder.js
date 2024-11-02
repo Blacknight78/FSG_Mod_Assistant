@@ -157,6 +157,14 @@ class Util {
 		return `<span class="me-1">${Intl.NumberFormat(this.#locale, { maximumFractionDigits : 0 }).format(value * multiplier)}</span>`
 	}
 
+	num_format_single(value, unit, {dash_zeros = true} = {}) {
+		if ( typeof value === 'undefined' || value === null ) { return dash_zeros ? '--' : '' }
+
+		if ( dash_zeros && value === 0 ) { return '--' }
+
+		const thisNumber = value * unit.factor
+		return `${Intl.NumberFormat(this.#locale, { maximumFractionDigits : unit.precision }).format(thisNumber)} ${I18N.defer(unit.unit, false)}`
+	}
 	num_format(values, formatType, {dash_zeros = false, sep_range = ' - ', sep_sequence = ', ', sep_units = ' / '} = {}) {
 		if ( typeof values === 'undefined' || values === null ) { return '' }
 
@@ -270,6 +278,7 @@ class client_BuilderVehicle {
 	#item     = null
 	#filename = null
 	#version  = 22
+	#locale   = 'en'
 	#brands   = {}
 	#uuid     = null
 	#modName  = null
@@ -288,6 +297,7 @@ class client_BuilderVehicle {
 	
 	constructor(fileName, item, modName, locale = 'en', gameVersion = 22, extraBrands = {}) {
 		this.#util     = new Util(locale)
+		this.#locale   = locale
 		this.#uuid     = crypto.randomUUID()
 		this.#item     = item
 		this.#filename = fileName
@@ -306,15 +316,13 @@ class client_BuilderVehicle {
 	}
 
 	get comboData() {
-		return [
-			this.#uuid,
-			{
-				...this.#item,
-				brandIcon : this.#brand,
-				icon      : this.#icon,
-				uuid_name : this.#filename,
-			}
-		]
+		return {
+			...this.data,
+			brand_icon : this.#brand,
+			file_name  : this.#filename,
+			icon       : this.#icon,
+			name       : this.name,
+		}
 	}
 
 	get cleanParentID() {
@@ -333,7 +341,9 @@ class client_BuilderVehicle {
 	get name() { return I18N.unwrap_base(this.#item.sorting.name, this.#version) }
 
 	doIcons() {
-		if ( typeof this.#item.dlcKey !== 'undefined' && this.#item.dlcKey !== null ) {
+		if ( this.#item.iconOrig === '$data/store/store_empty.png' ) {
+			this.#icon = icons.item([])
+		} else if ( typeof this.#item.dlcKey !== 'undefined' && this.#item.dlcKey !== null ) {
 			const iconPointer = this.#item.iconOrig.replace('.png', '.dds')
 			const trueIcon    = client_BGData.icons[iconPointer]
 			if ( typeof trueIcon === 'string' ) { this.#icon = trueIcon }
@@ -471,19 +481,22 @@ class client_BuilderVehicle {
 				type  : realTarget.classList.contains('attach_need') ? 'attach_need' : 'attach_has',
 				page  : realTarget.safeAttribute('data-jointpage'),
 			}
-			window.detail_IPC.sendBase(openObject)
+			window.detail_IPC?.sendBase?.(openObject)
+			window.basegame_IPC?.sendBase?.(openObject)
 		},
 		single : () => {
 			const compareObj = {
 				contents : this.comboData,
-				internal : false,
+				internal : this.#filename === null,
 				key      : this.#uuid,
 				source   : this.#modName,
 			}
-			window.detail_IPC.sendCompare([compareObj])
+			window.detail_IPC?.sendCompare?.([compareObj])
+			window.basegame_IPC?.sendCompare?.([compareObj])
 		},
 		all_combo : () => {
-			window.detail_IPC.sendCompare(this.comboKeyList)
+			window.detail_IPC?.sendCompare?.([...this.comboKeyList])
+			window.basegame_IPC?.sendCompare?.([...this.comboKeyList])
 		},
 
 	}
@@ -800,37 +813,37 @@ class client_BuilderVehicle {
 	
 				if ( typeof thisItem === 'undefined' ) { continue }
 	
-				const thisIcon = icons.item(
-					thisItem.iconFile,
-					thisItem.iconBase
+				const thisItemParsed = new client_BuilderVehicle(
+				 	thisComboIsBase ? null : thisComboKey,
+					thisItem,
+					thisComboIsBase ? null : this.#modName,
+					this.#locale,
+					this.#version
 				)
-	
+
 				this.comboKeyList.add({
-					contents : thisComboIsBase ? null : thisItem,
+					contents : thisItemParsed.comboData,
 					internal : thisComboIsBase,
 					key      : thisComboKey,
 					source   : thisComboIsBase ? null : this.#modName,
 				})
-	
-				const thisItemData = this.#combo_specs(thisItem)
-				const brandImgSRC  = icons.brand(this.#brands[this.#item.sorting.brand], this.#item.sorting.brand)
 
 				const thisNode = document.createElement('div')
 
 				thisNode.innerHTML = [
 					'<div class="row border-bottom mb-2 comboItemEntry">',
 					'<div class="text-center col-2 py-2 mt-0 pt-0 comboItemClicker">',
-					`<div class="store-icon-image"><img src="${thisIcon}" class="img-fluid store-icon-image"></div>`,
-					`<div class="store-icon-brand"><img src="${brandImgSRC}" class="img-fluid store-brand-image"></div>`,
+					`<div class="store-icon-image"><img src="${thisItemParsed.icon}" class="img-fluid store-icon-image"></div>`,
+					`<div class="store-icon-brand"><img src="${thisItemParsed.brand}" class="img-fluid store-brand-image"></div>`,
 					'</div>',
 					'<div class="col-5 align-self-center text-center comboItemClicker">',
-					I18N.unwrap_base(thisItem.sorting.name, this.#version),
+					thisItemParsed.name,
 					'<br><em>',
 					I18N.unwrap_base(thisItem.sorting.category, this.#version),
 					'</em></div>',
 					'<div class="col-4 align-self-center comboItemClicker">',
-					this.#util.markup_data_ifTrue('price', thisItemData.price),
-					this.#util.markup_data_ifTrue('workWidth', thisItemData.workWidth),
+					this.#util.markup_data_ifTrue('price', thisItemParsed.data.price),
+					this.#util.markup_data_ifTrue('workWidth', thisItemParsed.data.workWidth),
 					'</div>',
 					`<div class="text-center col-1 align-self-center comboCompareButton ${thisItem.masterType === 'vehicle' ? '' : 'd-none'}">`,
 					'<i18n-text type="button" class="btn btn-warning btn-vsm float-end mt-2 comboItemAddClicker" style="margin-left: -25px; margin-right:5px;" data-key="basegame_button_comp"></i18n-text>',
@@ -840,39 +853,27 @@ class client_BuilderVehicle {
 	
 				DATA.eventEngine(thisNode, '.comboItemClicker', () => {
 					if ( thisComboIsBase ) {
-						window.detail_IPC.sendBase({ type : 'item', page : thisComboKey })
+						window.detail_IPC?.sendBase?.({ type : 'item', page : thisComboKey })
+						window.basegame_IPC?.sendBase?.({ type : 'item', page : thisComboKey })
 					} else {
 						location.hash = window.lookItemMap[thisComboKey]
 					}
 				})
 				DATA.eventEngine(thisNode, '.comboItemAddClicker', () => {
 					const compareObj = {
-						contents : thisComboIsBase ? null : thisItem,
-						internal : !thisComboIsBase,
+						contents : thisItemParsed.comboData,
+						internal : thisComboIsBase,
 						key      : thisComboKey,
 						source   : thisComboIsBase ? null : this.#modName,
 					}
-					window.detail_IPC.sendCompare([compareObj])
+					window.detail_IPC?.sendCompare?.([compareObj])
+					window.basegame_IPC?.sendCompare?.([compareObj])
 				})
 				
 				this.#combos.push(thisNode)
 			}
 		}
 		
-	}
-
-	#combo_specs(item) {
-		const specs = {
-			price : this.#util.num_default(item.specs.price),
-			workWidth : this.#util.num_default(item.specs.specs?.workingWidth, { float : true }),
-		}
-
-		if ( item.fillSpray.sprayTypes.length !== 0 && specs.workWidth === 0 ) {
-			for ( const thisWidth of item.fillSpray.sprayTypes ) {
-				specs.workWidth = Math.max(thisWidth.width, specs.workWidth)
-			}
-		}
-		return specs
 	}
 }
 

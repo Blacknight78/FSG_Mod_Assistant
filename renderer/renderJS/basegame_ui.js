@@ -61,10 +61,6 @@ const selectFills = [
 	{ filltype : 'woodchips', l10n : '$l10n_fillType_woodChips' },
 ]
 
-const comboKeyList = new Set()
-
-
-
 // MARK: CAT LISTS
 function getTopCat(cat) {
 	switch ( cat ) {
@@ -165,7 +161,7 @@ function buildItem(itemID, noBrand = false) {
 	const thisItem       = client_BGData[itemType][itemID]
 	const thisItemParsed = itemType === 'vehicles' ?
 		new client_BuilderVehicle(
-			itemID,
+			null,
 			thisItem,
 			null,
 			locale,
@@ -176,14 +172,13 @@ function buildItem(itemID, noBrand = false) {
 			locale,
 			version
 		)
-
 	let   dataItems        = null
 	const attemptKey       = thisItemParsed.cleanParentID
 
 	if ( attemptKey !== null ) {
 		const attemptItem = client_BGData[itemType][attemptKey]
 		const attemptItemParsed = new client_BuilderVehicle(
-			attemptKey,
+			null,
 			attemptItem,
 			null,
 			locale,
@@ -219,9 +214,11 @@ function buildItem(itemID, noBrand = false) {
 function buildSearchTree () {
 	searchTree = {}
 
-	for ( const [thisItemKey, thisItem] of Object.entries(client_BGData.records) ) {
-		const brandString = (thisItem.brand ? client_BGData.brandMap[thisItem.brand?.toLowerCase()]?.toLowerCase() : '')
-		searchTree[thisItemKey] = `${thisItem.name.toLowerCase()} ${brandString} ${thisItemKey.toLowerCase()}`
+	for ( const [thisItemKey, thisItem] of Object.entries(client_BGData.vehicles) ) {
+		searchTree[thisItemKey] = `${thisItem.sorting.name.toLowerCase()} ${thisItemKey.toLowerCase()}`
+	}
+	for ( const [thisItemKey, thisItem] of Object.entries(client_BGData.placeables) ) {
+		searchTree[thisItemKey] = `${thisItem.sorting.name.toLowerCase()} ${thisItemKey.toLowerCase()}`
 	}
 }
 
@@ -253,8 +250,18 @@ function getByFill(fillType) {
 }
 
 function buildCompareRequest(id) {
+	const thisItem       = client_BGData.vehicles[id]
+	if ( typeof thisItem === 'undefined' ) { return }
+	const thisItemParsed = new client_BuilderVehicle(
+		null,
+		thisItem,
+		null,
+		locale,
+		version
+	)
+
 	return {
-		contents : null,
+		contents : thisItemParsed.comboData,
 		internal : true,
 		key      : id,
 		source   : null,
@@ -383,7 +390,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 			const thisItemParsed = itemType === 'vehicles' ?
 				new client_BuilderVehicle(
-					pageID,
+					null,
 					thisItem,
 					null,
 					locale,
@@ -423,7 +430,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 				break
 			}
 			
-			// buildSearchTree()
+			buildSearchTree()
 			MA.byId('homePageContent').clsShow()
 
 			MA.byId('mods__filter').addEventListener('keyup', doFilter)
@@ -509,50 +516,4 @@ function compareSingle(e) {
 	window.basegame_IPC.sendCompare([buildCompareRequest(realTarget.safeAttribute('data-page'))])
 }
 
-function attachClicker(e) {
-	const realTarget = e.target.closest('.badge')
-	if ( realTarget.classList.contains('custom') ) { return }
-	const openObject = {
-		type  : realTarget.classList.contains('attach_need') ? 'attach_need' : 'attach_has',
-		page : realTarget.safeAttribute('data-jointpage'),
-	}
-	if ( openObject.type !== null && openObject.page !== null ) {
-		location.search = `?type=${openObject.type}&page=${openObject.page}`
-	}
-}
-
-function comboGetInfo(target) {
-	const thisItemDIV = target.closest('.comboItemEntry')
-	const theseVars = thisItemDIV.querySelector('.comboItemInfo').querySelectorAll('template-var')
-	const returnObj = {
-		source : null,
-		type   : null,
-		page   : null,
-	}
-	for ( const element of theseVars ) {
-		if ( element.safeAttribute('data-name') === 'clickSource' ) { returnObj.source = element.textContent }
-		if ( element.safeAttribute('data-name') === 'clickPage' ) { returnObj.page = element.textContent }
-		if ( element.safeAttribute('data-name') === 'clickType' ) { returnObj.type = element.textContent }
-	}
-	return returnObj
-}
-
-function comboAddAll() { window.basegame_IPC.sendCompare([...comboKeyList]) }
-
-function comboAddSingle(e) {
-	const { page } = comboGetInfo(e.target)
-	const compareObj = {
-		contents : null,
-		internal : true,
-		key      : page,
-		source   : null,
-	}
-	window.basegame_IPC.sendCompare([compareObj])
-}
-
-function comboItemClicker(e) {
-	const { type, page } = comboGetInfo(e.target)
-	location.search = `?type=${type}&page=${page}`
-}
-// #endregion
 
