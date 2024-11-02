@@ -8,11 +8,11 @@
 
 /* global MA, DATA, I18N */
 
-// TODO: badge styling
-// TODO: badges back to main (and style)
 
 window.addEventListener('DOMContentLoaded', () => {
-	window.state = new WindowState()
+	window.i18n.lang().then((locale) => {
+		window.state = new WindowState(locale)
+	})
 })
 
 class WindowState {
@@ -85,8 +85,10 @@ class WindowState {
 	selectList   = null
 	noSelectList = null
 	selectCount  = null
+	locale       = 'en'
 
-	constructor() {
+	constructor(locale) {
+		this.locale       = locale
 		this.dragDrop     = new DragDropLib()
 		this.selectList   = this.empty_list()
 		this.selectCount  = this.empty_count()
@@ -118,6 +120,14 @@ class WindowState {
 		MA.byId('check_savegame_unused').addEventListener('change',     () => { this.doFilter() })
 		MA.byId('check_savegame_inactive').addEventListener('change',   () => { this.doFilter() })
 		MA.byId('check_savegame_nohub').addEventListener('change',      () => { this.doFilter() })
+	}
+
+	#doL10N(item) {
+		let returnText = item?.[this.locale]
+		returnText ??= item?.en
+		returnText ??= item?.de
+		returnText ??= '--'
+		return DATA.escapeSpecial(returnText)
 	}
 
 	receiveCollectName(modCollect) {
@@ -278,7 +288,7 @@ class WindowState {
 		this.noSelectList = this.empty_list()
 	
 		if ( savegame.errorList.length !== 0 ) {
-			const errors = savegame.errorList.map((error) => `<i18n-text data-key="${error[0]}"></i18n-text> ${error[1]}`)
+			const errors = savegame.errorList.map((error) => `<i18n-text data-key="${error}"></i18n-text>`)
 			modSetHTML.push(DATA.templateEngine('savegame_error', { errors : errors.join(', ')}))
 		}
 	
@@ -291,6 +301,7 @@ class WindowState {
 				thisModDetail.isPresent = true
 			}
 	
+			
 			if ( Object.hasOwn(savegame.mods, thisMod) ) {
 				thisModDetail.version  = savegame.mods[thisMod].version
 				thisModDetail.title    = savegame.mods[thisMod].title
@@ -310,7 +321,7 @@ class WindowState {
 				thisModDetail.isPresent         = true
 				thisModDetail.version         ??= haveModSet[thisMod].modDesc.version
 				thisModDetail.versionMismatch   = ( thisModDetail.version !== haveModSet[thisMod].modDesc.version )
-				thisModDetail.title             = DATA.escapeSpecial(haveModSet[thisMod].l10n.title)
+				thisModDetail.title             = DATA.escapeSpecial(this.#doL10N(haveModSet[thisMod].l10n.title))
 			}
 	
 			if ( thisMod === savegame.mapMod ) {

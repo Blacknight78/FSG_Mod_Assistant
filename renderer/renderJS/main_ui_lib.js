@@ -2116,7 +2116,7 @@ class FileLib {
 
 		const node = this.flags.operation !== 'import' ?
 			this.showMod_known(mod) :
-			this.showMod_new(mod, this.lastPayload.isZipImport ? this.lastPayload.zipFiles : null)
+			this.showMod_new(mod, this.lastPayload.isZipImport ? this.lastPayload.zipFiles.map((x) => `${x.name} (${x.size})`) : null)
 
 		if ( isMulti || isDelete ) {
 			node.querySelector('.no-dest').clsHide()

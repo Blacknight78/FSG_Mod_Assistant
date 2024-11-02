@@ -63,7 +63,9 @@ if ( process.platform === 'win32' && app.isPackaged && gotTheLock && !isPortable
 
 funcLib.wizard.initMain()
 
-const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
+// const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
+const { modFileCollection, csvFileChecker, savegameTrack } = require('./lib/modCheckLib.js')
+const { parseModFirstPass, parseSaveGame } = require('fs_mod_parser_neon')
 
 const settingDefault = new (require('./lib/modAssist_window_lib.js')).defaultSettings()
 
@@ -123,7 +125,7 @@ ipcMain.handle('files:drop', async (_, files) => {
 		return
 	} else if ( files.length === 1 && files[0].endsWith('.zip') ) {
 		// Handles ZIP packs, ZIP save game, and finally single ZIP add
-		const saveResult = await new saveFileChecker(files[0], false, true).getInfo()
+		const saveResult = JSON.parse(parseSaveGame(files[0]))
 		
 		if ( saveResult.isValid ) {
 			serveIPC.windowLib.createNamedWindow('save', {
@@ -132,7 +134,9 @@ ipcMain.handle('files:drop', async (_, files) => {
 			})
 			return
 		}
-		return getCopyMoveDelete('import', null, null, files, await new modPackChecker(files[0]).getInfo())
+		// expect [t/f, file list array]
+		const quickParseMod = JSON.parse(parseModFirstPass(files[0]))
+		return getCopyMoveDelete('import', null, null, files, [quickParseMod.fileDetail.isModPack, quickParseMod.fileDetail.zipFiles])
 	}
 	return getCopyMoveDelete('import', null, null, files, false)
 })
@@ -806,11 +810,10 @@ ipcMain.on('save:cacheGameSave', (_, payload) => {
 	refreshClientModList()
 })
 
-function saveCompare_read(thisPath, isFolder) {
+function saveCompare_read(thisPath) {
 	try {
-		new saveFileChecker(thisPath, isFolder).getInfo().then((results) => {
-			serveIPC.windowLib.sendModList({ thisSaveGame : results }, 'save:saveInfo', 'save', false )
-		})
+		const saveResult = JSON.parse(parseSaveGame(thisPath))
+		serveIPC.windowLib.sendModList({ thisSaveGame : saveResult }, 'save:saveInfo', 'save', false )
 	} catch (err) {
 		serveIPC.log.danger('save-check', 'Load failed', err)
 	}
