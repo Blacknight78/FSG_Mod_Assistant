@@ -20,7 +20,7 @@ const UNITS = {
 	m3   : { factor : 0.001,     precision : 1, unit : 'unit_m3' },
 	mph  : { factor : 0.621371,  precision : 0, unit : 'unit_mph' },
 	none : { factor : 1,         precision : 0, unit : '' },
-	t    : { factor : 0.01,      precision : 1, unit : 'unit_t' },
+	t    : { factor : 0.001,     precision : 1, unit : 'unit_t' },
 }
 
 const fillCat = {
@@ -70,6 +70,37 @@ const fillCat = {
 		vegetables          : ['potato', 'carrot', 'beetroot', 'parsnip'],
 		windrow             : ['straw', 'drygrass_windrow', 'grass_windrow'],
 	},
+	25 : {
+		animal              : ['cow_swiss_brown', 'cow_angus', 'cow_holstein', 'cow_limousin', 'sheep_black_welsh', 'sheep_steinschaf', 'sheep_swiss_mountain', 'sheep_landrace', 'pig_landrace', 'pig_black_pied', 'pig_berkshire', 'chicken', 'chicken_rooster', 'goat'],
+		augerwagon          : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'ricelonggrain', 'sunflower', 'soybean', 'maize', 'seeds', 'fertilizer'],
+		bulk                : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'sunflower', 'soybean', 'maize', 'potato', 'sugarbeet', 'beetroot', 'carrot', 'parsnip', 'rice', 'ricelonggrain', 'greenbean', 'pea', 'spinach', 'olive', 'sugarcane', 'woodchips', 'sugarbeet_cut', 'silage', 'grass_windrow', 'drygrass_windrow', 'straw', 'chaff', 'forage', 'forage_mixing', 'pigfood', 'mineral_feed', 'seeds', 'fertilizer', 'lime', 'manure', 'snow', 'roadsalt', 'stone'],
+		combine             : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'ricelonggrain', 'sunflower', 'soybean', 'maize'],
+		farmsilo            : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'sunflower', 'soybean', 'maize', 'rice', 'ricelonggrain'],
+		forageharvester     : ['chaff', 'grass_windrow', 'woodchips'],
+		foragewagon         : ['grass_windrow', 'drygrass_windrow', 'straw', 'chaff', 'silage', 'forage'],
+		fork                : ['manure', 'silage', 'chaff', 'straw', 'grass_windrow', 'drygrass_windrow'],
+		hayloft             : ['straw', 'drygrass_windrow'],
+		horse               : ['horse_palomino', 'horse_black', 'horse_bay', 'horse_pinto', 'horse_seal_brown', 'horse_gray', 'horse_dun', 'horse_chestnut'],
+		liquid              : ['milk', 'buffalomilk', 'water', 'diesel', 'def'],
+		loadingvehicle      : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'ricelonggrain', 'sunflower', 'soybean', 'maize', 'woodchips', 'silage', 'chaff', 'forage', 'seeds', 'fertilizer', 'lime'],
+		manurespreader      : ['manure'],
+		mixerwagon          : ['forage', 'drygrass_windrow', 'silage', 'straw', 'mineral_feed', 'forage_mixing'],
+		piece               : ['wool', 'treesaplings', 'egg'],
+		planter_small       : ['beetroot', 'carrot', 'parsnip', 'spinach'],
+		product             : ['honey', 'flour', 'riceflour', 'milk_bottled', 'goatmilk_bottled', 'buffalomilk_bottled', 'bread', 'cake', 'buffalomozzarella', 'goatcheese', 'butter', 'cheese', 'fabric', 'sugar', 'clothes', 'cereal', 'sunflower_oil', 'canola_oil', 'olive_oil', 'rice_oil', 'raisins', 'grapejuice', 'cement', 'cementbricks', 'barrel', 'bucket', 'bathtub', 'chocolate', 'boards', 'furniture', 'strawberry', 'lettuce', 'tomato', 'spring_onion', 'napacabbage', 'chilli', 'garlic', 'enoki', 'oyster', 'egg', 'cartonroll', 'paperroll', 'planks', 'prefabwall', 'woodbeam', 'potatochips', 'ricerolls', 'fermentednapacabbage', 'preservedcarrots', 'preservedparsnip', 'preservedbeetroot', 'noodlesoup', 'soupcansmixed', 'soupcanscarrots', 'soupcansbeetroot', 'soupcanspotato', 'roofplates', 'rope', 'canned_peas', 'spinach_bags', 'jarred_greenbean', 'rice_bags', 'rice_boxes', 'ricesaplings'],
+		product_bga         : ['methane', 'electriccharge'],
+		root_crops          : ['beetroot', 'carrot', 'parsnip', 'potato', 'sugarbeet'],
+		shovel              : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'sunflower', 'soybean', 'maize', 'potato', 'sugarbeet', 'beetroot', 'carrot', 'parsnip', 'rice', 'ricelonggrain', 'greenbean', 'pea', 'spinach', 'olive', 'sugarcane', 'woodchips', 'sugarbeet_cut', 'silage', 'grass_windrow', 'drygrass_windrow', 'straw', 'chaff', 'forage', 'forage_mixing', 'pigfood', 'mineral_feed', 'seeds', 'fertilizer', 'lime', 'manure', 'snow', 'roadsalt', 'stone'],
+		silagetrailer       : ['grass_windrow', 'drygrass_windrow', 'straw', 'chaff', 'silage', 'forage', 'woodchips', 'sugarcane'],
+		slurrytank          : ['liquidmanure', 'digestate'],
+		sprayer             : ['liquidfertilizer', 'herbicide'],
+		spreader            : ['fertilizer'],
+		topliftingharvester : ['beetroot', 'carrot', 'parsnip'],
+		trainwagon          : ['wheat', 'barley', 'oat', 'canola', 'sorghum', 'sunflower', 'soybean', 'maize', 'potato', 'sugarbeet', 'sugarbeet_cut', 'beetroot', 'carrot', 'parsnip', 'rice', 'ricelonggrain', 'greenbean', 'pea', 'spinach', 'olive', 'grape', 'sugarcane', 'woodchips', 'seeds'],
+		vegetables          : ['beetroot', 'carrot', 'parsnip'],
+		windrow             : ['grass_windrow', 'drygrass_windrow', 'straw'],
+	},
+
 }
 
 const icons = {
