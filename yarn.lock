@@ -2309,16 +2309,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^32.2.2":
-  version: 32.2.2
-  resolution: "electron@npm:32.2.2"
+"electron@npm:^32.2.3":
+  version: 32.2.3
+  resolution: "electron@npm:32.2.3"
   dependencies:
     "@electron/get": ^2.0.0
     "@types/node": ^20.9.0
     extract-zip: ^2.0.1
   bin:
     electron: cli.js
-  checksum: c65fcd240ca72aae74cebd27c4ab301512d674ac7a0dfd8ed29bc5d45f6e0ffa11d7731f6161e87c8b3ad6c6ccbc4c9a9921cebf01ad85c7c1530aadc2da06c2
+  checksum: 59ddfa70bb9f3d6934c9ec83b21d532b8e001d76e9c98aa79b6b6ed8795f57a2f382e87d1ea3ae46a50b64dbe3975cdc3d0f78de9fb4358662e6aac69c72d83d
   languageName: node
   linkType: hard
 
@@ -2929,10 +2929,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fs_mod_parser_neon@npm:^0.1.0":
-  version: 0.1.0
-  resolution: "fs_mod_parser_neon@npm:0.1.0"
-  checksum: 6038c2195f74998e17e08415a51de51fe1e269c8f867f776b57f7a073d0c47e75dd2c1bd019d4b789f66af4bf8a9b1afc161bd26b1ed3a855baf0cdd4a02c731
+"fs_mod_parser_neon@npm:^0.1.1":
+  version: 0.1.1
+  resolution: "fs_mod_parser_neon@npm:0.1.1"
+  checksum: af7a4ad50f33ae86eea4569898f197ba77055a66ae72acb02f38cd1c0952bcfd1afaf0f63c45ea497b39bae57e22d80877536f2aab178dd9db35f381abda7d6b
   languageName: node
   linkType: hard
 
@@ -2952,17 +2952,17 @@ __metadata:
     deepmerge: ^4.3.1
     discord-rpc: ^4.0.1
     docolatte: ^4.5.1
-    electron: ^32.2.2
+    electron: ^32.2.3
     electron-builder: ~25.0.6
     electron-store: ^8.2.0
     electron-updater: ^6.3.9
     eslint: ^9.14.0
     eslint-plugin-unicorn: ^56.0.0
     fast-xml-parser: ^4.5.0
-    fs_mod_parser_neon: ^0.1.0
+    fs_mod_parser_neon: ^0.1.1
     glob: ^11.0.0
-    globals: ^15.11.0
-    html-validate: ^8.24.2
+    globals: ^15.12.0
+    html-validate: ^8.25.0
     jsdoc: ^4.0.4
     node-stream-zip: ^1.15.0
     unzip-stream: ^0.3.4
@@ -3131,10 +3131,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"globals@npm:^15.11.0":
-  version: 15.11.0
-  resolution: "globals@npm:15.11.0"
-  checksum: ef32d5ef987f3d4b47fc2e389a0b235f6a46f605160c4e405722fd7b576106ca407cb867e66fd1e0fc43b631800e2e2e71847f37691026d813f96f40339da702
+"globals@npm:^15.12.0":
+  version: 15.12.0
+  resolution: "globals@npm:15.12.0"
+  checksum: 2a134cc876dd73192489561e3c85be348dc1408fef043ebef605cdc437f64cd2fc922268db02e3348683d05d06bed10fb1c3653b3d4399a204a7ecd59e742a07
   languageName: node
   linkType: hard
 
@@ -3266,9 +3266,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"html-validate@npm:^8.24.2":
-  version: 8.24.2
-  resolution: "html-validate@npm:8.24.2"
+"html-validate@npm:^8.25.0":
+  version: 8.25.0
+  resolution: "html-validate@npm:8.25.0"
   dependencies:
     "@html-validate/stylish": ^4.1.0
     "@sidvind/better-ajv-errors": 3.0.1
@@ -3296,7 +3296,7 @@ __metadata:
       optional: true
   bin:
     html-validate: bin/html-validate.js
-  checksum: b8706fb745f5a9d817ea927e9c16258da684800756bf44e58baa28f8e8183d341e95207360aca59071995217b7835ffc110e6d8c48bb0bf2d904b192dffe4d0b
+  checksum: 28932fb64ba887e5512ddb9b9e74eda5a4fec10db74a2c865181b0bb616fc2f6751d6704f705bb0dc893086a1fe0b252a1b613db7a4742eb13e4a11aab1ca1da
   languageName: node
   linkType: hard
 

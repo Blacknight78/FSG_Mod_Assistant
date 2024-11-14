@@ -32,12 +32,12 @@
     "deepl-node": "^1.14.0",
     "deepmerge": "^4.3.1",
     "docolatte": "^4.5.1",
-    "electron": "^32.2.2",
+    "electron": "^32.2.3",
     "electron-builder": "~25.0.6",
     "eslint": "^9.14.0",
     "eslint-plugin-unicorn": "^56.0.0",
-    "globals": "^15.11.0",
-    "html-validate": "^8.24.2",
+    "globals": "^15.12.0",
+    "html-validate": "^8.25.0",
     "jsdoc": "^4.0.4"
   },
   "dependencies": {
@@ -48,7 +48,7 @@
     "electron-store": "^8.2.0",
     "electron-updater": "^6.3.9",
     "fast-xml-parser": "^4.5.0",
-    "fs_mod_parser_neon": "^0.1.0",
+    "fs_mod_parser_neon": "^0.1.1",
     "glob": "^11.0.0",
     "node-stream-zip": "^1.15.0",
     "unzip-stream": "^0.3.4"
