@@ -11,6 +11,42 @@ let locale     = 'en'
 let i18nUnits  = null
 let searchTree = {}
 
+/* cSpell: disable */
+const catTitleMap = {
+	'object'           : '$l10n_ui_objects',
+	'tool'             : '$l10n_ui_tools',
+	'vehicle'          : '$l10n_ui_vehicles',
+
+	'animals'          : '$l10n_categoryType_animals',
+	'baling'           : '$l10n_categoryType_baling',
+	'combine'          : '$l10n_categoryType_combine',
+	'cotton'           : '$l10n_categoryType_cotton',
+	'drivables'        : '$l10n_categoryType_driveables',
+	'forage'           : '$l10n_categoryType_forage',
+	'forestry'         : '$l10n_categoryType_forestry',
+	'grain'            : '$l10n_categoryType_grain',
+	'grapes_olives'    : '$l10n_categoryType_grapesOlives',
+	'grassland'        : '$l10n_categoryType_grassland',
+	'handtools'        : '$l10n_categoryType_handTools',
+	'loaders'          : '$l10n_categoryType_loaders',
+	'misc'             : '$l10n_categoryType_misc',
+	'objects'          : '$l10n_categoryType_objects',
+	'placeable'        : '$l10n_categoryType_placeable',
+	'rice'             : '$l10n_categoryType_rice',
+	'rootcrops'        : '$l10n_categoryType_rootcrops',
+	'seeding'          : '$l10n_categoryType_seeding',
+	'silage'           : '$l10n_categoryType_silage',
+	'soil_preparation' : '$l10n_categoryType_soilPreparation',
+	'soiltreatment'    : '$l10n_categoryType_soilTreatment',
+	'specialcrops'     : '$l10n_categoryType_specialCrops',
+	'sugarcane'        : '$l10n_categoryType_sugarCane',
+	'trailers'         : '$l10n_categoryType_trailers',
+	'vegetables'       : '$l10n_categoryType_vegetables',
+	'yield'            : '$l10n_categoryType_yieldImprovement',
+	'yieldweeds'       : '$l10n_categoryType_yieldWeeds',
+}
+/* cSpell: enable */
+
 const selectFills = [
 	{ filltype : 'barley', l10n : '$l10n_fillType_barley' },
 	{ filltype : 'carrot', l10n : '$l10n_fillType_carrots' },
@@ -63,36 +99,30 @@ const selectFills = [
 
 // MARK: CAT LISTS
 function getTopCat(cat) {
+	const skip_cats = new Set([
+		'sales',
+		'chainsaws',
+	])
 	switch ( cat ) {
-		case 'vehicle' :
-			return client_BGData.category.vehicle
-				.filter((x) => x.title !== '$l10n_category_sales')
-				.sort((a, b) => Intl.Collator().compare(a.key, b.key))
-				.map((x) => buildCategoryItem({
-					image      : `<img src="${icons.item(x.iconFile)}" style="width:160px">`,
-					page       : x.key,
-					text       : x.title,
-					type       : 'subcat',
-				}))
-		case 'tool' :
-			return client_BGData.category.tool
-				.filter((x) => x.title !== '$l10n_category_chainsaws')
-				.sort((a, b) => Intl.Collator().compare(a.key, b.key))
-				.map((x) => buildCategoryItem({
-					image      : `<img src="${icons.item(x.iconFile)}" style="width:160px">`,
-					page       : x.key,
-					text       : x.title,
-					type       : 'subcat',
-				}))
-		case 'object' :
-			return client_BGData.category.object
-				.sort((a, b) => Intl.Collator().compare(a.key, b.key))
-				.map((x) => buildCategoryItem({
-					image      : `<img src="${icons.item(x.iconFile)}" style="width:160px">`,
-					page       : x.key,
-					text       : x.title,
-					type       : 'subcat',
-				}))
+		case 'non-place' : {
+			const catArray = []
+			for ( const catName of Object.keys(client_BGData.category).sort() ) {
+				if ( catName === 'placeable' ) { continue }
+				catArray.push(
+					`<div class="w-100 pb-3 fs-2 text-center top-0 z-3 bg-body"><div class="w-75 mx-auto"><i18n-text data-version="${version}" data-key="${catTitleMap[catName]}"></i18n-text></div></div>`,
+					...client_BGData.category[catName]
+						.filter((x) => !skip_cats.has(x.key))
+						.sort((a, b) => Intl.Collator().compare(a.key, b.key))
+						.map((x) => buildCategoryItem({
+							image      : `<img src="${icons.item(x.iconFile)}" style="width:160px">`,
+							page       : x.key,
+							text       : x.title,
+							type       : 'subcat',
+						}))
+				)
+			}
+			return catArray
+		}
 		case 'placeable' :
 			return client_BGData.category.placeable
 				.sort((a, b) => Intl.Collator().compare(a.key, b.key))
@@ -105,6 +135,7 @@ function getTopCat(cat) {
 		case 'brand' :
 			return client_BGData.brands
 				.sort((a, b) => Intl.Collator().compare(a.title, b.title))
+				.filter((x) => client_BGData.brandKeyToVehicles?.[x.key]?.length > 0 )
 				.map((x) => buildCategoryItem({
 					image : `<img src="img/brand/${x.icon}.webp" style="width:100px">`,
 					maxWidthCalc : '100px',
@@ -144,12 +175,12 @@ function getTopCat(cat) {
 	}
 }
 
-function buildCategoryItem({type = null, page = null, maxWidthCalc = null, image = null, text = null, skipIfNotBase = true} = {}) {
+function buildCategoryItem({type = null, page = null, maxWidthCalc = null, image = null, text = null} = {}) {
 	return [
 		`<div class="text-center pageClicker flex-grow-0" data-type="${type}" data-page="${page}">`,
 		`<div class="p-2 border rounded-3 d-flex flex-column h-100 justify-content-center" style="max-width: ${maxWidthCalc === null ? 'auto' : `calc(${maxWidthCalc} + 1rem)`}">`,
 		image,
-		I18N.defer(text, skipIfNotBase),
+		I18N.unwrap_base(text, version),
 		'</div></div>'
 	].join('')
 }
