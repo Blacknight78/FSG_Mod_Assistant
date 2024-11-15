@@ -117,7 +117,7 @@ class StateManager {
 		this.#updateTracking(data)
 	
 		for ( const [CIndex, CKey] of Object.entries([...data.set_Collections]) ) {
-			if ( data.collectionNotes[CKey].notes_version !== this.flag.currentVersion ) { continue }
+			if ( !data.collectionNotes[CKey].notes_holding && data.collectionNotes[CKey].notes_version !== this.flag.currentVersion ) { continue }
 
 			this.orderMap.keys.push(CKey)
 			this.orderMap.keyToNum[CKey]   = parseInt(CIndex)
@@ -143,7 +143,7 @@ class StateManager {
 					const thisModName = thisMod.fileDetail.shortName
 
 					// eslint-disable-next-line no-await-in-loop
-					const thisModRec  = await this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod))
+					const thisModRec  = await this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
 
 					for ( const tag of thisModRec.filters ) { this.searchTagList.add(tag) }
 
@@ -651,16 +651,17 @@ class StateManager {
 	}
 
 	// MARK: addMod
-	async #addMod(thisMod, overBadges = null) {
+	/* eslint-disable-next-line complexity */
+	async #addMod(thisMod, overBadges = null, isHolding = false) {
 		const mod = {
 			filters : new Set(thisMod?.displayBadges?.map?.((x) => x.name) || []),
 			node    : document.createElement('tr'),
 			scroll  : document.createElement('scroller-item'),
 			search  : {
-				find_author  : DATA.escapeSpecial(thisMod.modDesc.author).toLowerCase(),
+				find_author  : DATA.escapeSpecialLC(thisMod.modDesc.author),
 				find_name    : thisMod.fileDetail.shortName.toLowerCase(),
-				find_title   : DATA.escapeSpecial(thisMod.l10n.title).toLowerCase(),
-				find_version : DATA.escapeSpecial(thisMod.modDesc.version).toLowerCase(),
+				find_title   : DATA.escapeSpecialLC(thisMod.l10n.title),
+				find_version : DATA.escapeSpecialLC(thisMod.modDesc.version),
 			},
 		}
 		mod.search.find_all = Object.values(mod.search).join(' ')
@@ -711,7 +712,8 @@ class StateManager {
 		if ( overBadges !== null ) {
 			badgeContain.innerHTML = overBadges
 		} else {
-			for ( const badge of thisMod?.displayBadges?.filter?.((x) => x.name !== `fs${this.flag.currentVersion}`) || [] ) {
+			const suppressFilter = isHolding ? '' : `fs${this.flag.currentVersion}`
+			for ( const badge of thisMod?.displayBadges?.filter?.((x) => x.name !== suppressFilter) || [] ) {
 				badgeContain.appendChild(I18N.buildBadgeMod(badge))
 			}
 		}
