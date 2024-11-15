@@ -963,6 +963,7 @@ async function processModFolders(force = false) {
 modQueueRunner.on('process-mods-done', () => {
 	funcLib.general.toggleFolderDirty(false)
 	funcLib.gameSet.read()
+	funcLib.gameSet.gameXML(25)
 	funcLib.gameSet.gameXML(22)
 	funcLib.gameSet.gameXML(19)
 	funcLib.gameSet.gameXML(17)
