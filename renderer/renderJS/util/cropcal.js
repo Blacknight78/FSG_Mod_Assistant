@@ -7,6 +7,8 @@
 
 /* global I18N */
 
+//TODO: add 25 stuff
+//TODO: convert to basegame l10n, and remove keys in standard translations
 /* eslint-disable sort-keys */
 const knownCrops = {
 	wheat         : {	name : 'croptype_wheat',			icon : 'wheat' },

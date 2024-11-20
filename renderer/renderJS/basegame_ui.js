@@ -47,11 +47,11 @@ const catTitleMap = {
 }
 /* cSpell: enable */
 
-// TODO: add new
 const selectFills = [
 	{ filltype : 'barley', l10n : '$l10n_fillType_barley' },
-	{ filltype : 'carrot', l10n : '$l10n_fillType_carrots' },
+	{ filltype : 'beetroot', l10n : '$l10n_fillType_beetroot' },
 	{ filltype : 'canola', l10n : '$l10n_fillType_canola' },
+	{ filltype : 'carrot', l10n : '$l10n_fillType_carrots' },
 	{ filltype : 'chaff', l10n : '$l10n_fillType_chaff' },
 	{ filltype : 'cotton', l10n : '$l10n_fillType_cotton' },
 	{ filltype : 'diesel', l10n : '$l10n_fillType_diesel' },
@@ -62,6 +62,7 @@ const selectFills = [
 	{ filltype : 'forage', l10n : '$l10n_fillType_forage' },
 	{ filltype : 'grape', l10n : '$l10n_fillType_grape' },
 	{ filltype : 'grass_windrow', l10n : '$l10n_fillType_grass' },
+	{ filltype : 'greenbean', l10n : '$l10n_fillType_greenbean' },
 	{ filltype : 'herbicide', l10n : '$l10n_fillType_herbicide' },
 	{ filltype : 'lime', l10n : '$l10n_fillType_lime' },
 	{ filltype : 'liquidfertilizer', l10n : '$l10n_fillType_liquidFertilizer' },
@@ -73,10 +74,12 @@ const selectFills = [
 	{ filltype : 'oat', l10n : '$l10n_fillType_oat' },
 	{ filltype : 'olive', l10n : '$l10n_fillType_olive' },
 	{ filltype : 'parsnip', l10n : '$l10n_fillType_parsnip' },
+	{ filltype : 'pea', l10n : '$l10n_fillType_pea' },
 	{ filltype : 'pigfood', l10n : '$l10n_fillType_pigFood' },
 	{ filltype : 'poplar', l10n : '$l10n_fillType_poplar' },
 	{ filltype : 'potato', l10n : '$l10n_fillType_potato' },
-	{ filltype : 'beetroot', l10n : '$l10n_fillType_beetroot' },
+	{ filltype : 'rice', l10n : '$l10n_fillType_rice' },
+	{ filltype : 'ricelonggrain', l10n : '$l10n_fillType_ricelonggrain' },
 	{ filltype : 'roadsalt', l10n : '$l10n_fillType_roadSalt' },
 	{ filltype : 'roundbale', l10n : '$l10n_fillType_roundBale' },
 	{ filltype : 'seeds', l10n : '$l10n_fillType_seeds' },
@@ -84,6 +87,7 @@ const selectFills = [
 	{ filltype : 'silage', l10n : '$l10n_fillType_silage' },
 	{ filltype : 'sorghum', l10n : '$l10n_fillType_sorghum' },
 	{ filltype : 'soybean', l10n : '$l10n_fillType_soybean' },
+	{ filltype : 'spinach', l10n : '$l10n_fillType_spinach' },
 	{ filltype : 'squarebale', l10n : '$l10n_fillType_squareBale' },
 	{ filltype : 'stone', l10n : '$l10n_fillType_stone' },
 	{ filltype : 'straw', l10n : '$l10n_fillType_straw' },
@@ -145,14 +149,15 @@ function getTopCat(cat) {
 					type  : 'brand',
 				}))
 		case 'fills' :
-			// TODO - FILTER IF VEHICLE HAS ANY
-			// getByFill(fillType).length
-			return selectFills.map((x) => buildCategoryItem({
-				image      : `<fillType class="h0" name="fill-${x.filltype}"></fillType>`,
-				page       : x.filltype,
-				text       : x.l10n,
-				type       : 'fill',
-			}))
+			return selectFills
+				.filter((x) => getByFill(x.filltype).length !== 0)
+				.map((x) => buildCategoryItem({
+					colSix     : true,
+					image      : `<fillType class="h0" name="fill-${x.filltype}"></fillType>`,
+					page       : x.filltype,
+					text       : x.l10n,
+					type       : 'fill',
+				}))
 		case 'attach_need' :
 			return Object.keys(client_BGData.jointNeedToVehicle)
 				.filter((x) => x.toLowerCase() !== 'train' )
@@ -178,9 +183,10 @@ function getTopCat(cat) {
 	}
 }
 
-function buildCategoryItem({type = null, page = null, maxWidthCalc = null, image = null, text = null} = {}) {
+function buildCategoryItem({colSix = false, type = null, page = null, maxWidthCalc = null, image = null, text = null} = {}) {
+	const style = !colSix ? '' : 'style="width: 16%"'
 	return [
-		`<div class="text-center pageClicker flex-grow-0" data-type="${type}" data-page="${page}">`,
+		`<div ${style} class="text-center pageClicker flex-grow-0" data-type="${type}" data-page="${page}">`,
 		`<div class="p-2 border rounded-3 d-flex flex-column h-100 justify-content-center" style="max-width: ${maxWidthCalc === null ? 'auto' : `calc(${maxWidthCalc} + 1rem)`}">`,
 		image,
 		I18N.unwrap_base(text, version),

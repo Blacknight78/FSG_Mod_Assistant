@@ -350,7 +350,6 @@ ipcMain.handle('detail:getMod', async (_, fullUUID) => {
 		return thisMod
 	}
 	return serveIPC.modCollect.getAndUpdateDetail(fullUUID)
-	// TODO : rescan just that mod.
 })
 ipcMain.on('dispatch:detail', (_, thisMod) => { openDetailWindow(thisMod) })
 
