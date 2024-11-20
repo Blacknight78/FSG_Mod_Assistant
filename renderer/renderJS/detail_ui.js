@@ -120,7 +120,8 @@ class windowState {
 			return clientMakeCropCalendar(
 				this.mod.modDesc.cropInfo,
 				this.mod.modDesc?.mapIsSouth || false,
-				this.mod.modDesc?.cropWeather || null
+				this.mod.modDesc?.cropWeather || null,
+				this.mod.gameVersion || 22
 			).then((html) => {
 				MA.byIdHTML('crop-table', html)
 			})
