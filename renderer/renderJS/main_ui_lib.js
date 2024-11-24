@@ -2027,7 +2027,14 @@ class FileLib {
 		switch (mode) {
 			case 'favs' :
 				window.main_IPC.files.listFavs().then((files) => {
-					this.display(mode, files)
+					if ( files === null ) {
+						MA.byId('moveButton_fav').classList.add('btn-shake')
+						setTimeout(() => {
+							MA.byId('moveButton_fav').classList.remove('btn-shake')
+						}, 1500)
+					} else {
+						this.display(mode, files)
+					}
 				})
 				break
 			case 'copy' :
