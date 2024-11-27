@@ -75,6 +75,8 @@ class StateManager {
 		window.main_IPC.receive('files:deleteTrigger', () => {
 			if ( this.track.selected.size !== 0 ) {
 				this.startFile('delete')
+			} else if ( this.track.openCollection !== null ) {
+				window.main_IPC.folder.remove(this.track.openCollection)
 			}
 		})
 	}
