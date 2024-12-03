@@ -1012,7 +1012,10 @@ modQueueRunner.on('process-mods-done', () => {
 					break
 			}
 		}
-		Promise.allSettled(trashPromises).then(() => { funcLib.general.doChangelog(); processModFolders() })
+		Promise.allSettled(trashPromises).then(() => {
+			funcLib.general.doChangelog()
+			if ( trashPromises.length !== 0 ) { processModFolders() }
+		})
 	} else {
 		funcLib.general.doChangelog()
 	}

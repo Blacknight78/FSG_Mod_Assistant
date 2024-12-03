@@ -495,10 +495,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@eslint/js@npm:9.15.0":
-  version: 9.15.0
-  resolution: "@eslint/js@npm:9.15.0"
-  checksum: 8b2aa35b62c1969c5e3aa5e33b4e072cc450b95ee9bc08b5a84aa5cbed10a01a9a8f0463b8bb3768ceeb5abfaa82abfb95650061338c3b467835757b62ffc4ba
+"@eslint/js@npm:9.16.0":
+  version: 9.16.0
+  resolution: "@eslint/js@npm:9.16.0"
+  checksum: ba2d7f7266df827df72cec069df9284ad5e7edb4894a8c58c41db0d489136b22815dc76cd34cf565284979feb4d3a8197b511e08529c03f30c80b5235d25030b
   languageName: node
   linkType: hard
 
@@ -2050,7 +2050,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"deepmerge@npm:4.3.1, deepmerge@npm:^4.3.1":
+"deepmerge@npm:^4.3.1":
   version: 4.3.1
   resolution: "deepmerge@npm:4.3.1"
   checksum: 2024c6a980a1b7128084170c4cf56b0fd58a63f2da1660dcfe977415f27b17dbe5888668b59d0b063753f3220719d5e400b7f113609489c90160bb9a5518d052
@@ -2320,16 +2320,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^33.2.0":
-  version: 33.2.0
-  resolution: "electron@npm:33.2.0"
+"electron@npm:^33.2.1":
+  version: 33.2.1
+  resolution: "electron@npm:33.2.1"
   dependencies:
     "@electron/get": ^2.0.0
     "@types/node": ^20.9.0
     extract-zip: ^2.0.1
   bin:
     electron: cli.js
-  checksum: 4feacc8923fe4ab45da45d34823f949231da425c83ea2db2e483c2531f0320a1279a5b65913f447e145ab0a3f4e190bc192ed3a63ebe17a06347156e2ec52081
+  checksum: c5b7d5fe56f831da5d14be9d24d0a29fdb392d5b4e593b31200a9c01e6260d87bba1216c4cc17297b2f4838e0893428464b9e2ca71c3eaff499dbff1981c0670
   languageName: node
   linkType: hard
 
@@ -2536,16 +2536,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"eslint@npm:^9.15.0":
-  version: 9.15.0
-  resolution: "eslint@npm:9.15.0"
+"eslint@npm:^9.16.0":
+  version: 9.16.0
+  resolution: "eslint@npm:9.16.0"
   dependencies:
     "@eslint-community/eslint-utils": ^4.2.0
     "@eslint-community/regexpp": ^4.12.1
     "@eslint/config-array": ^0.19.0
     "@eslint/core": ^0.9.0
     "@eslint/eslintrc": ^3.2.0
-    "@eslint/js": 9.15.0
+    "@eslint/js": 9.16.0
     "@eslint/plugin-kit": ^0.2.3
     "@humanfs/node": ^0.16.6
     "@humanwhocodes/module-importer": ^1.0.1
@@ -2581,7 +2581,7 @@ __metadata:
       optional: true
   bin:
     eslint: bin/eslint.js
-  checksum: 50b7e1c4cb49662a54916877d47aeded2aac0cae428c8258ec9d181160ca893681a32c69df359404bfb81a9693480896adbcd8a18fa5acafd1c933dc1030f32e
+  checksum: d7b77caed2e319dba9bdf5fd3275c643332e4c79fcfe62cf19031fc430c27fe691daa718474d29a1050b83348085f8df50e04f260e081e5b1fbee1d2ca9c5c74
   languageName: node
   linkType: hard
 
@@ -2962,17 +2962,17 @@ __metadata:
     deepmerge: ^4.3.1
     discord-rpc: ^4.0.1
     docolatte: ^4.5.1
-    electron: ^33.2.0
+    electron: ^33.2.1
     electron-builder: ~25.0.6
     electron-store: ^8.2.0
     electron-updater: ^6.3.9
-    eslint: ^9.15.0
+    eslint: ^9.16.0
     eslint-plugin-unicorn: ^56.0.1
     fast-xml-parser: ^4.5.0
     fs_mod_parser_neon: ^0.1.1
     glob: ^11.0.0
-    globals: ^15.12.0
-    html-validate: ^8.25.1
+    globals: ^15.13.0
+    html-validate: ^8.27.0
     jsdoc: ^4.0.4
     node-stream-zip: ^1.15.0
     unzip-stream: ^0.3.4
@@ -3141,10 +3141,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"globals@npm:^15.12.0":
-  version: 15.12.0
-  resolution: "globals@npm:15.12.0"
-  checksum: 2a134cc876dd73192489561e3c85be348dc1408fef043ebef605cdc437f64cd2fc922268db02e3348683d05d06bed10fb1c3653b3d4399a204a7ecd59e742a07
+"globals@npm:^15.13.0":
+  version: 15.13.0
+  resolution: "globals@npm:15.13.0"
+  checksum: 3f98514ce25a21150b246fbd63aeaeb271a93b3340cf7f4f6e9934d3b37dbb4b0fddef9c470183097dcfd2e8757bb86bbae701588f0e376667d8d9d6f665db3b
   languageName: node
   linkType: hard
 
@@ -3276,16 +3276,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"html-validate@npm:^8.25.1":
-  version: 8.25.1
-  resolution: "html-validate@npm:8.25.1"
+"html-validate@npm:^8.27.0":
+  version: 8.27.0
+  resolution: "html-validate@npm:8.27.0"
   dependencies:
     "@html-validate/stylish": ^4.1.0
     "@sidvind/better-ajv-errors": 3.0.1
     ajv: ^8.0.0
-    deepmerge: 4.3.1
     glob: ^10.0.0
-    ignore: 5.3.2
     kleur: ^4.1.0
     minimist: ^1.2.0
     prompts: ^2.0.0
@@ -3306,7 +3304,7 @@ __metadata:
       optional: true
   bin:
     html-validate: bin/html-validate.js
-  checksum: 90d0671099c4a680abee883f29d724af48991a3155d260342b14b378f246e1a97be4365ad75104ef210a4886b1d015e43e93b3be73f16c32edced950121131ad
+  checksum: 790fd26680789eee830141d3f2af5699346331faddd94c03df3ac22627c0e6c3e589cfb3594bc294a0da9a463e71fc4ca56e9245dcdb0b569031b5e9f5f9b4c0
   languageName: node
   linkType: hard
 
@@ -3403,7 +3401,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ignore@npm:5.3.2, ignore@npm:^5.2.0":
+"ignore@npm:^5.2.0":
   version: 5.3.2
   resolution: "ignore@npm:5.3.2"
   checksum: 2acfd32a573260ea522ea0bfeff880af426d68f6831f973129e2ba7363f422923cf53aab62f8369cbf4667c7b25b6f8a3761b34ecdb284ea18e87a5262a865be
