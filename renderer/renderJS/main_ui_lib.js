@@ -1768,9 +1768,6 @@ class DragDropLib {
 
 		const dragTarget = MA.byId('drag_target')
 		dragTarget.addEventListener('dragenter', (e) => { this.dragEnter(e) } )
-		// dragTarget.addEventListener('dragleave', (e) => { this.dragLeave(e) } )
-		// dragTarget.addEventListener('dragover',  (e) => { this.dragOver(e) } )
-		// dragTarget.addEventListener('drop',      (e) => { this.dragDrop(e) } )
 
 		this.feedback.backdrop         = MA.byId('drag_back')
 		this.feedback.file             = MA.byId('drag_add_file')
@@ -1780,7 +1777,6 @@ class DragDropLib {
 		this.feedback.icon_csv_file    = MA.byId('csv-yes')
 		this.feedback.icon_normal_file = MA.byId('csv-no')
 
-		// this.feedback.backdrop.addEventListener('dragenter', (e) => { this.dragEnter(e) } )
 		this.feedback.backdrop.addEventListener('dragleave', (e) => { this.dragLeave(e) } )
 		this.feedback.backdrop.addEventListener('dragover',  (e) => { this.dragOver(e) } )
 		this.feedback.backdrop.addEventListener('drop',      (e) => { this.dragDrop(e) } )
