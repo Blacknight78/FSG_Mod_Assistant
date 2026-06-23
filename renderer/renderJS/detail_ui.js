@@ -219,6 +219,9 @@ class windowState {
 			mod_location   : this.mod.fileDetail.fullPath,
 			store_items    : DATA.checkX(this.mod.modDesc.storeItems),
 			title          : (( tempTitle !== '--' ) ? tempTitle : this.mod.fileDetail.shortName),
+			update_source  : ( this.mod.modHub.id !== null ) ?
+				`<a href="https://www.farming-simulator.com/mod.php?mod_id=${this.mod.modHub.id}" target="_BLANK">ModHub</a>` :
+				`<em>${I18N.defer('update_source_not_configured', false )}</em>`,
 			version        : DATA.escapeSpecial(this.mod.modDesc.version),
 		}
 		for ( const [id, content] of Object.entries(idMap)) {

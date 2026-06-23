@@ -1075,7 +1075,6 @@ app.whenReady().then(() => {
 
 			serveIPC.interval.gamePoll = setInterval(() => { funcLib.general.pollGame() }, 15e3)
 
-			funcLib.discord.init()
 		})
 
 		serveIPC.log.on('logAdded', (level, item) => { serveIPC.windowLib.sendToValidWindow('debug', 'debug:item', level, item) })
