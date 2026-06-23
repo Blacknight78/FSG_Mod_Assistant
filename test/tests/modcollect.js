@@ -23,8 +23,57 @@ const modCollect = new modFileCollection( require('node:os').homedir, queueDoneE
 
 module.exports.test = () => {
 	return Promise.allSettled([
-		testGood(new testLib('Mod Collection - Valid'))
+		testGood(new testLib('Mod Collection - Valid')),
+		testModHubVersions(new testLib('ModHub - Separate FS22 and FS25 Records')),
 	])
+}
+
+const testModHubVersions = (test) => {
+	const testCollect = new modFileCollection(require('node:os').homedir)
+	const sharedName  = 'EXAMPLE_Shared_Mod_Name'
+
+	testCollect.modHubList = {
+		games : {
+			22 : { mods : { [sharedName] : 22001 }, last : [22001] },
+			25 : { mods : { [sharedName] : 25001 }, last : [] },
+		},
+		last   : [22001],
+		legacy : {},
+		mods   : { [sharedName] : 25001 },
+	}
+	testCollect.modHubVersion = {
+		22001 : '1.0.0.0',
+		25001 : '2.0.0.0',
+		games : {
+			22 : { 22001 : '1.0.0.0' },
+			25 : { 25001 : '2.0.0.0' },
+		},
+		legacy : {},
+	}
+
+	const fs22Record = testCollect.modHubFullRecord({
+		fileDetail : { shortName : sharedName },
+		gameVersion : 22,
+	})
+	const fs25Record = testCollect.modHubFullRecord({
+		fileDetail : { shortName : sharedName },
+		gameVersion : 25,
+	})
+
+	if ( fs22Record.id === 22001 && fs22Record.version === '1.0.0.0' && fs22Record.recent ) {
+		test.step('FS22 record uses the FS22 ModHub entry')
+	} else {
+		test.error(`FS22 record was incorrect: ${JSON.stringify(fs22Record)}`)
+	}
+
+	if ( fs25Record.id === 25001 && fs25Record.version === '2.0.0.0' && !fs25Record.recent ) {
+		test.step('FS25 record uses the FS25 ModHub entry')
+	} else {
+		test.error(`FS25 record was incorrect: ${JSON.stringify(fs25Record)}`)
+	}
+
+	test.end()
+	return Promise.resolve()
 }
 
 
