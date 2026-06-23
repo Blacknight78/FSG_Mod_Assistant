@@ -233,6 +233,7 @@ class baseLooker {
 		try {
 			return {
 				category       : this.#getCategory(storeData?.category),
+				categoryID     : typeof storeData?.category === 'string' ? storeData.category.toLowerCase() : null,
 				functions      : this.#util_getDefault(storeData?.functions?.function, []),
 				hasColor       : this.#util_getGTCount(xml?.colorable?.colors?.color?.length, 1),
 				icon           : this.#util_getDefault(storeData?.image),
@@ -478,6 +479,7 @@ class baseLooker {
 			return {
 				brand          : this.#parseBrand(storeData?.brand),
 				category       : this.#getCategory(storeData?.category),
+				categoryID     : typeof storeData?.category === 'string' ? storeData.category.toLowerCase() : null,
 				fillLevel      : theseFills.capacity,
 				fillTypes      : theseFills.types,
 				fuelType       : this.#util_getDefault(xml?.motorized?.consumerconfigurations?.[0].consumerconfiguration?.[0]?.consumer?.[0]?.$?.FILLTYPE, false),
