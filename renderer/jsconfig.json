@@ -8,6 +8,7 @@
 		"node_modules",
 		"renderer/renderJS/inc/**/*.js",
 		"renderer/renderJS/util/baseGameData.js",
-		"renderer/renderJS/util/baseGameData19.js"
+		"renderer/renderJS/util/baseGameData19.js",
+		"renderer/renderJS/util/baseGameData25.js"
 	],
 }
