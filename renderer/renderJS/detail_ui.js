@@ -210,6 +210,7 @@ class windowState {
 			description    : this.#doL10N(this.mod.l10n.description),
 			file_date      : (new Date(Date.parse(this.mod.fileDetail.fileDate))).toLocaleString(this.locale, {timeZoneName : 'short'}),
 			filesize       : await DATA.bytesToHR(this.mod.fileDetail.fileSize),
+			github_version : this.#isGitHubURL(sourceURL) ? I18N.defer('update_status_checking', false) : `<em>${I18N.defer('update_source_not_configured', false )}</em>`,
 			has_scripts    : DATA.checkX(this.mod.modDesc.scriptFiles),
 			i3dFiles       : this.mod.fileDetail.i3dFiles.join('\n'),
 			is_multiplayer : DATA.checkX(this.mod.modDesc.multiPlayer, false),
@@ -221,6 +222,7 @@ class windowState {
 			store_items    : DATA.checkX(this.mod.modDesc.storeItems),
 			title          : (( tempTitle !== '--' ) ? tempTitle : this.mod.fileDetail.shortName),
 			update_source  : this.#updateSourceHTML(sourceURL),
+			update_status  : this.#isGitHubURL(sourceURL) ? I18N.defer('update_status_checking', false) : `<em>${I18N.defer('update_source_not_configured', false )}</em>`,
 			version        : DATA.escapeSpecial(this.mod.modDesc.version),
 		}
 		for ( const [id, content] of Object.entries(idMap)) {
@@ -232,6 +234,7 @@ class windowState {
 		MA.byIdValue('update_source_input', sourceURL)
 		MA.byIdEventIfExists('update_source_save', () => { this.#updateSourceSave() })
 		MA.byIdEventIfExists('update_source_clear', () => { this.#updateSourceClear() })
+		this.#refreshGitHubVersion(sourceURL)
 
 		MA.byIdHTMLorHide(
 			'icon_div',
@@ -288,6 +291,7 @@ class windowState {
 		window.settings.site(this.mod.fileDetail.shortName, sourceURL).then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
+			this.#refreshGitHubVersion(value)
 		})
 	}
 
@@ -296,7 +300,49 @@ class windowState {
 		window.settings.site(this.mod.fileDetail.shortName, '').then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
+			this.#refreshGitHubVersion(value)
 		})
+	}
+
+	#refreshGitHubVersion(sourceURL) {
+		if ( !this.#isGitHubURL(sourceURL) ) {
+			MA.byIdHTML('github_version', `<em>${I18N.defer('update_source_not_configured', false )}</em>`)
+			MA.byIdHTML('update_status', `<em>${I18N.defer('update_source_not_configured', false )}</em>`)
+			return
+		}
+
+		MA.byIdText('github_version', I18N.defer('update_status_checking', false))
+		MA.byIdText('update_status', I18N.defer('update_status_checking', false))
+
+		window.detail_IPC.getGitHub(sourceURL).then((result) => {
+			if ( !result.ok ) {
+				MA.byIdHTML('github_version', `<em>${I18N.defer(result.error === 'no_release_or_tag' ? 'update_status_no_github_release' : 'update_status_failed', false )}</em>`)
+				MA.byIdHTML('update_status', `<span class="text-warning">${I18N.defer('update_status_unknown', false)}</span>`)
+				return
+			}
+
+			const safeVersion = DATA.escapeSpecial(result.version)
+			const safeURL     = DATA.escapeSpecial(result.url)
+			MA.byIdHTML('github_version', `<a href="${safeURL}" target="_BLANK">${safeVersion}</a>`)
+			MA.byIdHTML('update_status', this.#versionStatusHTML(this.mod.modDesc.version, result.version))
+		}).catch(() => {
+			MA.byIdHTML('github_version', `<em>${I18N.defer('update_status_failed', false )}</em>`)
+			MA.byIdHTML('update_status', `<span class="text-warning">${I18N.defer('update_status_unknown', false)}</span>`)
+		})
+	}
+
+	#versionStatusHTML(localVersion, remoteVersion) {
+		const compareResult = DATA.versionCompare(localVersion, remoteVersion)
+		if ( compareResult < 0 ) {
+			return `<span class="text-warning">${I18N.defer('update_status_available', false)}</span>`
+		}
+		if ( Number.isNaN(compareResult) && DATA.versionDifferent(localVersion, remoteVersion) ) {
+			return `<span class="text-warning">${I18N.defer('update_status_available', false)}</span>`
+		}
+		if ( compareResult === 0 ) {
+			return `<span class="text-success">${I18N.defer('update_status_current', false)}</span>`
+		}
+		return `<span class="text-info">${I18N.defer('update_status_unknown', false)}</span>`
 	}
 
 	// MARK: SUB binds
