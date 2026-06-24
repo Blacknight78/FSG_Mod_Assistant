@@ -748,11 +748,15 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL) => {
 		const releaseResponse = await fetch(releaseURL, { headers })
 		if ( releaseResponse.ok ) {
 			const release = await releaseResponse.json()
+			const zipAsset = getGitHubReleaseZipAsset(release)
 			return {
-				ok      : true,
-				source  : 'release',
-				url     : release.html_url || resolvedRepo.htmlURL,
-				version : release.tag_name || release.name || '',
+				assetName   : zipAsset?.name ?? null,
+				downloadURL : zipAsset?.browser_download_url ?? null,
+				hasDownload : zipAsset !== null,
+				ok          : true,
+				source      : 'release',
+				url         : release.html_url || resolvedRepo.htmlURL,
+				version     : release.tag_name || release.name || '',
 			}
 		}
 
@@ -777,6 +781,15 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL) => {
 		return { ok : false, error : err.message, url : repoInfo.htmlURL }
 	}
 })
+
+function getGitHubReleaseZipAsset(release) {
+	if ( !Array.isArray(release.assets) ) { return null }
+	return release.assets.find((asset) => {
+		if ( typeof asset?.name !== 'string' ) { return false }
+		if ( typeof asset?.browser_download_url !== 'string' ) { return false }
+		return asset.name.toLowerCase().endsWith('.zip')
+	}) ?? null
+}
 
 async function getGitHubResolvedRepo(repoInfo, headers) {
 	const repoURL      = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}`
