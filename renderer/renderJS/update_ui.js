@@ -119,8 +119,9 @@ function getUpdateCheckboxes() {
 }
 
 function updateSelectedCount() {
-	const selectedCount = getUpdateCheckboxes().filter((checkbox) => checkbox.checked).length
+	const selectedCount = getSelectedCheckboxes().length
 	MA.byIdHTML('selectedCount', `${I18N.defer('update_list_selected', false)} ${selectedCount}`)
+	MA.byId('openSelectedButton').disabled = selectedCount === 0
 }
 
 function setAllSelections(isChecked) {
@@ -128,6 +129,18 @@ function setAllSelections(isChecked) {
 		checkbox.checked = isChecked
 	}
 	updateSelectedCount()
+}
+
+function getSelectedCheckboxes() {
+	return getUpdateCheckboxes().filter((checkbox) => checkbox.checked)
+}
+
+function openSelectedSources() {
+	for ( const checkbox of getSelectedCheckboxes() ) {
+		if ( isGitHubURL(checkbox.dataset.sourceUrl) ) {
+			window.update_IPC.openURL(checkbox.dataset.sourceUrl)
+		}
+	}
 }
 
 async function displayCandidates(candidates, renderID) {
@@ -178,7 +191,9 @@ async function displayCandidates(candidates, renderID) {
 
 	for ( const { node, sourceURL } of updateRows ) {
 		node.firstElementChild.classList.add('bg-warning-subtle')
-		node.querySelector('.update-select-checkbox').addEventListener('change', updateSelectedCount)
+		const selectCheckbox = node.querySelector('.update-select-checkbox')
+		selectCheckbox.dataset.sourceUrl = sourceURL
+		selectCheckbox.addEventListener('change', updateSelectedCount)
 		const sourceButton = node.querySelector('.update-source-button')
 		sourceButton.dataset.sourceUrl = sourceURL
 		sourceButton.addEventListener('click', (event) => {
@@ -222,6 +237,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
 	MA.byIdEventIfExists('selectAllButton', () => { setAllSelections(true) })
 	MA.byIdEventIfExists('selectNoneButton', () => { setAllSelections(false) })
+	MA.byIdEventIfExists('openSelectedButton', openSelectedSources)
 
 	window.update_IPC.receive('mods:list', (modCollect) => {
 		startFromModList(modCollect)
