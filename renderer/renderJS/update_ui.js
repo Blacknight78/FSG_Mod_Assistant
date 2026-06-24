@@ -86,6 +86,16 @@ function statusText(result) {
 	return I18N.defer('update_status_failed', false)
 }
 
+function downloadStatusText(result) {
+	if ( result.hasDownload ) {
+		return `<span class="badge text-bg-success">${I18N.defer('update_list_download_available', false)}</span> <span class="small">${DATA.escapeSpecial(result.assetName)}</span>`
+	}
+	if ( result.source === 'release' ) {
+		return `<span class="badge text-bg-warning">${I18N.defer('update_list_no_zip_asset', false)}</span>`
+	}
+	return `<span class="badge text-bg-secondary">${I18N.defer('update_list_open_source_only', false)}</span>`
+}
+
 function withTimeout(promise, timeoutMS = 15000) {
 	return Promise.race([
 		promise,
@@ -174,6 +184,7 @@ async function displayCandidates(candidates, renderID) {
 		return {
 			node      : DATA.templateEngine('update_line', {
 				collections   : collectionList.join(''),
+				downloadStatus : downloadStatusText(result),
 				githubVersion : DATA.escapeSpecial(result.version),
 				iconImage     : `<img class="img-fluid" src="${DATA.iconMaker(entry.icon)}" />`,
 				localVersion  : DATA.escapeSpecial([...entry.local].sort().join(', ')),
@@ -181,6 +192,7 @@ async function displayCandidates(candidates, renderID) {
 				shortName     : DATA.escapeSpecial(key),
 				statusText    : statusText(result),
 			}),
+			downloadURL : result.downloadURL ?? null,
 			sourceURL : entry.sourceURL,
 		}
 	})
@@ -189,9 +201,12 @@ async function displayCandidates(candidates, renderID) {
 
 	if ( renderID !== activeRenderID ) { return }
 
-	for ( const { node, sourceURL } of updateRows ) {
+	for ( const { downloadURL, node, sourceURL } of updateRows ) {
 		node.firstElementChild.classList.add('bg-warning-subtle')
 		const selectCheckbox = node.querySelector('.update-select-checkbox')
+		if ( downloadURL !== null ) {
+			selectCheckbox.dataset.downloadUrl = downloadURL
+		}
 		selectCheckbox.dataset.sourceUrl = sourceURL
 		selectCheckbox.addEventListener('change', updateSelectedCount)
 		const sourceButton = node.querySelector('.update-source-button')
