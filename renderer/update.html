@@ -95,7 +95,10 @@
 						<div class="fw-bold" id="manifestTitle"></div>
 						<div class="btn-group me-auto">
 							<button class="btn btn-sm btn-secondary active" type="button" id="manifestShowAll">Show all</button>
-							<button class="btn btn-sm btn-outline-danger" type="button" id="manifestShowAttention">Show manual or missing</button>
+							<button class="btn btn-sm btn-outline-danger" type="button" id="manifestShowAttention">Show only problem mods</button>
+							<button class="btn btn-sm btn-outline-success" type="button" id="manifestShowDownloadable">Downloadable</button>
+							<button class="btn btn-sm btn-outline-info" type="button" id="manifestShowNeedsUpdate">Needs install/update</button>
+							<button class="btn btn-sm btn-outline-secondary" type="button" id="manifestShowCurrent">Already current</button>
 						</div>
 						<div class="btn-group">
 							<button class="btn btn-sm btn-outline-success" type="button" id="manifestSelectAll">Select downloadable</button>
@@ -167,6 +170,7 @@
 				<div><template-var>stateBadge</template-var></div>
 			</div>
 			<div class="small text-body-secondary"><template-var>versions</template-var></div>
+			<div class="small manifest-install-detail"><template-var>installDetail</template-var></div>
 			<div class="small"><template-var>detail</template-var></div>
 			<button class="btn btn-sm btn-outline-primary mt-2 manifest-source-button d-none" type="button">Open source page</button>
 		</div>

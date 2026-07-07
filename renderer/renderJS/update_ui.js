@@ -153,6 +153,7 @@ async function mapWithConcurrency(entries, limit, mapper) {
 let activeRenderID = 0
 let activeCollectionKey = null
 let manifestResolvedMods = []
+let manifestViewFilter = 'all'
 
 function collectionContextText(modCollect) {
 	const activeCollect   = modCollect.opts?.activeCollection ?? null
@@ -359,14 +360,54 @@ async function refreshUpdateCandidates() {
 
 function manifestStateBadge(state) {
 	if ( state === 'downloadable' ) { return '<span class="badge text-bg-success">Latest ZIP available</span>' }
-	if ( state === 'manual' ) { return '<span class="badge text-bg-warning">Manual download</span>' }
+	if ( state === 'manual' ) { return '<span class="badge text-bg-warning">Manual download required</span>' }
 	return '<span class="badge text-bg-danger">Source missing</span>'
 }
 
 function manifestStateDetail(mod) {
-	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(mod.sourceType === 'modhub' ? 'ModHub' : 'GitHub')} can supply this mod automatically.` }
-	if ( mod.state === 'manual' ) { return 'A source page is known, but no safe automatic ZIP download is available.' }
-	return 'No supported update source was included. Ask the collection author for this mod.'
+	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(mod.sourceType === 'modhub' ? 'ModHub' : 'GitHub')} has a ZIP the manager can download and install.` }
+	if ( mod.state === 'manual' ) { return 'The source page is known, but the manager cannot safely download this ZIP automatically. Open the source page and install it manually.' }
+	return 'No usable source was included for this mod. Ask the collection author for a ModHub, GitHub, or download page link.'
+}
+
+function manifestTargetCollectionName() {
+	const select = MA.byId('manifestCollection')
+	return select.selectedOptions?.[0]?.textContent ?? 'the selected collection'
+}
+
+function manifestTargetInstallState(mod) {
+	const collectionKey = MA.byId('manifestCollection').value
+	if ( collectionKey === '' ) { return mod.installState ?? 'not_installed' }
+	const records = Array.isArray(mod.localRecords) ? mod.localRecords.filter((record) => record.collectionKey === collectionKey) : []
+	const versions = records.map((record) => record.version).filter((version) => typeof version === 'string' && version !== '')
+	if ( versions.length === 0 ) { return 'not_installed' }
+	if ( typeof mod.remoteVersion !== 'string' || mod.remoteVersion === '' ) { return 'installed_unknown' }
+	if ( versions.some((version) => version === mod.remoteVersion || DATA.versionCompare(version, mod.remoteVersion) === 0) ) { return 'current' }
+	if ( versions.some((version) => DATA.versionCompare(version, mod.remoteVersion) < 0) ) { return 'update_available' }
+	return 'installed_different'
+}
+
+function manifestInstallBadge(installState) {
+	if ( installState === 'current' ) { return '<span class="badge text-bg-success">Already current</span>' }
+	if ( installState === 'update_available' ) { return '<span class="badge text-bg-info">Update needed</span>' }
+	if ( installState === 'not_installed' ) { return '<span class="badge text-bg-danger">Not installed</span>' }
+	if ( installState === 'installed_different' ) { return '<span class="badge text-bg-warning">Different installed version</span>' }
+	return '<span class="badge text-bg-secondary">Installed version unknown</span>'
+}
+
+function manifestInstallDetail(mod) {
+	const installState = manifestTargetInstallState(mod)
+	const collectionName = DATA.escapeSpecial(manifestTargetCollectionName())
+	const records = Array.isArray(mod.localRecords) ? mod.localRecords.filter((record) => MA.byId('manifestCollection').value === '' || record.collectionKey === MA.byId('manifestCollection').value) : []
+	const localVersions = [...new Set(records.map((record) => record.version).filter((version) => typeof version === 'string' && version !== ''))]
+	const remoteText = mod.remoteVersion === null ? `shared version ${mod.requestedVersion ?? 'unknown'}` : `latest version ${mod.remoteVersion}`
+	const localText = localVersions.length === 0 ? 'no local version' : `local version ${localVersions.join(', ')}`
+	const summary = `${DATA.escapeSpecial(localText)}; ${DATA.escapeSpecial(remoteText)}`
+	if ( installState === 'current' ) { return `${manifestInstallBadge(installState)} ${summary}. ${collectionName} already has this version.` }
+	if ( installState === 'update_available' ) { return `${manifestInstallBadge(installState)} ${summary}. ${collectionName} has an older version.` }
+	if ( installState === 'not_installed' ) { return `${manifestInstallBadge(installState)} ${summary}. ${collectionName} does not have this mod yet.` }
+	if ( installState === 'installed_different' ) { return `${manifestInstallBadge(installState)} ${summary}. ${collectionName} has a different version.` }
+	return `${manifestInstallBadge(installState)} ${summary}. ${collectionName} has this mod, but the latest version is unknown.`
 }
 
 function manifestSelectionChanged() {
@@ -376,23 +417,38 @@ function manifestSelectionChanged() {
 
 function setManifestSelections(checked) {
 	for ( const checkbox of document.querySelectorAll('.manifest-select:not(:disabled)') ) {
-		checkbox.checked = checked
+		const row = checkbox.closest('.manifest-row')
+		checkbox.checked = checked && row?.classList.contains('d-none') !== true
 	}
 	manifestSelectionChanged()
 }
 
+function manifestRowShouldShow(row) {
+	if ( manifestViewFilter === 'attention' ) { return row.dataset.state === 'manual' || row.dataset.state === 'missing' }
+	if ( manifestViewFilter === 'downloadable' ) { return row.dataset.state === 'downloadable' }
+	if ( manifestViewFilter === 'needsUpdate' ) { return row.dataset.installState === 'not_installed' || row.dataset.installState === 'update_available' }
+	if ( manifestViewFilter === 'current' ) { return row.dataset.installState === 'current' }
+	return true
+}
+
+function setManifestFilterButton(id, active, activeClass) {
+	const button = MA.byId(id)
+	button.classList.toggle('active', active)
+	button.classList.toggle(activeClass, active)
+	button.classList.toggle(`btn-outline-${activeClass.replace('btn-', '')}`, !active)
+}
+
 function applyManifestViewFilter(filter) {
+	manifestViewFilter = filter
 	for ( const row of document.querySelectorAll('.manifest-row') ) {
-		row.classList.toggle('d-none', filter === 'attention' && row.dataset.state === 'downloadable')
+		row.classList.toggle('d-none', !manifestRowShouldShow(row))
 	}
-	const showAll = MA.byId('manifestShowAll')
-	const showAttention = MA.byId('manifestShowAttention')
-	showAll.classList.toggle('active', filter === 'all')
-	showAll.classList.toggle('btn-secondary', filter === 'all')
-	showAll.classList.toggle('btn-outline-secondary', filter !== 'all')
-	showAttention.classList.toggle('active', filter === 'attention')
-	showAttention.classList.toggle('btn-danger', filter === 'attention')
-	showAttention.classList.toggle('btn-outline-danger', filter !== 'attention')
+	setManifestFilterButton('manifestShowAll', filter === 'all', 'btn-secondary')
+	setManifestFilterButton('manifestShowAttention', filter === 'attention', 'btn-danger')
+	setManifestFilterButton('manifestShowDownloadable', filter === 'downloadable', 'btn-success')
+	setManifestFilterButton('manifestShowNeedsUpdate', filter === 'needsUpdate', 'btn-info')
+	setManifestFilterButton('manifestShowCurrent', filter === 'current', 'btn-secondary')
+	manifestSelectionChanged()
 }
 
 function renderManifestPreview(result) {
@@ -400,19 +456,25 @@ function renderManifestPreview(result) {
 	const list = MA.byId('manifestList')
 	list.innerHTML = ''
 	const counts = { downloadable : 0, manual : 0, missing : 0 }
+	const installCounts = { current : 0, installed_different : 0, installed_unknown : 0, not_installed : 0, update_available : 0 }
 
 	for ( const [index, mod] of result.mods.entries() ) {
 		counts[mod.state]++
+		const installState = manifestTargetInstallState(mod)
+		installCounts[installState]++
 		const localText = mod.localVersions.length === 0 ? 'not currently stored locally' : `local: ${mod.localVersions.join(', ')}`
 		const remoteText = mod.remoteVersion === null ? `shared version: ${mod.requestedVersion ?? 'unknown'}` : `latest: ${mod.remoteVersion}`
 		const node = DATA.templateEngine('manifest_line', {
 			detail     : manifestStateDetail(mod),
+			installDetail : manifestInstallDetail(mod),
 			modName    : DATA.escapeSpecial(mod.modName),
 			stateBadge : manifestStateBadge(mod.state),
 			versions   : `${DATA.escapeSpecial(remoteText)}; ${DATA.escapeSpecial(localText)}`,
 		})
 		const row = node.firstElementChild
+		row.dataset.index = index
 		row.dataset.state = mod.state
+		row.dataset.installState = installState
 		if ( mod.state === 'missing' ) { row.classList.add('bg-danger-subtle', 'border-danger') }
 		if ( mod.state === 'manual' ) { row.classList.add('bg-warning-subtle', 'border-warning') }
 		const checkbox = node.querySelector('.manifest-select')
@@ -428,10 +490,37 @@ function renderManifestPreview(result) {
 	}
 
 	MA.byIdText('manifestTitle', `${result.manifest.collection.name} — ${result.mods.length} mods`)
-	MA.byIdText('manifestSummary', `${counts.downloadable} automatic, ${counts.manual} manual, ${counts.missing} missing.`)
+	MA.byIdText(
+		'manifestSummary',
+		`${counts.downloadable} downloadable, ${counts.manual} manual, ${counts.missing} missing. ${installCounts.current} current, ${installCounts.update_available} update needed, ${installCounts.not_installed} not installed in ${manifestTargetCollectionName()}.`
+	)
 	MA.byId('manifestPreview').classList.remove('d-none')
 	applyManifestViewFilter('all')
 	setManifestSelections(false)
+}
+
+function refreshManifestTargetStatus() {
+	const installCounts = { current : 0, installed_different : 0, installed_unknown : 0, not_installed : 0, update_available : 0 }
+	const counts = { downloadable : 0, manual : 0, missing : 0 }
+	for ( const row of document.querySelectorAll('.manifest-row') ) {
+		const index = Number.parseInt(row.dataset.index, 10)
+		const mod = manifestResolvedMods[index]
+		if ( mod === undefined ) { continue }
+		counts[mod.state]++
+		const installState = manifestTargetInstallState(mod)
+		installCounts[installState]++
+		row.dataset.installState = installState
+		const detail = row.querySelector('.manifest-install-detail')
+		if ( detail !== null ) { detail.innerHTML = manifestInstallDetail(mod) }
+	}
+	if ( manifestResolvedMods.length !== 0 ) {
+		MA.byIdText(
+			'manifestSummary',
+			`${counts.downloadable} downloadable, ${counts.manual} manual, ${counts.missing} missing. ${installCounts.current} current, ${installCounts.update_available} update needed, ${installCounts.not_installed} not installed in ${manifestTargetCollectionName()}.`
+		)
+	}
+	applyManifestViewFilter(manifestViewFilter)
+	manifestSelectionChanged()
 }
 
 async function loadManifestCollections() {
@@ -450,7 +539,7 @@ async function loadManifestCollections() {
 	} else if ( collections.some((collection) => collection.key === activeCollectionKey) ) {
 		select.value = activeCollectionKey
 	}
-	manifestSelectionChanged()
+	refreshManifestTargetStatus()
 }
 
 async function toggleManifestPanel() {
@@ -530,8 +619,11 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byIdEventIfExists('manifestSelectNone', () => setManifestSelections(false))
 	MA.byIdEventIfExists('manifestShowAll', () => applyManifestViewFilter('all'))
 	MA.byIdEventIfExists('manifestShowAttention', () => applyManifestViewFilter('attention'))
+	MA.byIdEventIfExists('manifestShowDownloadable', () => applyManifestViewFilter('downloadable'))
+	MA.byIdEventIfExists('manifestShowNeedsUpdate', () => applyManifestViewFilter('needsUpdate'))
+	MA.byIdEventIfExists('manifestShowCurrent', () => applyManifestViewFilter('current'))
 	MA.byIdEventIfExists('manifestInstall', installManifestSelection)
-	MA.byIdEventIfExists('manifestCollection', manifestSelectionChanged, 'change')
+	MA.byIdEventIfExists('manifestCollection', refreshManifestTargetStatus, 'change')
 
 	window.update_IPC.receive('mods:list', (modCollect) => {
 		startFromModList(modCollect)

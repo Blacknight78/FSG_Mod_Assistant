@@ -3072,16 +3072,33 @@ function parseCollectionManifestText(rawText) {
 	}
 }
 
-function manifestLocalVersions(modName) {
-	const versions = new Set()
+function manifestLocalRecords(modName) {
+	const records = []
 	for ( const collectionKey of serveIPC.modCollect.collections ) {
-		for ( const modRecord of Object.values(serveIPC.modCollect.getModCollection(collectionKey)?.mods ?? {}) ) {
+		const collection = serveIPC.modCollect.getModCollection(collectionKey)
+		for ( const modRecord of Object.values(collection?.mods ?? {}) ) {
 			if ( modRecord?.fileDetail?.shortName === modName && typeof modRecord?.modDesc?.version === 'string' ) {
-				versions.add(modRecord.modDesc.version)
+				records.push({
+					collectionKey,
+					collectionName : serveIPC.modCollect.collectionToName?.[collectionKey] ?? collectionKey,
+					version        : modRecord.modDesc.version,
+				})
 			}
 		}
 	}
-	return [...versions]
+	return records
+}
+
+function manifestInstallState(localVersions, remoteVersion) {
+	if ( localVersions.length === 0 ) { return 'not_installed' }
+	if ( typeof remoteVersion !== 'string' || remoteVersion === '' ) { return 'installed_unknown' }
+	if ( localVersions.some((version) => compareModVersions(version, remoteVersion) === 0 || version === remoteVersion) ) {
+		return 'current'
+	}
+	if ( localVersions.some((version) => compareModVersions(version, remoteVersion) < 0) ) {
+		return 'update_available'
+	}
+	return 'installed_different'
 }
 
 function newestResolvedManifestSource(results) {
@@ -3116,10 +3133,14 @@ async function resolveManifestMod(mod) {
 
 	const bestSource = newestResolvedManifestSource(sourceResults)
 	if ( bestSource !== null ) {
+		const localRecords = manifestLocalRecords(mod.name)
+		const localVersions = [...new Set(localRecords.map((record) => record.version))]
 		return {
 			assetName : bestSource.assetName ?? mod.fileName,
 			downloadURL : bestSource.downloadURL ?? null,
-			localVersions : manifestLocalVersions(mod.name),
+			installState : manifestInstallState(localVersions, bestSource.version),
+			localRecords,
+			localVersions,
 			modHubID  : bestSource.modHubID,
 			modName   : mod.name,
 			remoteVersion : bestSource.version,
@@ -3131,10 +3152,14 @@ async function resolveManifestMod(mod) {
 	}
 
 	const fallbackSource = manualSource ?? automaticSources[0] ?? null
+	const localRecords = manifestLocalRecords(mod.name)
+	const localVersions = [...new Set(localRecords.map((record) => record.version))]
 	return {
 		assetName : mod.fileName,
 		downloadURL : null,
-		localVersions : manifestLocalVersions(mod.name),
+		installState : manifestInstallState(localVersions, mod.version),
+		localRecords,
+		localVersions,
 		modHubID  : null,
 		modName   : mod.name,
 		remoteVersion : null,
