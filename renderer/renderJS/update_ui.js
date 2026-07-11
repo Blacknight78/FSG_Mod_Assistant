@@ -50,6 +50,22 @@ function manualSourceResult(entry) {
 	}
 }
 
+function isManualSourceType(sourceType) {
+	return ['itch', 'kingmods', 'manual'].includes(sourceType)
+}
+
+function sourceTypeLabel(sourceType) {
+	if ( sourceType === 'modhub' ) { return 'ModHub' }
+	if ( sourceType === 'github' ) { return 'GitHub' }
+	if ( sourceType === 'kingmods' ) { return 'KingMods' }
+	if ( sourceType === 'itch' ) { return 'itch.io' }
+	return 'Manual web page'
+}
+
+function manualSourceMessage(sourceType) {
+	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
+}
+
 // eslint-disable-next-line complexity
 function makeCandidateMap(modCollect) {
 	const thisVersion    = modCollect.appSettings.game_version
@@ -127,8 +143,8 @@ function isUpdateAvailable(localVersions, remoteVersion, allowUnknownDifference 
 }
 
 function statusText(result) {
-	if ( ['itch', 'kingmods', 'manual'].includes(result.source) ) {
-		return 'Manual source saved. Open the web page to check for an update.'
+	if ( isManualSourceType(result.source) ) {
+		return manualSourceMessage(result.source)
 	}
 	if ( result.ok ) {
 		return I18N.defer('update_status_available', false)
@@ -140,8 +156,8 @@ function statusText(result) {
 }
 
 function downloadStatusText(result) {
-	if ( ['itch', 'kingmods', 'manual'].includes(result.source) ) {
-		return '<span class="badge text-bg-warning">Manual download required</span>'
+	if ( isManualSourceType(result.source) ) {
+		return `<span class="badge text-bg-warning">${sourceTypeLabel(result.source)} manual download</span>`
 	}
 	if ( result.source === 'modhub' && !result.hasDownload ) {
 		return '<span class="badge text-bg-secondary">Manual download from ModHub</span>'
@@ -453,18 +469,10 @@ function manifestStateBadge(state) {
 	return '<span class="badge text-bg-danger">Source missing</span>'
 }
 
-function sourceTypeLabel(sourceType) {
-	if ( sourceType === 'modhub' ) { return 'ModHub' }
-	if ( sourceType === 'github' ) { return 'GitHub' }
-	if ( sourceType === 'kingmods' ) { return 'KingMods' }
-	if ( sourceType === 'itch' ) { return 'itch.io' }
-	return 'manual source'
-}
-
 function manifestStateDetail(mod) {
 	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(sourceTypeLabel(mod.sourceType))} has a ZIP the manager can download and install.` }
-	if ( mod.state === 'manual' ) { return `${DATA.escapeSpecial(sourceTypeLabel(mod.sourceType))} is known, but the manager cannot safely download this ZIP automatically. Open the source page and install it manually.` }
-	return 'No usable source was included for this mod. Ask the collection author for a ModHub, GitHub, KingMods, itch.io, or download page link.'
+	if ( mod.state === 'manual' ) { return `${DATA.escapeSpecial(manualSourceMessage(mod.sourceType))}` }
+	return 'Missing source. No GitHub, ModHub, KingMods, itch.io, or manual web page link was included for this mod.'
 }
 
 function manifestTargetCollectionName() {

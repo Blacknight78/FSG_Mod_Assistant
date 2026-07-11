@@ -456,7 +456,7 @@ class windowState {
 			const updatePointer = this.#updatePointer(null, sourceURL, sourceInfo.type)
 			const safeLabel = DATA.escapeSpecial(sourceInfo.label)
 			MA.byIdHTML('github_version', `<em>${safeLabel} source saved</em>`)
-			MA.byIdHTML('update_status', `<span class="text-info">${safeLabel} is manual for now. Open the source page to check or download updates.</span>`)
+			MA.byIdHTML('update_status', `<span class="text-info">${safeLabel} is a manual download source. Open the web page to check and install updates manually.</span>`)
 			MA.byId('download_latest_update')?.clsHide()
 			window.detail_IPC.hasRollbackBackup(updatePointer).then((hasRollbackBackup) => {
 				this.#refreshRollbackButton(updatePointer, hasRollbackBackup)
