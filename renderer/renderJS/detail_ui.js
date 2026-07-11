@@ -348,7 +348,7 @@ class windowState {
 	#updateSourceHTML(sourceURL) {
 		if ( sourceURL !== '' ) {
 			const safeURL = DATA.escapeSpecial(sourceURL)
-			const label   = this.#isGitHubURL(sourceURL) ? 'GitHub' : I18N.defer('update_source_custom', false)
+			const label   = this.#updateSourceInfo(sourceURL).label
 			return `<a href="${safeURL}" target="_BLANK">${label}</a>`
 		}
 
@@ -360,10 +360,23 @@ class windowState {
 	}
 
 	#isGitHubURL(sourceURL) {
+		return this.#updateSourceInfo(sourceURL).type === 'github'
+	}
+
+	#updateSourceInfo(sourceURL) {
 		try {
-			return new URL(sourceURL).hostname.toLowerCase() === 'github.com'
+			const url = new URL(sourceURL)
+			if ( url.protocol !== 'https:' ) {
+				return { label : I18N.defer('update_source_custom', false), type : 'manual' }
+			}
+			const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+			if ( host === 'github.com' ) { return { label : 'GitHub', type : 'github' } }
+			if ( host === 'kingmods.net' ) { return { label : 'KingMods', type : 'kingmods' } }
+			if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return { label : 'itch.io', type : 'itch' } }
+			if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return { label : 'ModHub', type : 'modhub' } }
+			return { label : I18N.defer('update_source_custom', false), type : 'manual' }
 		} catch {
-			return false
+			return { label : I18N.defer('update_source_custom', false), type : 'manual' }
 		}
 	}
 
@@ -388,13 +401,15 @@ class windowState {
 		return '<span class="text-info">Matched to ModHub; comparison unavailable</span>'
 	}
 
-	#normalizedGitHubURL(sourceURL) {
+	#normalizedUpdateSourceURL(sourceURL) {
 		try {
 			const url = new URL(sourceURL)
 			if ( url.protocol !== 'https:' ) { return null }
-			if ( url.hostname.toLowerCase() !== 'github.com' ) { return null }
-			const parts = url.pathname.split('/').filter((item) => item !== '')
-			if ( parts.length < 2 ) { return null }
+			const sourceInfo = this.#updateSourceInfo(url.toString())
+			if ( sourceInfo.type === 'github' ) {
+				const parts = url.pathname.split('/').filter((item) => item !== '')
+				if ( parts.length < 2 ) { return null }
+			}
 			url.hash = ''
 			return url.toString()
 		} catch {
@@ -403,7 +418,7 @@ class windowState {
 	}
 
 	#updateSourceSave() {
-		const sourceURL = this.#normalizedGitHubURL(MA.byIdValue('update_source_input').trim())
+		const sourceURL = this.#normalizedUpdateSourceURL(MA.byIdValue('update_source_input').trim())
 
 		if ( sourceURL === null ) {
 			MA.byId('update_source_input').classList.add('is-invalid')
@@ -428,14 +443,20 @@ class windowState {
 	}
 
 	#refreshGitHubVersion(sourceURL) {
-		if ( !this.#isGitHubURL(sourceURL) ) {
-			if ( this.mod.modHub.id !== null ) {
+		const sourceInfo = this.#updateSourceInfo(sourceURL)
+		if ( sourceInfo.type === 'modhub' && this.mod.modHub.id !== null ) {
+			this.#refreshModHubVersion()
+			return
+		}
+		if ( sourceInfo.type !== 'github' ) {
+			if ( sourceURL === '' && this.mod.modHub.id !== null ) {
 				this.#refreshModHubVersion()
 				return
 			}
-			const updatePointer = this.#updatePointer(null, sourceURL)
-			MA.byIdHTML('github_version', `<em>${I18N.defer('update_source_not_configured', false )}</em>`)
-			MA.byIdHTML('update_status', `<em>${I18N.defer('update_source_not_configured', false )}</em>`)
+			const updatePointer = this.#updatePointer(null, sourceURL, sourceInfo.type)
+			const safeLabel = DATA.escapeSpecial(sourceInfo.label)
+			MA.byIdHTML('github_version', `<em>${safeLabel} source saved</em>`)
+			MA.byIdHTML('update_status', `<span class="text-info">${safeLabel} is manual for now. Open the source page to check or download updates.</span>`)
 			MA.byId('download_latest_update')?.clsHide()
 			window.detail_IPC.hasRollbackBackup(updatePointer).then((hasRollbackBackup) => {
 				this.#refreshRollbackButton(updatePointer, hasRollbackBackup)

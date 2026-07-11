@@ -15,11 +15,18 @@ function doL10N(item, locale) {
 	return DATA.escapeSpecial(returnText)
 }
 
-function isGitHubURL(sourceURL) {
+function updateSourceInfo(sourceURL) {
 	try {
-		return new URL(sourceURL).hostname.toLowerCase() === 'github.com'
+		const url = new URL(sourceURL)
+		if ( url.protocol !== 'https:' ) { return { label : 'Manual web page', type : 'manual' } }
+		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+		if ( host === 'github.com' ) { return { label : 'GitHub', type : 'github' } }
+		if ( host === 'kingmods.net' ) { return { label : 'KingMods', type : 'kingmods' } }
+		if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return { label : 'itch.io', type : 'itch' } }
+		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return { label : 'ModHub', type : 'modhub' } }
+		return { label : 'Manual web page', type : 'manual' }
 	} catch {
-		return false
+		return { label : 'Manual web page', type : 'manual' }
 	}
 }
 
@@ -55,6 +62,7 @@ function makeCandidateMap(modCollect) {
 			const thisMod  = modCollect.modList[collectKey].mods[modKey]
 			const modName  = thisMod.fileDetail.shortName
 			const sourceURL = modSites[modName] ?? ''
+			const sourceInfo = updateSourceInfo(sourceURL)
 
 			if ( thisMod.fileDetail.isFolder ) { continue }
 
@@ -80,7 +88,7 @@ function makeCandidateMap(modCollect) {
 				candidates[candidateKey].local.add(thisMod.modDesc.version)
 			}
 
-			if ( isGitHubURL(sourceURL) ) { addCandidate('github', sourceURL) }
+			if ( sourceInfo.type === 'github' ) { addCandidate('github', sourceURL) }
 			if ( thisMod.modHub.id !== null && typeof thisMod.modHub.version === 'string' && thisMod.modHub.version !== '' ) {
 				addCandidate('modhub', `https://www.farming-simulator.com/mod.php?mod_id=${thisMod.modHub.id}`, thisMod.modHub.version, thisMod.modHub.id)
 			}
@@ -154,6 +162,45 @@ let activeRenderID = 0
 let activeCollectionKey = null
 let manifestResolvedMods = []
 let manifestViewFilter = 'all'
+let updateBusyDepth = 0
+
+function showUpdateBusyProgress(label = '', value = null) {
+	const wrapper = MA.byId('updateBusyProgress')
+	const bar = MA.byId('updateBusyProgressBar')
+	if ( wrapper === null || bar === null ) { return }
+	const progress = wrapper.querySelector('.progress')
+	wrapper.classList.remove('d-none')
+	wrapper.setAttribute('aria-hidden', 'false')
+	if ( value === null ) {
+		progress?.removeAttribute('aria-valuenow')
+		bar.style.width = '100%'
+		bar.classList.add('progress-bar-animated')
+	} else {
+		const safeValue = Math.max(0, Math.min(100, value))
+		progress?.setAttribute('aria-valuenow', safeValue.toString())
+		bar.style.width = `${safeValue}%`
+		bar.classList.toggle('progress-bar-animated', safeValue < 100)
+	}
+	bar.textContent = label
+}
+
+function beginUpdateBusy(label = '', value = null) {
+	updateBusyDepth++
+	showUpdateBusyProgress(label, value)
+}
+
+function setUpdateBusy(label = '', value = null) {
+	if ( updateBusyDepth > 0 ) { showUpdateBusyProgress(label, value) }
+}
+
+function endUpdateBusy() {
+	updateBusyDepth = Math.max(0, updateBusyDepth - 1)
+	if ( updateBusyDepth !== 0 ) { return }
+	const wrapper = MA.byId('updateBusyProgress')
+	if ( wrapper === null ) { return }
+	wrapper.classList.add('d-none')
+	wrapper.setAttribute('aria-hidden', 'true')
+}
 
 function collectionContextText(modCollect) {
 	const activeCollect   = modCollect.opts?.activeCollection ?? null
@@ -222,13 +269,19 @@ async function downloadSelectedZIPs() {
 
 	MA.byId('downloadSelectedButton').disabled = true
 	MA.byIdHTML('updateStatus', I18N.defer('update_list_updating', false))
-	const result = await window.update_IPC.downloadApplySelected(downloads)
-	if ( result.ok ) {
-		const modCollect = await window.update_IPC.get()
-		await startFromModList(modCollect)
-		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
-	} else {
-		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
+	beginUpdateBusy(`0 / ${downloads.length}`, 0)
+	try {
+		const result = await window.update_IPC.downloadApplySelected(downloads)
+		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
+		if ( result.ok ) {
+			const modCollect = await window.update_IPC.get()
+			await startFromModList(modCollect)
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
+		} else {
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
+		}
+	} finally {
+		endUpdateBusy()
 	}
 	updateSelectedCount()
 }
@@ -246,6 +299,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	}
 
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} 0 / ${candidateEntries.length}`)
+	setUpdateBusy(`0 / ${candidateEntries.length}`, 0)
 
 	const updateRows = (await mapWithConcurrency(candidateEntries, 6, async ([, entry]) => {
 		const result = entry.sourceType === 'github' ?
@@ -254,6 +308,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 		completeCount++
 		if ( renderID === activeRenderID ) {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${completeCount} / ${candidateEntries.length}`)
+			setUpdateBusy(`${completeCount} / ${candidateEntries.length}`, (completeCount / candidateEntries.length) * 100)
 		}
 
 		if ( !result.ok ) { return null }
@@ -337,12 +392,15 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		activeCollectionKey = modCollect.opts?.activeCollection ?? null
 		MA.byIdHTML('updateCollectionContext', collectionContextText(modCollect))
 		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
+		beginUpdateBusy(I18N.defer('update_list_loading', false), null)
 		MA.byIdHTML('modList', '')
 		MA.byId('selectionControls').classList.add('d-none')
 		updateSelectedCount()
 		await displayCandidates(makeCandidateMap(modCollect), renderID, forceRemoteRefresh)
 	} catch (err) {
 		MA.byIdText('updateStatus', `Update list error: ${err.message}`)
+	} finally {
+		if ( renderID === activeRenderID ) { endUpdateBusy() }
 	}
 }
 
@@ -350,10 +408,12 @@ async function refreshUpdateCandidates() {
 	const button = MA.byId('refreshUpdatesButton')
 	button.disabled = true
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
+	beginUpdateBusy(I18N.defer('update_list_loading', false), null)
 	try {
 		const modCollect = await window.update_IPC.get()
 		await startFromModList(modCollect, true)
 	} finally {
+		endUpdateBusy()
 		button.disabled = false
 	}
 }
@@ -364,10 +424,18 @@ function manifestStateBadge(state) {
 	return '<span class="badge text-bg-danger">Source missing</span>'
 }
 
+function sourceTypeLabel(sourceType) {
+	if ( sourceType === 'modhub' ) { return 'ModHub' }
+	if ( sourceType === 'github' ) { return 'GitHub' }
+	if ( sourceType === 'kingmods' ) { return 'KingMods' }
+	if ( sourceType === 'itch' ) { return 'itch.io' }
+	return 'manual source'
+}
+
 function manifestStateDetail(mod) {
-	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(mod.sourceType === 'modhub' ? 'ModHub' : 'GitHub')} has a ZIP the manager can download and install.` }
-	if ( mod.state === 'manual' ) { return 'The source page is known, but the manager cannot safely download this ZIP automatically. Open the source page and install it manually.' }
-	return 'No usable source was included for this mod. Ask the collection author for a ModHub, GitHub, or download page link.'
+	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(sourceTypeLabel(mod.sourceType))} has a ZIP the manager can download and install.` }
+	if ( mod.state === 'manual' ) { return `${DATA.escapeSpecial(sourceTypeLabel(mod.sourceType))} is known, but the manager cannot safely download this ZIP automatically. Open the source page and install it manually.` }
+	return 'No usable source was included for this mod. Ask the collection author for a ModHub, GitHub, KingMods, itch.io, or download page link.'
 }
 
 function manifestTargetCollectionName() {
@@ -567,14 +635,19 @@ async function exportManifest(mode) {
 async function importManifest(mode) {
 	MA.byIdText('manifestStatus', 'Reading manifest and checking the latest supported sources...')
 	MA.byId('manifestPreview').classList.add('d-none')
-	const result = mode === 'clipboard' ?
-		await window.update_IPC.importCollectionManifestClipboard() :
-		await window.update_IPC.importCollectionManifestFile()
-	if ( result.ok ) {
-		renderManifestPreview(result)
-		MA.byIdText('manifestStatus', 'Manifest resolved. Review the results before installing anything.')
-	} else if ( !result.canceled ) {
-		MA.byIdText('manifestStatus', `Manifest import failed: ${result.error}`)
+	beginUpdateBusy('Reading manifest...', null)
+	try {
+		const result = mode === 'clipboard' ?
+			await window.update_IPC.importCollectionManifestClipboard() :
+			await window.update_IPC.importCollectionManifestFile()
+		if ( result.ok ) {
+			renderManifestPreview(result)
+			MA.byIdText('manifestStatus', 'Manifest resolved. Review the results before installing anything.')
+		} else if ( !result.canceled ) {
+			MA.byIdText('manifestStatus', `Manifest import failed: ${result.error}`)
+		}
+	} finally {
+		endUpdateBusy()
 	}
 }
 
@@ -586,17 +659,23 @@ async function installManifestSelection() {
 
 	MA.byId('manifestInstall').disabled = true
 	MA.byIdText('manifestStatus', `Installing ${downloads.length} selected mod(s)...`)
-	const result = await window.update_IPC.installCollectionManifest({ collectionKey, downloads })
-	if ( result.ok ) {
-		const failedNames = result.results.filter((entry) => entry.ok === false).map((entry) => entry.modName)
-		const failedText = result.failed === 0 ? '' : ` ${result.failed} failed: ${failedNames.join(', ')}.`
-		MA.byIdText('manifestStatus', `Collection import complete: ${result.installed} installed, ${result.skipped} already current.${failedText}`)
-		setManifestSelections(false)
-		const modCollect = await window.update_IPC.get()
-		await startFromModList(modCollect)
-	} else {
-		MA.byIdText('manifestStatus', `Collection import failed: ${result.error}`)
-		manifestSelectionChanged()
+	beginUpdateBusy(`0 / ${downloads.length}`, 0)
+	try {
+		const result = await window.update_IPC.installCollectionManifest({ collectionKey, downloads })
+		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
+		if ( result.ok ) {
+			const failedNames = result.results.filter((entry) => entry.ok === false).map((entry) => entry.modName)
+			const failedText = result.failed === 0 ? '' : ` ${result.failed} failed: ${failedNames.join(', ')}.`
+			MA.byIdText('manifestStatus', `Collection import complete: ${result.installed} installed, ${result.skipped} already current.${failedText}`)
+			setManifestSelections(false)
+			const modCollect = await window.update_IPC.get()
+			await startFromModList(modCollect)
+		} else {
+			MA.byIdText('manifestStatus', `Collection import failed: ${result.error}`)
+			manifestSelectionChanged()
+		}
+	} finally {
+		endUpdateBusy()
 	}
 }
 

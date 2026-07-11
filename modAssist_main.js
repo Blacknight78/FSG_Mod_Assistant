@@ -826,6 +826,7 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL, force = false)
 	cachedRemoteUpdate(`github:${sourceURL}`, force, () => getGitHubLatestUpdate(sourceURL)))
 ipcMain.handle('settings:site:modHubLatest', async (_, modHubID, force = false) =>
 	cachedRemoteUpdate(`modhub:${modHubID}`, force, () => getModHubLatestUpdate(modHubID, force)))
+ipcMain.handle('settings:site:sourceInfo', (_, sourceURL) => getUpdateSourceInfo(sourceURL))
 
 async function getGitHubLatestUpdate(sourceURL) {
 	const repoInfo = getGitHubRepoInfo(sourceURL)
@@ -2300,12 +2301,26 @@ async function copyVaultRecordToCollection({ collectionKey, hash, overwrite = fa
 	}
 }
 
-async function importCollectionsToVault() {
+async function importCollectionsToVault(progressCallback = null) {
 	let scanned = 0
 	let imported = 0
 	let skipped = 0
 	const errors = []
 	const records = getStoredModLibraryRecords()
+	const collectionMods = [...serveIPC.modCollect.collections].map((collectKey) => ({
+		collectKey,
+		mods : serveIPC.modCollect.getModListFromCollection(collectKey),
+	}))
+	const totalMods = collectionMods.reduce((sum, collection) => sum + collection.mods.length, 0)
+	const sendProgress = () => {
+		if ( typeof progressCallback !== 'function' ) { return }
+		progressCallback({
+			current : scanned,
+			label   : totalMods === 0 ? 'No collection mods found' : `${scanned} / ${totalMods}`,
+			total   : totalMods,
+			value   : totalMods === 0 ? 100 : (scanned / totalMods) * 100,
+		})
+	}
 
 	// Collection associations describe the current monitored set, not historical membership.
 	// Each successful scan below adds the live associations back to its stored ZIP records.
@@ -2314,9 +2329,9 @@ async function importCollectionsToVault() {
 	}
 	serveIPC.storeLibrary.set('records', records)
 	invalidateModLibrarySummary()
+	sendProgress()
 
-	for ( const collectKey of serveIPC.modCollect.collections ) {
-		const mods = serveIPC.modCollect.getModListFromCollection(collectKey)
+	for ( const { collectKey, mods } of collectionMods ) {
 		for ( const modRecord of mods ) {
 			scanned++
 			try {
@@ -2338,6 +2353,8 @@ async function importCollectionsToVault() {
 					file  : modRecord?.fileDetail?.shortName ?? modRecord?.fileDetail?.fullPath ?? 'unknown',
 					error : err.message,
 				})
+			} finally {
+				sendProgress()
 			}
 		}
 	}
@@ -2353,7 +2370,7 @@ async function importCollectionsToVault() {
 }
 
 // eslint-disable-next-line complexity
-async function refreshVaultModHubMetadata() {
+async function refreshVaultModHubMetadata(progressCallback = null) {
 	const records = getStoredModLibraryRecords()
 	for ( const [hash, record] of Object.entries(records) ) {
 		const modHubState = modHubStateForLibraryRecord(record)
@@ -2365,12 +2382,24 @@ async function refreshVaultModHubMetadata() {
 	}
 	const modHubIDs = uniqueCleanArray(Object.values(records).flatMap((record) => record.modHubIDs ?? []))
 	let refreshed = 0
+	let checked = 0
 	const errors = []
+	const sendProgress = () => {
+		if ( typeof progressCallback !== 'function' ) { return }
+		progressCallback({
+			current : checked,
+			label   : modHubIDs.length === 0 ? 'No ModHub-linked mods found' : `${checked} / ${modHubIDs.length}`,
+			total   : modHubIDs.length,
+			value   : modHubIDs.length === 0 ? 100 : (checked / modHubIDs.length) * 100,
+		})
+	}
+	sendProgress()
 
 	for ( const modHubID of modHubIDs ) {
 		// Read ModHub pages sequentially to avoid hammering the service.
 		// eslint-disable-next-line no-await-in-loop
 		const metadata = await fetchModHubMetadata(modHubID, { force : true })
+		checked++
 		if ( metadata?.ok ) {
 			refreshed++
 		} else {
@@ -2379,6 +2408,7 @@ async function refreshVaultModHubMetadata() {
 				error : metadata?.error ?? 'Category not found',
 			})
 		}
+		sendProgress()
 	}
 
 	for ( const [hash, record] of Object.entries(records) ) {
@@ -2547,7 +2577,7 @@ async function downloadAndApplyUpdate(download) {
 	const targetPath = path.join(collectionFolder, path.basename(modRecord.fileDetail.fullPath))
 	const tempFolder = path.join(app.getPath('temp'), 'fsg-mod-assistant-update-downloads', safeDownloadFolderName(collectionName))
 	const tempPath = path.join(tempFolder, `${Date.now()}-${safeDownloadFileName(download.fileName)}`)
-	const sourceName = download.sourceType === 'modhub' ? 'ModHub' : 'GitHub'
+	const sourceName = updateSourceTypeLabel(download.sourceType)
 
 	try {
 		let cachedLibrary = findCachedModLibraryFile({
@@ -2631,7 +2661,7 @@ async function installManifestMod(collectionKey, download) {
 		return { modName : download.modName, skipped : true, version : existingMod.modDesc.version }
 	}
 
-	const sourceName = download.sourceType === 'modhub' ? 'ModHub' : 'GitHub'
+	const sourceName = updateSourceTypeLabel(download.sourceType)
 	const assetName = safeDownloadFileName(download.assetName ?? `${download.modName}.zip`)
 	const tempFolder = path.join(app.getPath('temp'), 'fsg-mod-assistant-manifest-downloads', safeDownloadFolderName(collection.name))
 	const tempPath = path.join(tempFolder, `${Date.now()}-${assetName}`)
@@ -2972,6 +3002,46 @@ function getGitHubRepoInfo(sourceURL) {
 	}
 }
 
+function getUpdateSourceInfo(sourceURL) {
+	if ( typeof sourceURL !== 'string' || sourceURL.trim() === '' ) {
+		return { canAutoDownload : false, label : 'Not configured', type : 'manual', url : '' }
+	}
+
+	try {
+		const url = new URL(sourceURL.trim())
+		if ( url.protocol !== 'https:' ) {
+			return { canAutoDownload : false, label : 'Manual', type : 'manual', url : sourceURL.trim() }
+		}
+		url.hash = ''
+
+		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+		if ( host === 'github.com' && getGitHubRepoInfo(url.toString()) !== null ) {
+			return { canAutoDownload : true, label : 'GitHub', type : 'github', url : url.toString() }
+		}
+		if ( host === 'kingmods.net' ) {
+			return { canAutoDownload : false, label : 'KingMods', type : 'kingmods', url : url.toString() }
+		}
+		if ( host === 'itch.io' || host.endsWith('.itch.io') ) {
+			return { canAutoDownload : false, label : 'itch.io', type : 'itch', url : url.toString() }
+		}
+		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) {
+			return { canAutoDownload : true, label : 'ModHub', type : 'modhub', url : url.toString() }
+		}
+
+		return { canAutoDownload : false, label : 'Manual web page', type : 'manual', url : url.toString() }
+	} catch {
+		return { canAutoDownload : false, label : 'Manual', type : 'manual', url : sourceURL.trim() }
+	}
+}
+
+function updateSourceTypeLabel(sourceType) {
+	if ( sourceType === 'modhub' ) { return 'ModHub' }
+	if ( sourceType === 'github' ) { return 'GitHub' }
+	if ( sourceType === 'kingmods' ) { return 'KingMods' }
+	if ( sourceType === 'itch' ) { return 'itch.io' }
+	return 'Manual'
+}
+
 const COLLECTION_MANIFEST_SCHEMA = 'fsg-mod-assistant.collection'
 const COLLECTION_MANIFEST_VERSION = 1
 const COLLECTION_SHARE_PREFIX = 'fsgma://collection/v1/'
@@ -2986,7 +3056,7 @@ function collectionManifestSources(modRecord) {
 		sources.push({ id : modHub.id, type : 'modhub', url : funcLib.general.doModHub(modHub.id) })
 	}
 	if ( typeof sourceURL === 'string' && sourceURL !== '' ) {
-		const sourceType = getGitHubRepoInfo(sourceURL) === null ? 'manual' : 'github'
+		const sourceType = getUpdateSourceInfo(sourceURL).type
 		if ( !sources.some((source) => source.url === sourceURL) ) {
 			sources.push({ type : sourceType, url : sourceURL })
 		}
@@ -3033,7 +3103,7 @@ function validateCollectionManifest(manifest) {
 		return {
 			fileName : safeDownloadFileName(mod.fileName ?? `${mod.name}.zip`),
 			name     : mod.name,
-			sources  : Array.isArray(mod.sources) ? mod.sources.filter((source) => ['github', 'manual', 'modhub'].includes(source?.type)) : [],
+			sources  : Array.isArray(mod.sources) ? mod.sources.filter((source) => ['github', 'itch', 'kingmods', 'manual', 'modhub'].includes(source?.type)) : [],
 			version  : typeof mod.version === 'string' ? mod.version : null,
 		}
 	})
@@ -3112,7 +3182,7 @@ function newestResolvedManifestSource(results) {
 
 async function resolveManifestMod(mod) {
 	const automaticSources = mod.sources.filter((source) => source.type === 'github' || source.type === 'modhub')
-	const manualSource = mod.sources.find((source) => source.type === 'manual') ?? null
+	const manualSource = mod.sources.find((source) => ['itch', 'kingmods', 'manual'].includes(source.type)) ?? null
 	const sourceResults = (await Promise.all(automaticSources.map(async (source) => {
 		let result
 		if ( source.type === 'github' && typeof source.url === 'string' ) {
@@ -3395,7 +3465,9 @@ ipcMain.handle('vault:setRetentionCount', (_, payload) => {
 		return { ok : false, error : err.message }
 	}
 })
-ipcMain.handle('vault:importCollections', () => importCollectionsToVault())
+ipcMain.handle('vault:importCollections', (event) => importCollectionsToVault((progress) => {
+	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'importCollections', ...progress }) }
+}))
 ipcMain.handle('vault:openFolder', () => shell.openPath(path.join(app.getPath('userData'), 'mod-library')))
 ipcMain.handle('vault:openDetail', (_, payload) => {
 	const detailTarget = vaultDetailTarget(payload)
@@ -3405,7 +3477,9 @@ ipcMain.handle('vault:openDetail', (_, payload) => {
 	openDetailWindow(detailTarget, 'vault')
 	return { ok : true }
 })
-ipcMain.handle('vault:refreshModHub', () => refreshVaultModHubMetadata())
+ipcMain.handle('vault:refreshModHub', (event) => refreshVaultModHubMetadata((progress) => {
+	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'refreshModHub', ...progress }) }
+}))
 ipcMain.handle('vault:saveNote', async (_, payload) => {
 	try {
 		return { ok : true, ...saveVaultNote(payload) }
@@ -3537,7 +3611,7 @@ ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 				modName          : download.modName,
 				previousVersion  : updateResult.previousVersion ?? null,
 				replacedExisting : updateResult.backupPath !== null,
-				source           : updateResult.usedCache ? `${download.sourceType === 'modhub' ? 'ModHub' : 'GitHub'} cache` : (download.sourceType === 'modhub' ? 'ModHub' : 'GitHub'),
+				source           : updateResult.usedCache ? `${updateSourceTypeLabel(download.sourceType)} cache` : updateSourceTypeLabel(download.sourceType),
 				sourceURL        : download.sourceURL,
 				stagedPath       : null,
 				targetPath       : updateResult.targetPath,

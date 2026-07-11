@@ -44,6 +44,7 @@ const pageAPI = {
 			getMalware : ()    => ipcRenderer.invoke('collect:malware'),
 			getMod     : (key) => ipcRenderer.invoke('detail:getMod', key),
 			getModHub  : (modHubID) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID),
+			getSourceInfo : (url) => ipcRenderer.invoke('settings:site:sourceInfo', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			rollbackEntries : (update) => ipcRenderer.invoke('update:rollbackEntries', update),
 			rollbackEntry : (entry) => ipcRenderer.invoke('update:rollbackEntry', entry),
@@ -280,6 +281,7 @@ const pageAPI = {
 			get              : ()    => ipcRenderer.invoke('update:list'),
 			getGitHub        : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
 			getModHub        : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
+			getSourceInfo    : (url) => ipcRenderer.invoke('settings:site:sourceInfo', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			importCollectionManifestClipboard : () => ipcRenderer.invoke('manifest:importClipboard'),
 			importCollectionManifestFile : () => ipcRenderer.invoke('manifest:importFile'),
@@ -308,7 +310,7 @@ const pageAPI = {
 			setRetentionCount : (payload) => ipcRenderer.invoke('vault:setRetentionCount', payload),
 			textContext : () => ipcRenderer.send('context:copy'),
 		},
-		validAsync : new Set(['vault:contextResult']),
+		validAsync : new Set(['vault:contextResult', 'vault:progress']),
 	},
 	'version' : {
 		functions : {

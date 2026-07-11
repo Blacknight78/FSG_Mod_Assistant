@@ -132,7 +132,7 @@
 					<tr><th scope="col"><i18n-text data-key="detail_mod_mh_version"></i18n-text></th><td class="text-end" id="mh_version"></td></tr>
 					<tr><th scope="col">ModHub Status</th><td class="text-end" id="modhub_status"></td></tr>
 					<tr><th scope="col"><i18n-text data-key="detail_mod_update_source"></i18n-text></th><td class="text-end" id="update_source"></td></tr>
-					<tr><th scope="col"><i18n-text data-key="detail_mod_github_version"></i18n-text></th><td class="text-end" id="github_version"></td></tr>
+					<tr><th scope="col">Source Version</th><td class="text-end" id="github_version"></td></tr>
 					<tr><th scope="col">Update Status</th><td class="text-end" id="update_status"></td></tr>
 					<tr><th scope="col"><i18n-text data-key="detail_mod_size"></i18n-text></th><td class="text-end" id="filesize"></td></tr>
 					<tr><th scope="col"><i18n-text data-key="detail_mod_date"></i18n-text></th><td class="text-end" id="file_date"></td></tr>
@@ -141,11 +141,11 @@
 					<tr><th scope="col"><i18n-text data-key="detail_mod_multiplayer"></i18n-text></th><td class="text-end" id="is_multiplayer"></td></tr>
 				</table>				
 				<div class="input-group input-group-sm mt-2">
-					<span class="input-group-text"><i18n-text data-key="update_source_github"></i18n-text></span>
-					<input type="text" class="form-control" id="update_source_input" placeholder="https://github.com/owner/repository">
+					<span class="input-group-text">Source URL</span>
+					<input type="text" class="form-control" id="update_source_input" placeholder="https://github.com/owner/repository or https://www.kingmods.net/...">
 					<i18n-text type="button" class="btn btn-success" id="update_source_save" data-key="button_save"></i18n-text>
 					<i18n-text type="button" class="btn btn-outline-secondary" id="update_source_clear" data-key="button_clear"></i18n-text>
-					<div class="invalid-feedback"><i18n-text data-key="update_source_github_invalid"></i18n-text></div>
+					<div class="invalid-feedback">Enter a valid https source URL.</div>
 				</div>
 				<i18n-text type="button" class="btn btn-warning w-100 mt-2 d-none" id="download_latest_update" data-key="detail_mod_download_update_button"></i18n-text>
 				<i18n-text type="button" class="btn btn-info w-100 mt-2 d-none" id="rollback_latest_update" data-key="detail_mod_rollback_button"></i18n-text>
