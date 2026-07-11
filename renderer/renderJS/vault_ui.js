@@ -324,14 +324,31 @@ function hasGitHubSource(entry) {
 	return (entry.sources ?? []).some((source) => source === 'GitHub' || source === 'GitHub cache')
 }
 
+function sourceTypeFromURL(sourceURL) {
+	try {
+		const url = new URL(sourceURL)
+		if ( url.protocol !== 'https:' ) { return 'manual' }
+		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+		if ( host === 'github.com' ) { return 'github' }
+		if ( host === 'kingmods.net' ) { return 'kingmods' }
+		if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return 'itch' }
+		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return 'modhub' }
+		return 'manual'
+	} catch {
+		return null
+	}
+}
+
 function sourceTypesForEntries(entries) {
 	const sourceTypes = new Set()
 	for ( const entry of entries ) {
 		const isModHub = entry.modHubStatus !== 'unmatched' || (entry.modHubIDs ?? []).length !== 0
 		const isGitHub = hasGitHubSource(entry)
+		const urlSourceType = sourceTypeFromURL(entry.sourceURL)
 		if ( isModHub ) { sourceTypes.add('modhub') }
 		if ( isGitHub ) { sourceTypes.add('github') }
-		if ( !isModHub && !isGitHub ) { sourceTypes.add('manual') }
+		if ( urlSourceType !== null ) { sourceTypes.add(urlSourceType) }
+		if ( !isModHub && !isGitHub && urlSourceType === null ) { sourceTypes.add('manual') }
 	}
 	return [...sourceTypes]
 }

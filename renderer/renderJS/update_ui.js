@@ -38,6 +38,18 @@ function isWebURL(sourceURL) {
 	}
 }
 
+function manualSourceResult(entry) {
+	return {
+		assetName  : null,
+		downloadURL : null,
+		hasDownload : false,
+		ok        : true,
+		source    : entry.sourceType,
+		url       : entry.sourceURL,
+		version   : entry.remoteVersion ?? 'manual check',
+	}
+}
+
 // eslint-disable-next-line complexity
 function makeCandidateMap(modCollect) {
 	const thisVersion    = modCollect.appSettings.game_version
@@ -76,7 +88,7 @@ function makeCandidateMap(modCollect) {
 					modHubID,
 					modName,
 					remoteVersion,
-					sourceLabel : sourceType === 'github' ? 'GitHub' : 'ModHub',
+					sourceLabel : sourceTypeLabel(sourceType),
 					sourceType,
 					sourceURL   : sourceLink,
 					title       : doL10N(thisMod.l10n.title, modCollect.appSettings.force_lang),
@@ -88,7 +100,13 @@ function makeCandidateMap(modCollect) {
 				candidates[candidateKey].local.add(thisMod.modDesc.version)
 			}
 
-			if ( sourceInfo.type === 'github' ) { addCandidate('github', sourceURL) }
+			if ( sourceInfo.type === 'github' ) {
+				addCandidate('github', sourceURL)
+			} else if ( ['itch', 'kingmods', 'manual'].includes(sourceInfo.type) && isWebURL(sourceURL) ) {
+				addCandidate(sourceInfo.type, sourceURL)
+			} else if ( sourceInfo.type === 'modhub' && thisMod.modHub.id === null && isWebURL(sourceURL) ) {
+				addCandidate('modhub', sourceURL)
+			}
 			if ( thisMod.modHub.id !== null && typeof thisMod.modHub.version === 'string' && thisMod.modHub.version !== '' ) {
 				addCandidate('modhub', `https://www.farming-simulator.com/mod.php?mod_id=${thisMod.modHub.id}`, thisMod.modHub.version, thisMod.modHub.id)
 			}
@@ -109,6 +127,9 @@ function isUpdateAvailable(localVersions, remoteVersion, allowUnknownDifference 
 }
 
 function statusText(result) {
+	if ( ['itch', 'kingmods', 'manual'].includes(result.source) ) {
+		return 'Manual source saved. Open the web page to check for an update.'
+	}
 	if ( result.ok ) {
 		return I18N.defer('update_status_available', false)
 	}
@@ -119,6 +140,9 @@ function statusText(result) {
 }
 
 function downloadStatusText(result) {
+	if ( ['itch', 'kingmods', 'manual'].includes(result.source) ) {
+		return '<span class="badge text-bg-warning">Manual download required</span>'
+	}
 	if ( result.source === 'modhub' && !result.hasDownload ) {
 		return '<span class="badge text-bg-secondary">Manual download from ModHub</span>'
 	}
@@ -302,9 +326,14 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	setUpdateBusy(`0 / ${candidateEntries.length}`, 0)
 
 	const updateRows = (await mapWithConcurrency(candidateEntries, 6, async ([, entry]) => {
-		const result = entry.sourceType === 'github' ?
-			await withTimeout(window.update_IPC.getGitHub(entry.sourceURL, forceRemoteRefresh)) :
-			await withTimeout(window.update_IPC.getModHub(entry.modHubID, forceRemoteRefresh))
+		let result
+		if ( entry.sourceType === 'github' ) {
+			result = await withTimeout(window.update_IPC.getGitHub(entry.sourceURL, forceRemoteRefresh))
+		} else if ( entry.sourceType === 'modhub' && entry.modHubID !== null ) {
+			result = await withTimeout(window.update_IPC.getModHub(entry.modHubID, forceRemoteRefresh))
+		} else {
+			result = manualSourceResult(entry)
+		}
 		completeCount++
 		if ( renderID === activeRenderID ) {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${completeCount} / ${candidateEntries.length}`)
@@ -312,7 +341,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 		}
 
 		if ( !result.ok ) { return null }
-		if ( !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
+		if ( !['itch', 'kingmods', 'manual'].includes(entry.sourceType) && !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
 	
 		const collectionList = entry.collections
 			.sort((a, b) => Intl.Collator().compare(a, b))
