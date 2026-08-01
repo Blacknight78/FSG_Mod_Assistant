@@ -693,6 +693,12 @@ ipcMain.on('gamelog:folder',   () => shell.showItemInFolder(funcLib.prefs.gameLo
 ipcMain.on('dispatch:gamelog', () => { serveIPC.windowLib.createNamedWindow('gamelog') })
 ipcMain.on('dispatch:history', () => { serveIPC.windowLib.createNamedWindow('history') })
 ipcMain.on('dispatch:vault', () => { serveIPC.windowLib.createNamedWindow('vault') })
+ipcMain.on('dispatch:vault_update', () => { serveIPC.windowLib.createNamedWindow('vault_update') })
+ipcMain.on('dispatch:backups', () => { serveIPC.windowLib.createNamedWindow('backups') })
+ipcMain.on('dispatch:recent_changes', () => { serveIPC.windowLib.createNamedWindow('recent_changes') })
+ipcMain.on('dispatch:manifest', () => { serveIPC.windowLib.createNamedWindow('manifest') })
+ipcMain.on('dispatch:mod_management', () => { serveIPC.windowLib.createNamedWindow('mod_management') })
+ipcMain.on('dispatch:update_candidates', () => { serveIPC.windowLib.createNamedWindow('update') })
 
 
 // MARK : mini window
@@ -1013,6 +1019,20 @@ function decodeHTMLEntities(value) {
 
 function uniqueCleanArray(values) {
 	return [...new Set(values.filter((value) => typeof value === 'string' && value !== ''))]
+}
+
+// Downloads occasionally arrive with a temporary timestamp prepended to the
+// filename.  That name must never become part of the Vault identity, otherwise
+// the same mod is shown as two separate entries after an update.
+function normalizeVaultModName(value) {
+	if (typeof value !== 'string') { return '' }
+	const baseName = path.parse(path.basename(value.trim())).name
+	return baseName.replace(/^(?:\d{10,}-)+(?=FS(?:19|22|25)_)/iu, '')
+}
+
+function normalizedVaultModNames(values) {
+	const sourceValues = Array.isArray(values) ? values : [values]
+	return uniqueCleanArray(sourceValues.map((value) => normalizeVaultModName(value)).filter((value) => value !== ''))
 }
 
 function uniqueCleanNumberArray(values) {
@@ -1531,18 +1551,23 @@ function getStoredModLibraryRecords() {
 	const storedRecords = serveIPC.storeLibrary.get('records', {})
 	if ( typeof storedRecords !== 'object' || storedRecords === null || Array.isArray(storedRecords) ) { return {} }
 
-	return Object.fromEntries(Object.entries(storedRecords).filter(([, record]) =>
-		typeof record === 'object' && record !== null && !Array.isArray(record)
-	))
+	return Object.fromEntries(Object.entries(storedRecords)
+		.filter(([, record]) => typeof record === 'object' && record !== null && !Array.isArray(record))
+		.map(([hash, record]) => [hash, {
+			...record,
+			modNames : normalizedVaultModNames(
+				Array.isArray(record.modNames) && record.modNames.length > 0 ? record.modNames : record.fileName
+			),
+		}]))
 }
 
 let modLibrarySummaryCache = null
+const vaultDetailCache = new Map()
 
 function invalidateModLibrarySummary() {
 	modLibrarySummaryCache = null
+	vaultDetailCache.clear()
 }
-
-const vaultDetailCache = new Map()
 
 function getVaultDetailRecord(hash) {
 	if ( vaultDetailCache.has(hash) ) { return vaultDetailCache.get(hash) }
@@ -1601,7 +1626,12 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 	}
 
 	const hash = await sha256File(filePath)
-	const fileName = safeDownloadFileName(metadata.fileName ?? path.basename(filePath))
+	const normalizedModName = normalizeVaultModName(metadata.modName)
+	const suppliedFileName = safeDownloadFileName(metadata.fileName ?? path.basename(filePath))
+	const normalizedFileName = normalizeVaultModName(suppliedFileName)
+	const fileName = normalizedModName === ''
+		? (normalizedFileName === '' ? suppliedFileName : safeDownloadFileName(`${normalizedFileName}.zip`))
+		: safeDownloadFileName(`${normalizedModName}.zip`)
 	const libraryPath = modLibraryFilePath(hash, fileName)
 	const fileStat = await fsPromise.stat(filePath)
 
@@ -1627,7 +1657,9 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		...existingRecord,
 		collections : uniqueCleanArray([...(existingRecord.collections ?? []), metadata.collectionName]),
 		equipmentSpecs : mergeEquipmentSpecs(existingRecord.equipmentSpecs ?? {}, metadata.equipmentSpecs ?? {}),
-		fileName    : existingRecord.fileName ?? fileName,
+		fileName : normalizedModName !== '' || (typeof metadata.fileName === 'string' && metadata.fileName.trim() !== '')
+			? fileName
+			: (existingRecord.fileName ?? fileName),
 		filePath    : libraryPath,
 		gameVersions : uniqueCleanNumberArray([...(existingRecord.gameVersions ?? []), metadata.gameVersion]),
 		hash         : hash,
@@ -1639,7 +1671,7 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		modHubIDs      : uniqueCleanArray([...(existingRecord.modHubIDs ?? []), metadata.modHubID === null || typeof metadata.modHubID === 'undefined' ? null : metadata.modHubID.toString()]),
 		modHubVersions : uniqueCleanArray([...(existingRecord.modHubVersions ?? []), metadata.modHubVersion]),
 		modIcon     : metadata.modIcon ?? existingRecord.modIcon ?? null,
-		modNames    : uniqueCleanArray([...(existingRecord.modNames ?? []), metadata.modName]),
+		modNames    : normalizedVaultModNames([metadata.modName, ...(existingRecord.modNames ?? [])]),
 		modTypes    : uniqueCleanArray([...(existingRecord.modTypes ?? []), ...(metadata.modTypes ?? [])]),
 		scriptFiles : Math.max(existingRecord.scriptFiles ?? 0, metadata.scriptFiles ?? 0),
 		size        : fileStat.size,
@@ -1665,12 +1697,13 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 }
 
 function findCachedModLibraryFile(metadata = {}) {
-	if ( typeof metadata.modName !== 'string' || typeof metadata.version !== 'string' ) { return null }
+	const targetModName = normalizeVaultModName(metadata.modName)
+	if ( targetModName === '' || typeof metadata.version !== 'string' ) { return null }
 
 	const records = getStoredModLibraryRecords()
 	return Object.values(records).find((record) => {
 		if ( typeof record?.filePath !== 'string' || !fs.existsSync(record.filePath) ) { return false }
-		if ( !Array.isArray(record.modNames) || !record.modNames.includes(metadata.modName) ) { return false }
+		if ( !normalizedVaultModNames(record.modNames).includes(targetModName) ) { return false }
 		if ( !Array.isArray(record.versions) || !record.versions.includes(metadata.version) ) { return false }
 		if ( typeof metadata.sourceURL === 'string' && metadata.sourceURL !== '' && typeof record.sourceURL === 'string' ) {
 			return record.sourceURL === metadata.sourceURL
@@ -1732,7 +1765,7 @@ function getModLibraryRetentionCount() {
 
 function modLibraryRetentionIdentity(entry) {
 	const modName = entry.modNames?.[0] ?? path.parse(entry.fileName ?? '').name
-	return modName.trim().toLocaleLowerCase()
+	return normalizeVaultModName(modName).toLocaleLowerCase()
 }
 
 function compareModLibraryRetentionEntries(left, right) {
@@ -2064,6 +2097,11 @@ async function getVaultCollections() {
 }
 
 function vaultDetailTarget({ collections = [], fileName = '', hash = '', modName = '' } = {}) {
+	const vaultRecord = getStoredModLibraryRecords()[hash]
+	if ( typeof vaultRecord?.filePath === 'string' && fs.existsSync(vaultRecord.filePath) ) {
+		return `vault--${hash}`
+	}
+
 	const preferredCollections = new Set(Array.isArray(collections) ? collections : [])
 	const possibleNames = uniqueCleanArray([
 		modName,
@@ -2080,9 +2118,6 @@ function vaultDetailTarget({ collections = [], fileName = '', hash = '', modName
 		const [collectionKey, modUUID] = preferredMatch ?? matches[0]
 		return `${collectionKey}--${modUUID}`
 	}
-
-	const vaultRecord = getStoredModLibraryRecords()[hash]
-	if ( typeof vaultRecord?.filePath === 'string' && fs.existsSync(vaultRecord.filePath) ) { return `vault--${hash}` }
 
 	return null
 }
@@ -2555,6 +2590,80 @@ function getCollectionModRecord(collectionKey, modName) {
 	const collection = serveIPC.modCollect.allModList?.[collectionKey]
 	if ( typeof collection?.mods !== 'object' ) { return null }
 	return Object.values(collection.mods).find((mod) => mod?.fileDetail?.shortName === modName) ?? null
+}
+
+async function downloadUpdateToVault(download) {
+	if (
+		typeof download?.fileName !== 'string' ||
+		typeof download?.modName !== 'string' ||
+		typeof download?.url !== 'string'
+	) {
+		throw new Error('Invalid Vault update candidate')
+	}
+
+	const sourceName = updateSourceTypeLabel(download.sourceType)
+	const assetName = safeDownloadFileName(download.fileName)
+	const requestedModName = normalizeVaultModName(download.modName)
+	const tempFolder = path.join(app.getPath('temp'), 'fsg-mod-assistant-vault-updates')
+	const tempPath = path.join(tempFolder, `${Date.now()}-${assetName}`)
+	let cachedLibrary = findCachedModLibraryFile({
+		modName : requestedModName || download.modName,
+		sourceURL : download.sourceURL ?? null,
+		version : download.version,
+	})
+
+	try {
+		if ( cachedLibrary !== null ) {
+			try {
+				const integrity = validateModZipIntegrity(cachedLibrary.filePath, {
+					expectedVersion : download.version,
+					label           : `${sourceName} Vault cache`,
+				})
+				return {
+					fileName : cachedLibrary.fileName ?? assetName,
+					hash     : cachedLibrary.hash,
+					modName  : requestedModName || normalizeVaultModName(integrity.modName) || download.modName,
+					ok       : true,
+					reused   : true,
+					version  : integrity.version ?? download.version,
+				}
+			} catch {
+				cachedLibrary = null
+			}
+		}
+
+		await fsPromise.mkdir(tempFolder, { recursive : true })
+		await downloadGitHubZipToPath({ fileName : assetName, url : download.url }, tempPath)
+		const integrity = validateModZipIntegrity(tempPath, {
+			expectedVersion : download.version,
+			label           : `${sourceName} Vault download`,
+		})
+		const canonicalModName = requestedModName ||
+			normalizeVaultModName(integrity.modName) ||
+			normalizeVaultModName(assetName)
+		const canonicalFileName = canonicalModName === ''
+			? assetName
+			: safeDownloadFileName(`${canonicalModName}.zip`)
+		const record = await registerModLibraryFile(tempPath, {
+			fileName       : canonicalFileName,
+			modHubID       : download.modHubID ?? null,
+			modHubVersion  : download.sourceType === 'modhub' ? download.version : null,
+			modName        : canonicalModName || download.modName,
+			source         : sourceName,
+			sourceURL      : download.sourceURL ?? download.url,
+			version        : integrity.version ?? download.version,
+		})
+		return {
+			fileName : record.fileName ?? canonicalFileName,
+			hash     : record.hash,
+			modName  : canonicalModName || requestedModName || download.modName,
+			ok       : true,
+			reused   : false,
+			version  : integrity.version ?? download.version,
+		}
+	} finally {
+		await fsPromise.rm(tempPath, { force : true }).catch(() => {})
+	}
 }
 
 // eslint-disable-next-line complexity
@@ -3118,6 +3227,512 @@ function validateCollectionManifest(manifest) {
 	}
 }
 
+const COLLECTION_BACKUP_SCHEMA = 'fsg-mod-assistant.collection-backup'
+const COLLECTION_BACKUP_VERSION = 1
+
+function collectionBackupsFolder() {
+	return path.join(app.getPath('userData'), 'collection-backups')
+}
+
+function collectionBackupFileName(collectionName) {
+	const safeName = safeDownloadFolderName(collectionName ?? 'collection')
+	const stamp = new Date().toISOString().replace(/[:.]/gu, '-')
+	return `${stamp}-${safeName}.json`
+}
+
+function collectionBackupSummary(manifest, filePath) {
+	return {
+		collectionKey  : manifest.collectionKey ?? manifest.collection?.name ?? 'Collection',
+		collectionName : manifest.collection?.name ?? 'Collection',
+		createdAt      : manifest.createdAt ?? manifest.exportedAt ?? null,
+		filePath,
+		id             : path.basename(filePath, '.json'),
+		modCount       : Array.isArray(manifest.mods) ? manifest.mods.length : 0,
+		name           : `${manifest.collection?.name ?? 'Collection'} - ${new Date(manifest.createdAt ?? manifest.exportedAt ?? Date.now()).toLocaleString()}`,
+	}
+}
+
+function validateCollectionBackupID(backupID) {
+	if ( typeof backupID !== 'string' || backupID === '' || backupID.includes('..') || /[/\\]/u.test(backupID) ) {
+		throw new Error('No valid collection backup was selected.')
+	}
+	return backupID
+}
+
+function validateCollectionBackupManifest(manifest) {
+	if ( manifest?.schema !== COLLECTION_BACKUP_SCHEMA || manifest?.version !== COLLECTION_BACKUP_VERSION ) {
+		throw new Error('This is not a supported collection backup manifest.')
+	}
+	if ( typeof manifest.collectionKey !== 'string' || manifest.collectionKey === '' ) {
+		throw new Error('The backup manifest does not identify a collection.')
+	}
+
+	return {
+		...manifest,
+		collection : { name : typeof manifest.collection?.name === 'string' ? manifest.collection.name : 'Collection' },
+		mods       : validateCollectionManifest({
+			collection : manifest.collection,
+			mods       : manifest.mods,
+			schema     : COLLECTION_MANIFEST_SCHEMA,
+			version    : COLLECTION_MANIFEST_VERSION,
+		}).mods,
+	}
+}
+
+async function readCollectionBackupManifest(backupID) {
+	const safeBackupID = validateCollectionBackupID(backupID)
+	const filePath = path.join(collectionBackupsFolder(), `${safeBackupID}.json`)
+	const rawText = await fsPromise.readFile(filePath, 'utf8')
+	return {
+		filePath,
+		manifest : validateCollectionBackupManifest(JSON.parse(rawText)),
+	}
+}
+
+async function listCollectionBackups() {
+	const backupFolder = collectionBackupsFolder()
+	await fsPromise.mkdir(backupFolder, { recursive : true })
+	const files = await fsPromise.readdir(backupFolder, { withFileTypes : true })
+	const backups = []
+
+	for ( const file of files ) {
+		if ( !file.isFile() || !file.name.toLowerCase().endsWith('.json') ) { continue }
+		const filePath = path.join(backupFolder, file.name)
+		try {
+			const manifest = validateCollectionBackupManifest(JSON.parse(await fsPromise.readFile(filePath, 'utf8')))
+			backups.push(collectionBackupSummary(manifest, filePath))
+		} catch (err) {
+			serveIPC.log.warning(`Skipping unreadable collection backup ${file.name}: ${err.message}`)
+		}
+	}
+
+	return backups.toSorted((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
+}
+
+async function previewOldCollectionBackups({ keepPerCollection = 3 } = {}) {
+	const requestedKeep = Number(keepPerCollection)
+	const keepCount = Number.isInteger(requestedKeep) ? Math.max(1, Math.min(20, requestedKeep)) : 3
+	const backups = await listCollectionBackups()
+	const groupedBackups = new Map()
+
+	for ( const backup of backups ) {
+		const collectionKey = backup.collectionKey ?? backup.collectionName ?? 'Collection'
+		if ( !groupedBackups.has(collectionKey) ) { groupedBackups.set(collectionKey, []) }
+		groupedBackups.get(collectionKey).push(backup)
+	}
+
+	const candidates = []
+	for ( const group of groupedBackups.values() ) {
+		const sortedGroup = group.toSorted((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
+		sortedGroup.forEach((backup, index) => {
+			candidates.push({
+				...backup,
+				recommendedKeep : index < keepCount,
+				recommendation   : index < keepCount
+					? `Recommended keep: newest ${keepCount} for this collection.`
+					: `Older than the newest ${keepCount} for this collection.`,
+			})
+		})
+	}
+
+	let totalBytes = 0
+	let olderBytes = 0
+	const enrichedCandidates = []
+	for ( const backup of candidates ) {
+		let size = 0
+		try {
+			size = (await fsPromise.stat(backup.filePath)).size
+		} catch {
+			size = 0
+		}
+		totalBytes += size
+		if ( backup.recommendedKeep !== true ) { olderBytes += size }
+		enrichedCandidates.push({ ...backup, size })
+	}
+
+	return {
+		candidates : enrichedCandidates,
+		count      : enrichedCandidates.length,
+		keepPerCollection : keepCount,
+		ok         : true,
+		olderBytes,
+		totalBytes,
+	}
+}
+
+async function deleteOldCollectionBackups({ ids } = {}) {
+	if ( !Array.isArray(ids) || ids.length === 0 ) {
+		throw new Error('No backup manifests were selected for deletion.')
+	}
+
+	const backups = new Map((await listCollectionBackups()).map((backup) => [backup.id, backup]))
+	const deletedIDs = []
+
+	for ( const id of ids ) {
+		validateCollectionBackupID(id)
+		const backup = backups.get(id)
+		if ( typeof backup === 'undefined' ) { continue }
+		await fsPromise.unlink(backup.filePath)
+		deletedIDs.push(id)
+	}
+
+	return {
+		deleted : deletedIDs.length,
+		deletedIDs,
+		ok      : true,
+	}
+}
+
+async function createCollectionBackup(collectionKey) {
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === collectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('Choose a monitored collection to back up.') }
+
+	const manifest = createCollectionManifest(collectionKey)
+	const backupManifest = {
+		...manifest,
+		collectionKey,
+		collectionPath : collection.path,
+		createdAt      : new Date().toISOString(),
+		schema         : COLLECTION_BACKUP_SCHEMA,
+		version        : COLLECTION_BACKUP_VERSION,
+	}
+
+	const backupFolder = collectionBackupsFolder()
+	await fsPromise.mkdir(backupFolder, { recursive : true })
+	const filePath = path.join(backupFolder, collectionBackupFileName(collection.name))
+	await fsPromise.writeFile(filePath, JSON.stringify(backupManifest, null, '\t'), 'utf8')
+
+	return { ok : true, backup : collectionBackupSummary(backupManifest, filePath) }
+}
+
+function collectionManifestModKey(mod) {
+	const fileName = typeof mod?.fileName === 'string' ? mod.fileName.trim().toLocaleLowerCase() : ''
+	if ( fileName !== '' ) { return fileName }
+	return (mod?.name ?? '').trim().toLocaleLowerCase()
+}
+
+function dedupeCollectionManifestMods(mods) {
+	const uniqueMods = new Map()
+
+	for ( const mod of Array.isArray(mods) ? mods : [] ) {
+		const key = collectionManifestModKey(mod)
+		if ( key === '' ) { continue }
+
+		const existing = uniqueMods.get(key)
+		if ( typeof existing === 'undefined' ) {
+			uniqueMods.set(key, mod)
+			continue
+		}
+
+		uniqueMods.set(key, {
+			...existing,
+			...mod,
+			fileName : existing.fileName ?? mod.fileName,
+			name     : existing.name ?? mod.name,
+			version  : existing.version ?? mod.version,
+		})
+	}
+
+	return [...uniqueMods.values()]
+}
+
+function collectionBackupCompareMods(backupMods, currentMods) {
+	const uniqueBackupMods = dedupeCollectionManifestMods(backupMods)
+	const uniqueCurrentMods = dedupeCollectionManifestMods(currentMods)
+	const currentMap = new Map(uniqueCurrentMods.map((mod) => [collectionManifestModKey(mod), mod]))
+	const backupMap = new Map(uniqueBackupMods.map((mod) => [collectionManifestModKey(mod), mod]))
+	const missing = []
+	const changed = []
+	const unchanged = []
+
+	for ( const backupMod of uniqueBackupMods ) {
+		const currentMod = currentMap.get(collectionManifestModKey(backupMod))
+		if ( typeof currentMod === 'undefined' ) {
+			missing.push(backupMod)
+		} else if ( (backupMod.version ?? null) !== (currentMod.version ?? null) || backupMod.fileName !== currentMod.fileName ) {
+			changed.push({ backup : backupMod, current : currentMod })
+		} else {
+			unchanged.push(backupMod)
+		}
+	}
+
+	const added = uniqueCurrentMods.filter((mod) => !backupMap.has(collectionManifestModKey(mod)))
+	return {
+		added,
+		changed,
+		duplicatesRemoved : {
+			backup  : (Array.isArray(backupMods) ? backupMods.length : 0) - uniqueBackupMods.length,
+			current : (Array.isArray(currentMods) ? currentMods.length : 0) - uniqueCurrentMods.length,
+		},
+		missing,
+		unchanged,
+	}
+}
+
+async function compareCollectionBackup({ backupID, collectionKey } = {}) {
+	const { manifest } = await readCollectionBackupManifest(backupID)
+	const targetCollectionKey = collectionKey || manifest.collectionKey
+	const currentManifest = createCollectionManifest(targetCollectionKey)
+	const comparison = collectionBackupCompareMods(manifest.mods, currentManifest.mods)
+
+	return {
+		backup : collectionBackupSummary(manifest, path.join(collectionBackupsFolder(), `${backupID}.json`)),
+		counts : {
+			added     : comparison.added.length,
+			changed   : comparison.changed.length,
+			duplicatesRemoved : comparison.duplicatesRemoved,
+			missing   : comparison.missing.length,
+			unchanged : comparison.unchanged.length,
+		},
+		ok : true,
+		targetCollection : currentManifest.collection,
+		...comparison,
+	}
+}
+
+function findVaultRecordForBackupMod(mod) {
+	const records = Object.values(getStoredModLibraryRecords())
+		.filter((record) => typeof record?.filePath === 'string' && fs.existsSync(record.filePath))
+		.filter((record) => {
+			const names = Array.isArray(record.modNames) ? record.modNames : []
+			return names.includes(mod.name) || record.fileName === mod.fileName
+		})
+		.toSorted((left, right) => {
+			const leftVersion = Array.isArray(left.versions) && typeof mod.version === 'string' && left.versions.includes(mod.version)
+			const rightVersion = Array.isArray(right.versions) && typeof mod.version === 'string' && right.versions.includes(mod.version)
+			if ( leftVersion !== rightVersion ) { return leftVersion ? -1 : 1 }
+			return String(right.updatedAt ?? right.createdAt ?? '').localeCompare(String(left.updatedAt ?? left.createdAt ?? ''))
+		})
+
+	return records[0] ?? null
+}
+
+async function restoreCollectionBackup({ backupID, collectionKey } = {}) {
+	const { manifest } = await readCollectionBackupManifest(backupID)
+	const targetCollectionKey = collectionKey || manifest.collectionKey
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === targetCollectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('The restore target collection is no longer monitored.') }
+
+	await fsPromise.mkdir(collection.path, { recursive : true })
+	const results = []
+	const restoreMods = dedupeCollectionManifestMods(manifest.mods)
+
+	for ( const mod of restoreMods ) {
+		const record = findVaultRecordForBackupMod(mod)
+		if ( record === null ) {
+			results.push({ fileName : mod.fileName, modName : mod.name, ok : false, error : 'No matching Vault ZIP was found.' })
+			continue
+		}
+
+		try {
+			const fileName = safeDownloadFileName(mod.fileName ?? record.fileName ?? `${mod.name}.zip`)
+			const targetPath = path.join(collection.path, fileName)
+			const targetExists = fs.existsSync(targetPath)
+			const existingMod = getCollectionModRecord(targetCollectionKey, path.basename(fileName, path.extname(fileName)))
+			const sourceIntegrity = validateModZipIntegrity(record.filePath, { expectedVersion : mod.version ?? undefined, label : 'Backup restore Vault ZIP' })
+			const backupResult = targetExists ?
+				await backupModToLibrary(targetPath, {
+					collectionName : collection.name,
+					fileName,
+					modName    : mod.name,
+					source     : 'Collection backup restore',
+					sourceURL  : record.sourceURL ?? null,
+					version    : existingMod?.modDesc?.version ?? null,
+				}) :
+				{
+					backupHash : null,
+					backupPath : null,
+					didBackup  : false,
+				}
+
+			await fsPromise.copyFile(record.filePath, targetPath)
+			const copiedIntegrity = validateModZipIntegrity(targetPath, { expectedVersion : sourceIntegrity.version, label : 'Restored collection ZIP' })
+
+			addCollectionHistoryEntry({
+				action             : 'collection_backup_restored',
+				backupHash         : backupResult.backupHash,
+				backupPath         : backupResult.backupPath,
+				collectionName     : collection.name,
+				currentHash        : record.hash ?? null,
+				currentLibraryPath : record.filePath,
+				currentVersion     : copiedIntegrity.version ?? mod.version ?? null,
+				fileName,
+				integrityChecked   : true,
+				integrityVersion   : copiedIntegrity.version,
+				modName            : mod.name,
+				previousVersion    : existingMod?.modDesc?.version ?? null,
+				replacedExisting   : targetExists,
+				source             : 'Collection backup',
+				sourceURL          : record.sourceURL ?? null,
+				targetPath,
+			})
+
+			results.push({
+				fileName,
+				modName : mod.name,
+				ok : true,
+				replacedExisting : targetExists,
+				version : copiedIntegrity.version ?? mod.version ?? null,
+			})
+		} catch (err) {
+			results.push({ fileName : mod.fileName, modName : mod.name, ok : false, error : err.message })
+		}
+	}
+
+	funcLib.general.toggleFolderDirty()
+	await processModFoldersAndWait()
+	invalidateModLibrarySummary()
+
+	return {
+		failed   : results.filter((result) => result.ok === false).length,
+		ok       : true,
+		restored : results.filter((result) => result.ok === true).length,
+		results,
+	}
+}
+
+function collectionHistoryMatchesCollection(entry, collection) {
+	return entry?.collectionName === collection.name || entry?.collectionName === collection.key
+}
+
+function collectionHistoryEntryID(entry, index) {
+	return `${entry.timestamp ?? 'unknown'}|${entry.action ?? 'unknown'}|${entry.targetPath ?? ''}|${index}`
+}
+
+function pathIsInsideFolder(filePath, folderPath) {
+	const resolvedFile = path.resolve(filePath)
+	const resolvedFolder = path.resolve(folderPath)
+	return resolvedFile === resolvedFolder || resolvedFile.startsWith(`${resolvedFolder}${path.sep}`)
+}
+
+function recentCollectionActionIsRelevant(entry) {
+	return new Set([
+		'collection_backup_restored',
+		'collection_mod_disabled',
+		'manifest_installed',
+		'update_applied',
+		'update_rolled_back',
+		'vault_copied',
+	]).has(entry?.action)
+}
+
+async function listRecentCollectionChanges({ collectionKey, limit = 40 } = {}) {
+	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
+
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === collectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('The selected collection is no longer available.') }
+
+	const historyEntries = serveIPC.storeHistory.get('entries', [])
+	const collectionRoot = path.resolve(collection.path)
+	const maxEntries = Math.max(1, Math.min(Number(limit) || 40, 200))
+
+	const entries = historyEntries
+		.map((entry, index) => ({ entry, index }))
+		.filter(({ entry }) => collectionHistoryMatchesCollection(entry, collection))
+		.filter(({ entry }) => recentCollectionActionIsRelevant(entry))
+		.filter(({ entry }) => typeof entry.targetPath === 'string' && entry.targetPath !== '')
+		.map(({ entry, index }) => {
+			const targetPath = path.resolve(entry.targetPath)
+			const insideCollection = pathIsInsideFolder(targetPath, collectionRoot)
+			const exists = insideCollection && fs.existsSync(targetPath)
+			const disabled = path.basename(path.dirname(targetPath)).toLowerCase() === '_disabled'
+			const fileName = entry.fileName ?? path.basename(targetPath)
+
+			return {
+				action          : entry.action,
+				canDisable      : insideCollection && exists && !disabled && path.extname(targetPath).toLowerCase() === '.zip',
+				collectionName  : collection.name,
+				currentVersion  : entry.currentVersion,
+				exists,
+				fileName,
+				id              : collectionHistoryEntryID(entry, index),
+				modName         : entry.modName ?? path.basename(fileName, path.extname(fileName)),
+				previousVersion : entry.previousVersion,
+				source          : entry.source,
+				sourceURL       : entry.sourceURL,
+				targetPath,
+				timestamp       : entry.timestamp,
+			}
+		})
+		.toSorted((left, right) => String(right.timestamp ?? '').localeCompare(String(left.timestamp ?? '')))
+		.slice(0, maxEntries)
+
+	return { collectionName : collection.name, entries, ok : true }
+}
+
+function disabledCollectionZipPath(collectionPath, fileName) {
+	const disabledFolder = path.join(collectionPath, '_disabled')
+	const safeName = safeDownloadFileName(fileName)
+	const firstCandidate = path.join(disabledFolder, safeName)
+	if ( !fs.existsSync(firstCandidate) ) { return firstCandidate }
+
+	const parsed = path.parse(safeName)
+	const stamp = new Date().toISOString().replace(/[:.]/gu, '-')
+	return path.join(disabledFolder, `${parsed.name}-${stamp}${parsed.ext || '.zip'}`)
+}
+
+async function disableRecentCollectionMods({ collectionKey, items = [] } = {}) {
+	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
+	if ( !Array.isArray(items) || items.length === 0 ) { throw new Error('No recent mods were selected.') }
+
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === collectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('The selected collection is no longer available.') }
+
+	const collectionRoot = path.resolve(collection.path)
+	const disabledFolder = path.join(collection.path, '_disabled')
+	await fsPromise.mkdir(disabledFolder, { recursive : true })
+
+	const results = []
+	for ( const item of items ) {
+		const sourcePath = path.resolve(item?.targetPath ?? '')
+		const fileName = safeDownloadFileName(item?.fileName ?? path.basename(sourcePath))
+		const modName = item?.modName ?? path.basename(fileName, path.extname(fileName))
+
+		try {
+			if ( !pathIsInsideFolder(sourcePath, collectionRoot) ) { throw new Error('Selected ZIP is outside the collection folder.') }
+			if ( path.extname(sourcePath).toLowerCase() !== '.zip' ) { throw new Error('Selected file is not a ZIP mod.') }
+			if ( path.basename(path.dirname(sourcePath)).toLowerCase() === '_disabled' ) { throw new Error('Selected ZIP is already disabled.') }
+			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected ZIP is no longer in the collection folder.') }
+
+			const targetPath = disabledCollectionZipPath(collection.path, fileName)
+			await fsPromise.rename(sourcePath, targetPath)
+			addCollectionHistoryEntry({
+				action          : 'collection_mod_disabled',
+				collectionName  : collection.name,
+				currentVersion  : item?.currentVersion ?? null,
+				fileName,
+				modName,
+				previousVersion : item?.previousVersion ?? null,
+				source          : 'Collection debugger',
+				sourceURL       : item?.sourceURL ?? null,
+				stagedPath      : sourcePath,
+				targetPath,
+			})
+
+			results.push({ fileName, modName, ok : true, targetPath })
+		} catch (err) {
+			results.push({ error : err.message, fileName, modName, ok : false, targetPath : sourcePath })
+		}
+	}
+
+	if ( results.some((result) => result.ok) ) {
+		funcLib.general.toggleFolderDirty()
+		await processModFoldersAndWait()
+		invalidateModLibrarySummary()
+	}
+
+	return {
+		disabled : results.filter((result) => result.ok).length,
+		failed   : results.filter((result) => !result.ok).length,
+		ok       : true,
+		results,
+	}
+}
+
 function collectionManifestShareCode(manifest) {
 	const compressed = zlib.gzipSync(Buffer.from(JSON.stringify(manifest)), { level : 9 })
 	return `${COLLECTION_SHARE_PREFIX}${compressed.toString('base64url')}`
@@ -3383,7 +3998,7 @@ ipcMain.handle('input:restore', (_, s, v) => funcLib.inputManage.restore(s, v))
 
 // MARK: version resolve
 ipcMain.on('dispatch:version', () => { serveIPC.windowLib.createNamedWindow('version') })
-ipcMain.on('dispatch:update', () => { serveIPC.windowLib.createNamedWindow('update') })
+ipcMain.on('dispatch:update', () => { serveIPC.windowLib.createNamedWindow('mod_management') })
 ipcMain.handle('update:list', async () => {
 	if ( serveIPC.isProcessing ) {
 		await new Promise((resolve) => { modQueueRunner.once('process-mods-done', resolve) })
@@ -3394,6 +4009,57 @@ ipcMain.handle('update:list', async () => {
 	})
 })
 ipcMain.handle('manifest:collections', () => getVaultCollections())
+ipcMain.handle('backups:collections', () => getVaultCollections())
+ipcMain.handle('backups:list', () => listCollectionBackups())
+ipcMain.handle('backups:previewOldManifests', async (_, payload) => {
+	try {
+		return await previewOldCollectionBackups(payload)
+	} catch (err) {
+		return { candidates : [], count : 0, error : err.message, ok : false, totalBytes : 0 }
+	}
+})
+ipcMain.handle('backups:deleteOldManifests', async (_, payload) => {
+	try {
+		return await deleteOldCollectionBackups(payload)
+	} catch (err) {
+		return { deleted : 0, deletedIDs : [], error : err.message, ok : false }
+	}
+})
+ipcMain.handle('backups:create', async (_, payload) => {
+	try {
+		return await createCollectionBackup(payload?.collectionKey)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('backups:compare', async (_, payload) => {
+	try {
+		return await compareCollectionBackup(payload)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('backups:restore', async (_, payload) => {
+	try {
+		return await restoreCollectionBackup(payload)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('backups:recentChanges', async (_, payload) => {
+	try {
+		return await listRecentCollectionChanges(payload)
+	} catch (err) {
+		return { entries : [], ok : false, error : err.message }
+	}
+})
+ipcMain.handle('backups:disableRecentMods', async (_, payload) => {
+	try {
+		return await disableRecentCollectionMods(payload)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
 ipcMain.handle('manifest:export', async (_, payload) => {
 	try {
 		return await exportCollectionManifest(payload?.collectionKey, payload?.mode)
@@ -3430,6 +4096,21 @@ ipcMain.handle('history:clear', () => {
 })
 ipcMain.handle('vault:all', () => getModLibrarySummary())
 ipcMain.handle('vault:collections', () => getVaultCollections())
+ipcMain.handle('vault:updateDownloadSelected', async (_, downloads) => {
+	try {
+		if ( !Array.isArray(downloads) || downloads.length === 0 ) {
+			return { ok : false, error : 'No downloadable Vault updates were selected.' }
+		}
+		const results = []
+		for ( const download of downloads ) {
+			results.push(await downloadUpdateToVault(download))
+		}
+		invalidateModLibrarySummary()
+		return { ok : true, count : results.length, results }
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
 ipcMain.handle('vault:copyPreview', async (_, payload) => {
 	try {
 		return await previewVaultCopyToCollection(payload)

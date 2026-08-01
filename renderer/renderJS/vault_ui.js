@@ -93,6 +93,13 @@ function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
 }
 
+function canonicalVaultModName(value) {
+	const raw = String(value ?? '').trim()
+	const withoutPath = raw.split(/[\\/]/u).at(-1) ?? ''
+	const baseName = withoutPath.replace(/\.zip$/iu, '')
+	return baseName.replace(/^(?:\d{10,}-)+(?=FS(?:19|22|25)_)/iu, '')
+}
+
 function vaultNoteKey(modName) {
 	return (modName ?? '').toString().trim().toLocaleLowerCase()
 }
@@ -526,8 +533,8 @@ function groupEntries(entries) {
 	const groups = new Map()
 
 	for ( const entry of entries ) {
-		const modName = entry.modNames?.[0] ?? entry.fileName ?? '-- unknown mod --'
-		const groupKey = modName.toLowerCase()
+		const modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '') || '-- unknown mod --'
+		const groupKey = modName.toLocaleLowerCase()
 		if ( !groups.has(groupKey) ) {
 			groups.set(groupKey, {
 				entries  : [],
@@ -709,7 +716,7 @@ async function renderFileRows(entries, groupIndex) {
 		rowNode.dataset.collections = JSON.stringify(entry.collections ?? [])
 		rowNode.dataset.fileName = entry.fileName ?? ''
 		rowNode.dataset.hash = entry.hash ?? ''
-		rowNode.dataset.modName = entry.modNames?.[0] ?? entry.fileName ?? ''
+	rowNode.dataset.modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '')
 		fillCollectionSelect(row.querySelector('.vault-copy-target'))
 		return fragmentToHTML(row)
 	}))
@@ -1548,6 +1555,6 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultBulkCopyButton').addEventListener('click', copySelectedVaultEntries)
 	MA.byId('vaultSelectShown').addEventListener('click', () => { setShownVaultSelection(true) })
 	MA.byId('vaultSelectNone').addEventListener('click', () => { setShownVaultSelection(false) })
-	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.vault_IPC.dispatchUpdate() })
+	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.vault_IPC.dispatchModManagement() })
 	loadVault()
 })

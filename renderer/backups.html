@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Collection Backups</title>
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/site_dark.css">
+</head>
+<body>
+	<main class="container-fluid py-3">
+		<div class="row align-items-center mb-4">
+			<div class="col-md-5">
+				<div class="d-flex align-items-center gap-3">
+					<img src="img/icon.png" alt="" style="width: 48px; height: 48px;">
+					<h1 class="display-6 mb-0">FSG Mod Assistant</h1>
+				</div>
+			</div>
+			<div class="col-md-7">
+				<h2 class="h1 text-center rounded-3 py-2 mb-0 bg-info text-dark">Collection Backups</h2>
+			</div>
+		</div>
+
+		<hr>
+
+		<section class="card mb-3">
+			<div class="card-body">
+				<div id="backupStatus" class="alert alert-secondary mb-0">
+					Loading collection backup tools...
+				</div>
+			</div>
+		</section>
+
+		<section class="card mb-3">
+			<div class="card-body">
+				<div class="row g-3 align-items-end">
+					<div class="col-lg-6">
+						<label class="form-label" for="backupCollection">Collection</label>
+						<select class="form-select" id="backupCollection"></select>
+					</div>
+					<div class="col-lg-3">
+						<button class="btn btn-success w-100" type="button" id="backupCreate">
+							Create backup manifest
+						</button>
+					</div>
+					<div class="col-lg-3">
+						<button class="btn btn-secondary w-100" type="button" id="backupBackToUpdates">
+							Back to Mod Management Menu
+						</button>
+					</div>
+				</div>
+				<p class="text-body-secondary mt-3 mb-0">
+					Collection backups save a manifest of the ZIPs currently in a collection. Restore uses matching ZIPs from the Mod Vault and does not delete extra mods yet.
+				</p>
+			</div>
+		</section>
+
+		<section class="card mb-3">
+			<div class="card-body">
+				<div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
+					<div>
+						<h3 class="h4 mb-1">Saved backup manifests</h3>
+						<p class="text-body-secondary mb-0">
+							Old manifest cleanup only removes backup JSON records. It does not delete collection mods or Vault ZIP files.
+						</p>
+					</div>
+					<button class="btn btn-outline-danger" type="button" id="backupDeleteOld">
+						Review old manifests
+					</button>
+				</div>
+				<div id="backupCleanupStatus" class="mt-3"></div>
+				<div id="backupList" class="mt-3"></div>
+			</div>
+		</section>
+
+		<section class="card mb-3">
+			<div class="card-body">
+				<h3 class="h4">Backup comparison</h3>
+				<div id="backupCompare" class="text-body-secondary mt-3">
+					Select a saved backup to compare it with the current collection.
+				</div>
+			</div>
+		</section>
+	</main>
+
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/backups_ui.js"></script>
+</body>
+</html>

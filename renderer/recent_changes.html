@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Recent Collection Changes</title>
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/site_dark.css">
+</head>
+<body>
+	<main class="container-fluid py-3">
+		<div class="row align-items-center mb-4">
+			<div class="col-md-5">
+				<div class="d-flex align-items-center gap-3">
+					<img src="img/icon.png" alt="" style="width: 48px; height: 48px;">
+					<h1 class="display-6 mb-0">FSG Mod Assistant</h1>
+				</div>
+			</div>
+			<div class="col-md-7">
+				<h2 class="h1 text-center rounded-3 py-2 mb-0 bg-info text-dark">Recent Collection Changes</h2>
+			</div>
+		</div>
+		<hr>
+
+		<section class="card mb-3">
+			<div class="card-body">
+				<p class="text-body-secondary mb-3">
+					Use this to temporarily disable recently added, updated, copied, or restored ZIPs while tracking down collection load problems.
+				</p>
+				<div class="row g-2 align-items-end">
+					<div class="col-12 col-lg-5">
+						<label class="form-label" for="recentCollection">Collection</label>
+						<select class="form-select" id="recentCollection"></select>
+					</div>
+					<div class="col-12 col-lg-7">
+						<div class="btn-group w-100" role="group">
+							<button class="btn btn-outline-info" type="button" id="recentRefresh">Refresh recent changes</button>
+							<button class="btn btn-outline-warning" type="button" id="recentDisableSelected">Disable selected mods</button>
+							<button class="btn btn-secondary" type="button" id="recentBackToUpdates">Back to Mod Management Menu</button>
+						</div>
+					</div>
+				</div>
+				<div id="recentStatus" class="alert alert-secondary mt-3 mb-0">Loading recent collection changes...</div>
+			</div>
+		</section>
+
+		<section class="card">
+			<div class="card-body" id="recentChangesList"></div>
+		</section>
+	</main>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/recent_changes_ui.js"></script>
+</body>
+</html>

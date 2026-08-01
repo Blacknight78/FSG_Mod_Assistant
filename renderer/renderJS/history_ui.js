@@ -274,7 +274,7 @@ window.addEventListener('DOMContentLoaded', () => {
 			await reloadHistory()
 		}
 	})
-	MA.byId('historyBackToUpdates').addEventListener('click', () => { window.history_IPC.dispatchUpdate() })
+	MA.byId('historyBackToUpdates').addEventListener('click', () => { window.history_IPC.dispatchModManagement() })
 	for ( const inputID of ['historyCollectionFilter', 'historyActionFilter', 'historyFromFilter', 'historyToFilter', 'historyTextFilter'] ) {
 		MA.byId(inputID).addEventListener('input', renderFilteredHistory)
 	}

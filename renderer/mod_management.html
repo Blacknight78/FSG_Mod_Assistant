@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/mod_management_ui.js"></script>
+</head>
+<body data-bs-theme="dark" class="overflow-custom2">
+	<div class="container-fluid px-1 user-select-none">
+		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
+			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
+				<div class="col-7 pt-2">
+					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+				</div>
+				<div class="col-5 pt-4 mt-3">
+					<span class="badge bg-primary text-light mx-auto w-100 d-block rounded-3 h4 fs-5">Mod Management Menu</span>
+				</div>
+			</div>
+		</div>
+
+		<section class="mx-2 mb-3 card">
+			<div class="card-body">
+				<p class="fs-5 mb-0">Choose a mod-management task. Update checks, collection sharing, history, backups, recent changes, and the Vault now open in separate windows.</p>
+			</div>
+		</section>
+
+		<section class="mx-2 row g-3">
+			<div class="col-12 col-md-6">
+				<button id="menuUpdateCandidates" class="btn btn-warning w-100 p-4 fs-4">Check Collection Updates</button>
+				<div class="small text-body-secondary mt-2">Check monitored collections and apply available updates.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuVaultUpdates" class="btn btn-warning w-100 p-4 fs-4">Check Vault Updates</button>
+				<div class="small text-body-secondary mt-2">Check stored Vault ZIPs and save newer supported versions into the Vault.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuManifest" class="btn btn-success w-100 p-4 fs-4">Share or Import a Collection</button>
+				<div class="small text-body-secondary mt-2">Export or import a lightweight collection manifest.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuVault" class="btn btn-secondary w-100 p-4 fs-4">Mod Vault</button>
+				<div class="small text-body-secondary mt-2">Browse stored ZIPs, notes, categories, and cleanup tools.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuBackups" class="btn btn-secondary w-100 p-4 fs-4">Collection Backups</button>
+				<div class="small text-body-secondary mt-2">Create, compare, restore, or remove collection backup manifests.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuRecentChanges" class="btn btn-secondary w-100 p-4 fs-4">Recent Collection Changes</button>
+				<div class="small text-body-secondary mt-2">Review recent add/update/copy/restore activity and disable selected mods.</div>
+			</div>
+			<div class="col-12 col-md-6">
+				<button id="menuHistory" class="btn btn-secondary w-100 p-4 fs-4">
+					<i18n-text data-key="history_window"></i18n-text>
+				</button>
+				<div class="small text-body-secondary mt-2">Review collection history and rollback entries.</div>
+			</div>
+		</section>
+	</div>
+</body>
+</html>
