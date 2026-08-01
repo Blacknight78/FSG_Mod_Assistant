@@ -14,6 +14,52 @@ let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
 let vaultSelectedHashes = new Set()
 let vaultGroupRows = new Map()
+let vaultBusyDepth = 0
+
+function showVaultBusyProgress(label = '', value = null) {
+	const wrapper = MA.byId('vaultBusyProgress')
+	const bar = MA.byId('vaultBusyProgressBar')
+	if ( wrapper === null || bar === null ) { return }
+	const progress = wrapper.querySelector('.progress')
+	wrapper.classList.remove('d-none')
+	wrapper.setAttribute('aria-hidden', 'false')
+	if ( value === null ) {
+		progress?.removeAttribute('aria-valuenow')
+		bar.style.width = '100%'
+		bar.classList.add('progress-bar-animated')
+	} else {
+		const safeValue = Math.max(0, Math.min(100, value))
+		progress?.setAttribute('aria-valuenow', safeValue.toString())
+		bar.style.width = `${safeValue}%`
+		bar.classList.toggle('progress-bar-animated', safeValue < 100)
+	}
+	bar.textContent = label
+}
+
+function beginVaultBusy(label = '', value = null) {
+	vaultBusyDepth++
+	showVaultBusyProgress(label, value)
+}
+
+function setVaultBusy(label = '', value = null) {
+	if ( vaultBusyDepth > 0 ) { showVaultBusyProgress(label, value) }
+}
+
+function endVaultBusy() {
+	vaultBusyDepth = Math.max(0, vaultBusyDepth - 1)
+	if ( vaultBusyDepth !== 0 ) { return }
+	const wrapper = MA.byId('vaultBusyProgress')
+	if ( wrapper === null ) { return }
+	wrapper.classList.add('d-none')
+	wrapper.setAttribute('aria-hidden', 'true')
+}
+
+function handleVaultProgress(progress = {}) {
+	if ( vaultBusyDepth === 0 ) { return }
+	const label = typeof progress.label === 'string' && progress.label !== '' ? progress.label : 'Working...'
+	const value = typeof progress.value === 'number' ? progress.value : null
+	setVaultBusy(label, value)
+}
 
 function uniqueValues(values) {
 	return [...new Set(values.filter((value) => typeof value === 'string' && value !== ''))]
@@ -45,6 +91,13 @@ function formatTimestamp(timestamp) {
 
 function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
+}
+
+function canonicalVaultModName(value) {
+	const raw = String(value ?? '').trim()
+	const withoutPath = raw.split(/[\\/]/u).at(-1) ?? ''
+	const baseName = withoutPath.replace(/\.zip$/iu, '')
+	return baseName.replace(/^(?:\d{10,}-)+(?=FS(?:19|22|25)_)/iu, '')
 }
 
 function vaultNoteKey(modName) {
@@ -278,14 +331,31 @@ function hasGitHubSource(entry) {
 	return (entry.sources ?? []).some((source) => source === 'GitHub' || source === 'GitHub cache')
 }
 
+function sourceTypeFromURL(sourceURL) {
+	try {
+		const url = new URL(sourceURL)
+		if ( url.protocol !== 'https:' ) { return 'manual' }
+		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+		if ( host === 'github.com' ) { return 'github' }
+		if ( host === 'kingmods.net' ) { return 'kingmods' }
+		if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return 'itch' }
+		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return 'modhub' }
+		return 'manual'
+	} catch {
+		return null
+	}
+}
+
 function sourceTypesForEntries(entries) {
 	const sourceTypes = new Set()
 	for ( const entry of entries ) {
 		const isModHub = entry.modHubStatus !== 'unmatched' || (entry.modHubIDs ?? []).length !== 0
 		const isGitHub = hasGitHubSource(entry)
+		const urlSourceType = sourceTypeFromURL(entry.sourceURL)
 		if ( isModHub ) { sourceTypes.add('modhub') }
 		if ( isGitHub ) { sourceTypes.add('github') }
-		if ( !isModHub && !isGitHub ) { sourceTypes.add('manual') }
+		if ( urlSourceType !== null ) { sourceTypes.add(urlSourceType) }
+		if ( !isModHub && !isGitHub && urlSourceType === null ) { sourceTypes.add('manual') }
 	}
 	return [...sourceTypes]
 }
@@ -463,8 +533,8 @@ function groupEntries(entries) {
 	const groups = new Map()
 
 	for ( const entry of entries ) {
-		const modName = entry.modNames?.[0] ?? entry.fileName ?? '-- unknown mod --'
-		const groupKey = modName.toLowerCase()
+		const modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '') || '-- unknown mod --'
+		const groupKey = modName.toLocaleLowerCase()
 		if ( !groups.has(groupKey) ) {
 			groups.set(groupKey, {
 				entries  : [],
@@ -646,7 +716,7 @@ async function renderFileRows(entries, groupIndex) {
 		rowNode.dataset.collections = JSON.stringify(entry.collections ?? [])
 		rowNode.dataset.fileName = entry.fileName ?? ''
 		rowNode.dataset.hash = entry.hash ?? ''
-		rowNode.dataset.modName = entry.modNames?.[0] ?? entry.fileName ?? ''
+	rowNode.dataset.modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '')
 		fillCollectionSelect(row.querySelector('.vault-copy-target'))
 		return fragmentToHTML(row)
 	}))
@@ -863,14 +933,19 @@ async function renderVault(groups) {
 }
 
 async function loadVault() {
-	const [vault, collections] = await Promise.all([
-		window.vault_IPC.all(),
-		window.vault_IPC.collections(),
-	])
-	vaultCollections = collections
-	await updateVaultSummary(vault)
-	refreshFilterOptions()
-	await renderVault(filterEntries())
+	beginVaultBusy('Loading vault...', null)
+	try {
+		const [vault, collections] = await Promise.all([
+			window.vault_IPC.all(),
+			window.vault_IPC.collections(),
+		])
+		vaultCollections = collections
+		await updateVaultSummary(vault)
+		refreshFilterOptions()
+		await renderVault(filterEntries())
+	} finally {
+		endVaultBusy()
+	}
 }
 
 async function loadVaultPreservingView() {
@@ -1047,6 +1122,7 @@ async function copyVaultEntry(button) {
 
 	const originalText = button.textContent
 	setButtonState(button, true, 'Checking...')
+	beginVaultBusy('Checking copy...', null)
 	if ( rowStatus !== null ) { rowStatus.textContent = 'Checking this copy first...' }
 	const hash = button.dataset.hash
 
@@ -1099,6 +1175,7 @@ async function copyVaultEntry(button) {
 		MA.byIdText('vaultStatus', message)
 		if ( rowStatus !== null ) { rowStatus.textContent = message }
 	} finally {
+		endVaultBusy()
 		setButtonState(button, false, originalText)
 	}
 }
@@ -1123,6 +1200,7 @@ async function setVaultKeepPinned(button) {
 
 	const originalText = button.textContent
 	setButtonState(button, true, keepPinned ? 'Keeping...' : 'Unkeeping...')
+	beginVaultBusy(keepPinned ? 'Keeping ZIP...' : 'Unkeeping ZIP...', null)
 	try {
 		const result = await window.vault_IPC.setKeepPinned({ hash, keepPinned })
 		if ( !result.ok ) {
@@ -1144,6 +1222,7 @@ async function setVaultKeepPinned(button) {
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault keep action failed: ${err.message}`)
 	} finally {
+		endVaultBusy()
 		setButtonState(button, false, originalText)
 	}
 }
@@ -1175,6 +1254,7 @@ async function deleteVaultEntry(button) {
 
 	const originalText = button.textContent
 	setButtonState(button, true, 'Deleting...')
+	beginVaultBusy('Deleting Vault ZIP...', null)
 	try {
 		const result = await window.vault_IPC.cleanupUnused({ hashes : [hash] })
 		const deletedEntry = result.deleted?.find((item) => item.hash === hash)
@@ -1191,6 +1271,7 @@ async function deleteVaultEntry(button) {
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault deletion failed: ${err.message}`)
 	} finally {
+		endVaultBusy()
 		if ( button.isConnected ) { setButtonState(button, false, originalText) }
 		focusVaultSearch()
 	}
@@ -1216,11 +1297,13 @@ async function copySelectedVaultEntries() {
 
 	const originalText = button.textContent
 	setButtonState(button, true, 'Checking selected...')
+	beginVaultBusy(`Checking ${hashes.length} selected...`, null)
 	status.classList.remove('text-success', 'text-danger')
 	status.textContent = `Checking ${hashes.length} selected Vault ZIP${hashes.length === 1 ? '' : 's'} before copying...`
 	let copied = 0
 	let replaced = 0
 	let skipped = 0
+	let processed = 0
 	const errors = []
 
 	try {
@@ -1241,10 +1324,13 @@ async function copySelectedVaultEntries() {
 
 		setButtonState(button, true, 'Copying selected...')
 		status.textContent = `Copying ${hashes.length} selected Vault ZIP${hashes.length === 1 ? '' : 's'}...`
+		setVaultBusy(`0 / ${hashes.length}`, 0)
 		const overwriteHashes = new Set((preview.items ?? []).filter((item) => item.targetExists === true).map((item) => item.hash))
 		for ( const hash of hashes ) {
 			// eslint-disable-next-line no-await-in-loop -- Copies are kept one-at-a-time so each file operation can safely finish before the next starts.
 			const { cancelled, result } = await copyVaultHashToCollection(hash, collectionKey, overwriteHashes.has(hash))
+			processed++
+			setVaultBusy(`${processed} / ${hashes.length}`, (processed / hashes.length) * 100)
 			if ( cancelled ) {
 				skipped++
 				continue
@@ -1272,6 +1358,7 @@ async function copySelectedVaultEntries() {
 		status.classList.add('text-danger')
 		status.textContent = message
 	} finally {
+		endVaultBusy()
 		setButtonState(button, false, originalText)
 		updateVaultSelectionControls()
 	}
@@ -1298,6 +1385,7 @@ async function importCollections() {
 	const originalText = button.textContent
 	button.textContent = 'Scanning collections...'
 	MA.byIdText('vaultStatus', 'Scanning collections and adding unique ZIPs to the vault...')
+	beginVaultBusy('Scanning collections...', null)
 	try {
 		const result = await window.vault_IPC.importCollections()
 		vaultCollections = await window.vault_IPC.collections()
@@ -1309,6 +1397,7 @@ async function importCollections() {
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault scan failed: ${err.message}`)
 	} finally {
+		endVaultBusy()
 		button.disabled = false
 		button.textContent = originalText
 	}
@@ -1320,6 +1409,7 @@ async function refreshModHubCategories() {
 	const originalText = button.textContent
 	button.textContent = 'Refreshing ModHub...'
 	MA.byIdText('vaultStatus', 'Reading ModHub category and version data for vaulted mods. This may take a little while...')
+	beginVaultBusy('Refreshing ModHub information...', null)
 	try {
 		const result = await window.vault_IPC.refreshModHub()
 		await updateVaultSummary(result.summary)
@@ -1331,6 +1421,7 @@ async function refreshModHubCategories() {
 	} catch (err) {
 		MA.byIdText('vaultStatus', `ModHub information refresh failed: ${err.message}`)
 	} finally {
+		endVaultBusy()
 		button.disabled = false
 		button.textContent = originalText
 	}
@@ -1358,6 +1449,7 @@ async function deleteSelectedUnusedVaultFiles() {
 	const button = MA.byId('vaultDeleteUnused')
 	const originalText = button.textContent
 	setButtonState(button, true, 'Deleting...')
+	beginVaultBusy(`Deleting ${selectedHashes.length} ZIP${selectedHashes.length === 1 ? '' : 's'}...`, null)
 	try {
 		const result = await window.vault_IPC.cleanupUnused({ hashes : selectedHashes })
 		if ( typeof result.summary !== 'undefined' ) {
@@ -1376,6 +1468,7 @@ async function deleteSelectedUnusedVaultFiles() {
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault cleanup failed: ${err.message}`)
 	} finally {
+		endVaultBusy()
 		setButtonState(button, (vaultCleanup.count ?? 0) === 0, originalText)
 		focusVaultSearch()
 	}
@@ -1383,6 +1476,7 @@ async function deleteSelectedUnusedVaultFiles() {
 
 window.addEventListener('DOMContentLoaded', () => {
 	window.vault_IPC.receive('vault:contextResult', handleVaultContextResult)
+	window.vault_IPC.receive('vault:progress', handleVaultProgress)
 	MA.byId('vaultList').addEventListener('contextmenu', openVaultDetail)
 	MA.byId('vaultList').addEventListener('show.bs.collapse', (event) => {
 		if ( event.target.classList.contains('vault-group-body') ) { ensureVaultGroupRows(event.target) }
@@ -1461,6 +1555,6 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultBulkCopyButton').addEventListener('click', copySelectedVaultEntries)
 	MA.byId('vaultSelectShown').addEventListener('click', () => { setShownVaultSelection(true) })
 	MA.byId('vaultSelectNone').addEventListener('click', () => { setShownVaultSelection(false) })
-	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.vault_IPC.dispatchUpdate() })
+	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.vault_IPC.dispatchModManagement() })
 	loadVault()
 })

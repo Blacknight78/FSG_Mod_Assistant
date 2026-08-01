@@ -15,11 +15,18 @@ function doL10N(item, locale) {
 	return DATA.escapeSpecial(returnText)
 }
 
-function isGitHubURL(sourceURL) {
+function updateSourceInfo(sourceURL) {
 	try {
-		return new URL(sourceURL).hostname.toLowerCase() === 'github.com'
+		const url = new URL(sourceURL)
+		if ( url.protocol !== 'https:' ) { return { label : 'Manual web page', type : 'manual' } }
+		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
+		if ( host === 'github.com' ) { return { label : 'GitHub', type : 'github' } }
+		if ( host === 'kingmods.net' ) { return { label : 'KingMods', type : 'kingmods' } }
+		if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return { label : 'itch.io', type : 'itch' } }
+		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return { label : 'ModHub', type : 'modhub' } }
+		return { label : 'Manual web page', type : 'manual' }
 	} catch {
-		return false
+		return { label : 'Manual web page', type : 'manual' }
 	}
 }
 
@@ -29,6 +36,34 @@ function isWebURL(sourceURL) {
 	} catch {
 		return false
 	}
+}
+
+function manualSourceResult(entry) {
+	return {
+		assetName  : null,
+		downloadURL : null,
+		hasDownload : false,
+		ok        : true,
+		source    : entry.sourceType,
+		url       : entry.sourceURL,
+		version   : entry.remoteVersion ?? 'manual check',
+	}
+}
+
+function isManualSourceType(sourceType) {
+	return ['itch', 'kingmods', 'manual'].includes(sourceType)
+}
+
+function sourceTypeLabel(sourceType) {
+	if ( sourceType === 'modhub' ) { return 'ModHub' }
+	if ( sourceType === 'github' ) { return 'GitHub' }
+	if ( sourceType === 'kingmods' ) { return 'KingMods' }
+	if ( sourceType === 'itch' ) { return 'itch.io' }
+	return 'Manual web page'
+}
+
+function manualSourceMessage(sourceType) {
+	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
 }
 
 // eslint-disable-next-line complexity
@@ -55,6 +90,7 @@ function makeCandidateMap(modCollect) {
 			const thisMod  = modCollect.modList[collectKey].mods[modKey]
 			const modName  = thisMod.fileDetail.shortName
 			const sourceURL = modSites[modName] ?? ''
+			const sourceInfo = updateSourceInfo(sourceURL)
 
 			if ( thisMod.fileDetail.isFolder ) { continue }
 
@@ -68,7 +104,7 @@ function makeCandidateMap(modCollect) {
 					modHubID,
 					modName,
 					remoteVersion,
-					sourceLabel : sourceType === 'github' ? 'GitHub' : 'ModHub',
+					sourceLabel : sourceTypeLabel(sourceType),
 					sourceType,
 					sourceURL   : sourceLink,
 					title       : doL10N(thisMod.l10n.title, modCollect.appSettings.force_lang),
@@ -80,7 +116,13 @@ function makeCandidateMap(modCollect) {
 				candidates[candidateKey].local.add(thisMod.modDesc.version)
 			}
 
-			if ( isGitHubURL(sourceURL) ) { addCandidate('github', sourceURL) }
+			if ( sourceInfo.type === 'github' ) {
+				addCandidate('github', sourceURL)
+			} else if ( ['itch', 'kingmods', 'manual'].includes(sourceInfo.type) && isWebURL(sourceURL) ) {
+				addCandidate(sourceInfo.type, sourceURL)
+			} else if ( sourceInfo.type === 'modhub' && thisMod.modHub.id === null && isWebURL(sourceURL) ) {
+				addCandidate('modhub', sourceURL)
+			}
 			if ( thisMod.modHub.id !== null && typeof thisMod.modHub.version === 'string' && thisMod.modHub.version !== '' ) {
 				addCandidate('modhub', `https://www.farming-simulator.com/mod.php?mod_id=${thisMod.modHub.id}`, thisMod.modHub.version, thisMod.modHub.id)
 			}
@@ -101,6 +143,9 @@ function isUpdateAvailable(localVersions, remoteVersion, allowUnknownDifference 
 }
 
 function statusText(result) {
+	if ( isManualSourceType(result.source) ) {
+		return manualSourceMessage(result.source)
+	}
 	if ( result.ok ) {
 		return I18N.defer('update_status_available', false)
 	}
@@ -111,6 +156,9 @@ function statusText(result) {
 }
 
 function downloadStatusText(result) {
+	if ( isManualSourceType(result.source) ) {
+		return `<span class="badge text-bg-warning">${sourceTypeLabel(result.source)} manual download</span>`
+	}
 	if ( result.source === 'modhub' && !result.hasDownload ) {
 		return '<span class="badge text-bg-secondary">Manual download from ModHub</span>'
 	}
@@ -151,8 +199,45 @@ async function mapWithConcurrency(entries, limit, mapper) {
 }
 
 let activeRenderID = 0
-let activeCollectionKey = null
-let manifestResolvedMods = []
+let updateBusyDepth = 0
+
+function showUpdateBusyProgress(label = '', value = null) {
+	const wrapper = MA.byId('updateBusyProgress')
+	const bar = MA.byId('updateBusyProgressBar')
+	if ( wrapper === null || bar === null ) { return }
+	const progress = wrapper.querySelector('.progress')
+	wrapper.classList.remove('d-none')
+	wrapper.setAttribute('aria-hidden', 'false')
+	if ( value === null ) {
+		progress?.removeAttribute('aria-valuenow')
+		bar.style.width = '100%'
+		bar.classList.add('progress-bar-animated')
+	} else {
+		const safeValue = Math.max(0, Math.min(100, value))
+		progress?.setAttribute('aria-valuenow', safeValue.toString())
+		bar.style.width = `${safeValue}%`
+		bar.classList.toggle('progress-bar-animated', safeValue < 100)
+	}
+	bar.textContent = label
+}
+
+function beginUpdateBusy(label = '', value = null) {
+	updateBusyDepth++
+	showUpdateBusyProgress(label, value)
+}
+
+function setUpdateBusy(label = '', value = null) {
+	if ( updateBusyDepth > 0 ) { showUpdateBusyProgress(label, value) }
+}
+
+function endUpdateBusy() {
+	updateBusyDepth = Math.max(0, updateBusyDepth - 1)
+	if ( updateBusyDepth !== 0 ) { return }
+	const wrapper = MA.byId('updateBusyProgress')
+	if ( wrapper === null ) { return }
+	wrapper.classList.add('d-none')
+	wrapper.setAttribute('aria-hidden', 'true')
+}
 
 function collectionContextText(modCollect) {
 	const activeCollect   = modCollect.opts?.activeCollection ?? null
@@ -221,13 +306,19 @@ async function downloadSelectedZIPs() {
 
 	MA.byId('downloadSelectedButton').disabled = true
 	MA.byIdHTML('updateStatus', I18N.defer('update_list_updating', false))
-	const result = await window.update_IPC.downloadApplySelected(downloads)
-	if ( result.ok ) {
-		const modCollect = await window.update_IPC.get()
-		await startFromModList(modCollect)
-		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
-	} else {
-		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
+	beginUpdateBusy(`0 / ${downloads.length}`, 0)
+	try {
+		const result = await window.update_IPC.downloadApplySelected(downloads)
+		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
+		if ( result.ok ) {
+			const modCollect = await window.update_IPC.get()
+			await startFromModList(modCollect)
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
+		} else {
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
+		}
+	} finally {
+		endUpdateBusy()
 	}
 	updateSelectedCount()
 }
@@ -245,18 +336,25 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	}
 
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} 0 / ${candidateEntries.length}`)
+	setUpdateBusy(`0 / ${candidateEntries.length}`, 0)
 
 	const updateRows = (await mapWithConcurrency(candidateEntries, 6, async ([, entry]) => {
-		const result = entry.sourceType === 'github' ?
-			await withTimeout(window.update_IPC.getGitHub(entry.sourceURL, forceRemoteRefresh)) :
-			await withTimeout(window.update_IPC.getModHub(entry.modHubID, forceRemoteRefresh))
+		let result
+		if ( entry.sourceType === 'github' ) {
+			result = await withTimeout(window.update_IPC.getGitHub(entry.sourceURL, forceRemoteRefresh))
+		} else if ( entry.sourceType === 'modhub' && entry.modHubID !== null ) {
+			result = await withTimeout(window.update_IPC.getModHub(entry.modHubID, forceRemoteRefresh))
+		} else {
+			result = manualSourceResult(entry)
+		}
 		completeCount++
 		if ( renderID === activeRenderID ) {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${completeCount} / ${candidateEntries.length}`)
+			setUpdateBusy(`${completeCount} / ${candidateEntries.length}`, (completeCount / candidateEntries.length) * 100)
 		}
 
 		if ( !result.ok ) { return null }
-		if ( !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
+		if ( !['itch', 'kingmods', 'manual'].includes(entry.sourceType) && !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
 	
 		const collectionList = entry.collections
 			.sort((a, b) => Intl.Collator().compare(a, b))
@@ -333,15 +431,17 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		return
 	}
 	try {
-		activeCollectionKey = modCollect.opts?.activeCollection ?? null
 		MA.byIdHTML('updateCollectionContext', collectionContextText(modCollect))
 		MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
+		beginUpdateBusy(I18N.defer('update_list_loading', false), null)
 		MA.byIdHTML('modList', '')
 		MA.byId('selectionControls').classList.add('d-none')
 		updateSelectedCount()
 		await displayCandidates(makeCandidateMap(modCollect), renderID, forceRemoteRefresh)
 	} catch (err) {
 		MA.byIdText('updateStatus', `Update list error: ${err.message}`)
+	} finally {
+		if ( renderID === activeRenderID ) { endUpdateBusy() }
 	}
 }
 
@@ -349,165 +449,13 @@ async function refreshUpdateCandidates() {
 	const button = MA.byId('refreshUpdatesButton')
 	button.disabled = true
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
+	beginUpdateBusy(I18N.defer('update_list_loading', false), null)
 	try {
 		const modCollect = await window.update_IPC.get()
 		await startFromModList(modCollect, true)
 	} finally {
+		endUpdateBusy()
 		button.disabled = false
-	}
-}
-
-function manifestStateBadge(state) {
-	if ( state === 'downloadable' ) { return '<span class="badge text-bg-success">Latest ZIP available</span>' }
-	if ( state === 'manual' ) { return '<span class="badge text-bg-warning">Manual download</span>' }
-	return '<span class="badge text-bg-danger">Source missing</span>'
-}
-
-function manifestStateDetail(mod) {
-	if ( mod.state === 'downloadable' ) { return `${DATA.escapeSpecial(mod.sourceType === 'modhub' ? 'ModHub' : 'GitHub')} can supply this mod automatically.` }
-	if ( mod.state === 'manual' ) { return 'A source page is known, but no safe automatic ZIP download is available.' }
-	return 'No supported update source was included. Ask the collection author for this mod.'
-}
-
-function manifestSelectionChanged() {
-	const selected = [...document.querySelectorAll('.manifest-select:checked')].length
-	MA.byId('manifestInstall').disabled = selected === 0 || MA.byId('manifestCollection').value === ''
-}
-
-function setManifestSelections(checked) {
-	for ( const checkbox of document.querySelectorAll('.manifest-select:not(:disabled)') ) {
-		checkbox.checked = checked
-	}
-	manifestSelectionChanged()
-}
-
-function applyManifestViewFilter(filter) {
-	for ( const row of document.querySelectorAll('.manifest-row') ) {
-		row.classList.toggle('d-none', filter === 'attention' && row.dataset.state === 'downloadable')
-	}
-	const showAll = MA.byId('manifestShowAll')
-	const showAttention = MA.byId('manifestShowAttention')
-	showAll.classList.toggle('active', filter === 'all')
-	showAll.classList.toggle('btn-secondary', filter === 'all')
-	showAll.classList.toggle('btn-outline-secondary', filter !== 'all')
-	showAttention.classList.toggle('active', filter === 'attention')
-	showAttention.classList.toggle('btn-danger', filter === 'attention')
-	showAttention.classList.toggle('btn-outline-danger', filter !== 'attention')
-}
-
-function renderManifestPreview(result) {
-	manifestResolvedMods = result.mods
-	const list = MA.byId('manifestList')
-	list.innerHTML = ''
-	const counts = { downloadable : 0, manual : 0, missing : 0 }
-
-	for ( const [index, mod] of result.mods.entries() ) {
-		counts[mod.state]++
-		const localText = mod.localVersions.length === 0 ? 'not currently stored locally' : `local: ${mod.localVersions.join(', ')}`
-		const remoteText = mod.remoteVersion === null ? `shared version: ${mod.requestedVersion ?? 'unknown'}` : `latest: ${mod.remoteVersion}`
-		const node = DATA.templateEngine('manifest_line', {
-			detail     : manifestStateDetail(mod),
-			modName    : DATA.escapeSpecial(mod.modName),
-			stateBadge : manifestStateBadge(mod.state),
-			versions   : `${DATA.escapeSpecial(remoteText)}; ${DATA.escapeSpecial(localText)}`,
-		})
-		const row = node.firstElementChild
-		row.dataset.state = mod.state
-		if ( mod.state === 'missing' ) { row.classList.add('bg-danger-subtle', 'border-danger') }
-		if ( mod.state === 'manual' ) { row.classList.add('bg-warning-subtle', 'border-warning') }
-		const checkbox = node.querySelector('.manifest-select')
-		checkbox.dataset.index = index
-		checkbox.disabled = mod.state !== 'downloadable'
-		checkbox.addEventListener('change', manifestSelectionChanged)
-		const sourceButton = node.querySelector('.manifest-source-button')
-		if ( isWebURL(mod.sourceURL) ) {
-			sourceButton.classList.remove('d-none')
-			sourceButton.addEventListener('click', () => window.update_IPC.openURL(mod.sourceURL))
-		}
-		list.appendChild(node)
-	}
-
-	MA.byIdText('manifestTitle', `${result.manifest.collection.name} — ${result.mods.length} mods`)
-	MA.byIdText('manifestSummary', `${counts.downloadable} automatic, ${counts.manual} manual, ${counts.missing} missing.`)
-	MA.byId('manifestPreview').classList.remove('d-none')
-	applyManifestViewFilter('all')
-	setManifestSelections(false)
-}
-
-async function loadManifestCollections() {
-	const collections = await window.update_IPC.collectionManifestCollections()
-	const select = MA.byId('manifestCollection')
-	const previousValue = select.value
-	select.innerHTML = '<option value="">Choose a collection...</option>'
-	for ( const collection of collections ) {
-		const option = document.createElement('option')
-		option.value = collection.key
-		option.textContent = collection.name
-		select.appendChild(option)
-	}
-	if ( collections.some((collection) => collection.key === previousValue) ) {
-		select.value = previousValue
-	} else if ( collections.some((collection) => collection.key === activeCollectionKey) ) {
-		select.value = activeCollectionKey
-	}
-	manifestSelectionChanged()
-}
-
-async function toggleManifestPanel() {
-	const panel = MA.byId('manifestPanel')
-	panel.classList.toggle('d-none')
-	if ( !panel.classList.contains('d-none') ) { await loadManifestCollections() }
-}
-
-async function exportManifest(mode) {
-	const collectionKey = MA.byId('manifestCollection').value
-	if ( collectionKey === '' ) {
-		MA.byIdText('manifestStatus', 'Choose the collection you want to share first.')
-		return
-	}
-	MA.byIdText('manifestStatus', 'Preparing collection manifest...')
-	const result = await window.update_IPC.exportCollectionManifest({ collectionKey, mode })
-	if ( result.ok ) {
-		const detail = mode === 'clipboard' ? `Share link copied (${result.length.toLocaleString()} characters).` : `Manifest saved to ${result.filePath}`
-		MA.byIdText('manifestStatus', `${detail} ${result.count} mods included.`)
-	} else if ( !result.canceled ) {
-		MA.byIdText('manifestStatus', `Manifest export failed: ${result.error}`)
-	}
-}
-
-async function importManifest(mode) {
-	MA.byIdText('manifestStatus', 'Reading manifest and checking the latest supported sources...')
-	MA.byId('manifestPreview').classList.add('d-none')
-	const result = mode === 'clipboard' ?
-		await window.update_IPC.importCollectionManifestClipboard() :
-		await window.update_IPC.importCollectionManifestFile()
-	if ( result.ok ) {
-		renderManifestPreview(result)
-		MA.byIdText('manifestStatus', 'Manifest resolved. Review the results before installing anything.')
-	} else if ( !result.canceled ) {
-		MA.byIdText('manifestStatus', `Manifest import failed: ${result.error}`)
-	}
-}
-
-async function installManifestSelection() {
-	const collectionKey = MA.byId('manifestCollection').value
-	const downloads = [...document.querySelectorAll('.manifest-select:checked')]
-		.map((checkbox) => manifestResolvedMods[Number.parseInt(checkbox.dataset.index, 10)])
-	if ( collectionKey === '' || downloads.length === 0 ) { return }
-
-	MA.byId('manifestInstall').disabled = true
-	MA.byIdText('manifestStatus', `Installing ${downloads.length} selected mod(s)...`)
-	const result = await window.update_IPC.installCollectionManifest({ collectionKey, downloads })
-	if ( result.ok ) {
-		const failedNames = result.results.filter((entry) => entry.ok === false).map((entry) => entry.modName)
-		const failedText = result.failed === 0 ? '' : ` ${result.failed} failed: ${failedNames.join(', ')}.`
-		MA.byIdText('manifestStatus', `Collection import complete: ${result.installed} installed, ${result.skipped} already current.${failedText}`)
-		setManifestSelections(false)
-		const modCollect = await window.update_IPC.get()
-		await startFromModList(modCollect)
-	} else {
-		MA.byIdText('manifestStatus', `Collection import failed: ${result.error}`)
-		manifestSelectionChanged()
 	}
 }
 
@@ -519,19 +467,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byIdEventIfExists('openSelectedButton', openSelectedSources)
 	MA.byIdEventIfExists('downloadSelectedButton', downloadSelectedZIPs)
 	MA.byIdEventIfExists('refreshUpdatesButton', refreshUpdateCandidates)
-	MA.byIdEventIfExists('historyButton', () => window.update_IPC.dispatchHistory())
-	MA.byIdEventIfExists('vaultButton', () => window.update_IPC.dispatchVault())
-	MA.byIdEventIfExists('manifestToggleButton', toggleManifestPanel)
-	MA.byIdEventIfExists('manifestExportFile', () => exportManifest('file'))
-	MA.byIdEventIfExists('manifestCopyLink', () => exportManifest('clipboard'))
-	MA.byIdEventIfExists('manifestImportFile', () => importManifest('file'))
-	MA.byIdEventIfExists('manifestImportLink', () => importManifest('clipboard'))
-	MA.byIdEventIfExists('manifestSelectAll', () => setManifestSelections(true))
-	MA.byIdEventIfExists('manifestSelectNone', () => setManifestSelections(false))
-	MA.byIdEventIfExists('manifestShowAll', () => applyManifestViewFilter('all'))
-	MA.byIdEventIfExists('manifestShowAttention', () => applyManifestViewFilter('attention'))
-	MA.byIdEventIfExists('manifestInstall', installManifestSelection)
-	MA.byIdEventIfExists('manifestCollection', manifestSelectionChanged, 'change')
+	MA.byIdEventIfExists('updateMenuButton', () => window.update_IPC.dispatchModManagement())
 
 	window.update_IPC.receive('mods:list', (modCollect) => {
 		startFromModList(modCollect)

@@ -44,6 +44,7 @@ const pageAPI = {
 			getMalware : ()    => ipcRenderer.invoke('collect:malware'),
 			getMod     : (key) => ipcRenderer.invoke('detail:getMod', key),
 			getModHub  : (modHubID) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID),
+			getSourceInfo : (url) => ipcRenderer.invoke('settings:site:sourceInfo', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			rollbackEntries : (update) => ipcRenderer.invoke('update:rollbackEntries', update),
 			rollbackEntry : (entry) => ipcRenderer.invoke('update:rollbackEntry', entry),
@@ -80,6 +81,7 @@ const pageAPI = {
 			all           : () => ipcRenderer.invoke('history:all'),
 			clear         : () => ipcRenderer.invoke('history:clear'),
 			context       : () => ipcRenderer.send('context:copy'),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
 			rollbackEntry : (entry) => ipcRenderer.invoke('history:rollbackEntry', entry),
 		},
@@ -120,9 +122,11 @@ const pageAPI = {
 			dispatch        : (win) => {
 				const knownWindows = new Set([
 					'basegame', 'changelog', 'compare', 'debug',
-					'find', 'game', 'gamelog', 'help', 'history', 'input', 'mini',
-					'notes', 'resolve', 'savemanage', 'savetrack',
+					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input',
+					'manifest', 'mini', 'mod_management', 'notes', 'recent_changes',
+					'resolve', 'savemanage', 'savetrack',
 					'update', 'version', 'wizard',
+					'vault', 'vault_update',
 				])
 				if ( knownWindows.has(win) ) {
 					ipcRenderer.send(`dispatch:${win}`)
@@ -272,23 +276,79 @@ const pageAPI = {
 	},
 	'update' : {
 		functions : {
-			collectionManifestCollections : () => ipcRenderer.invoke('manifest:collections'),
-			dispatchHistory  : () => ipcRenderer.send('dispatch:history'),
-			dispatchVault    : () => ipcRenderer.send('dispatch:vault'),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			downloadApplySelected : (downloads) => ipcRenderer.invoke('update:downloadApplySelected', downloads),
-			exportCollectionManifest : (payload) => ipcRenderer.invoke('manifest:export', payload),
 			get              : ()    => ipcRenderer.invoke('update:list'),
 			getGitHub        : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
 			getModHub        : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
+			getSourceInfo    : (url) => ipcRenderer.invoke('settings:site:sourceInfo', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
-			importCollectionManifestClipboard : () => ipcRenderer.invoke('manifest:importClipboard'),
-			importCollectionManifestFile : () => ipcRenderer.invoke('manifest:importFile'),
-			installCollectionManifest : (payload) => ipcRenderer.invoke('manifest:install', payload),
 			openURL          : (url) => ipcRenderer.send('win:openURL', url),
 			rollbackEntries  : (update) => ipcRenderer.invoke('update:rollbackEntries', update),
 			rollbackEntry    : (entry) => ipcRenderer.invoke('update:rollbackEntry', entry),
 		},
 		validAsync : new Set(['mods:list']),
+	},
+  'vault_update' : {
+    functions : {
+      dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
+      downloadToVaultSelected : (downloads) => ipcRenderer.invoke('vault:updateDownloadSelected', downloads),
+      getGitHub : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
+			getModHub : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
+			getVault : () => ipcRenderer.invoke('vault:all'),
+			openURL : (url) => ipcRenderer.send('win:openURL', url),
+		},
+		validAsync : new Set(),
+	},
+	'manifest' : {
+		functions : {
+			collectionManifestCollections : () => ipcRenderer.invoke('manifest:collections'),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
+			exportCollectionManifest : (payload) => ipcRenderer.invoke('manifest:export', payload),
+			importCollectionManifestClipboard : () => ipcRenderer.invoke('manifest:importClipboard'),
+			importCollectionManifestFile : () => ipcRenderer.invoke('manifest:importFile'),
+			installCollectionManifest : (payload) => ipcRenderer.invoke('manifest:install', payload),
+			openURL          : (url) => ipcRenderer.send('win:openURL', url),
+		},
+		validAsync : new Set(),
+	},
+	'mod_management' : {
+		functions : {
+			dispatchBackups : () => ipcRenderer.send('dispatch:backups'),
+			dispatchHistory  : () => ipcRenderer.send('dispatch:history'),
+			dispatchManifest : () => ipcRenderer.send('dispatch:manifest'),
+			dispatchRecentChanges : () => ipcRenderer.send('dispatch:recent_changes'),
+			dispatchUpdateCandidates : () => ipcRenderer.send('dispatch:update_candidates'),
+			dispatchVault    : () => ipcRenderer.send('dispatch:vault'),
+			dispatchVaultUpdates : () => ipcRenderer.send('dispatch:vault_update'),
+		},
+		validAsync : new Set(),
+	},
+	'backups' : {
+		functions : {
+			collections    : () => ipcRenderer.invoke('backups:collections'),
+			compare        : (payload) => ipcRenderer.invoke('backups:compare', payload),
+			create         : (payload) => ipcRenderer.invoke('backups:create', payload),
+			deleteOldManifests : (payload) => ipcRenderer.invoke('backups:deleteOldManifests', payload),
+			disableRecentMods : (payload) => ipcRenderer.invoke('backups:disableRecentMods', payload),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
+			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
+			list           : () => ipcRenderer.invoke('backups:list'),
+			previewOldManifests : (payload) => ipcRenderer.invoke('backups:previewOldManifests', payload),
+			recentChanges  : (payload) => ipcRenderer.invoke('backups:recentChanges', payload),
+			restore        : (payload) => ipcRenderer.invoke('backups:restore', payload),
+		},
+		validAsync : new Set(),
+	},
+	'recent_changes' : {
+		functions : {
+			collections       : () => ipcRenderer.invoke('backups:collections'),
+			disableRecentMods : (payload) => ipcRenderer.invoke('backups:disableRecentMods', payload),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
+			dispatchUpdate    : () => ipcRenderer.send('dispatch:update'),
+			recentChanges     : (payload) => ipcRenderer.invoke('backups:recentChanges', payload),
+		},
+		validAsync : new Set(),
 	},
 	'vault' : {
 		functions : {
@@ -298,6 +358,7 @@ const pageAPI = {
 			context    : (payload) => ipcRenderer.send('context:vault', payload),
 			copyPreview : (payload) => ipcRenderer.invoke('vault:copyPreview', payload),
 			copyToCollection : (payload) => ipcRenderer.invoke('vault:copyToCollection', payload),
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
 			importCollections : () => ipcRenderer.invoke('vault:importCollections'),
 			openDetail : (payload) => ipcRenderer.invoke('vault:openDetail', payload),
@@ -308,7 +369,7 @@ const pageAPI = {
 			setRetentionCount : (payload) => ipcRenderer.invoke('vault:setRetentionCount', payload),
 			textContext : () => ipcRenderer.send('context:copy'),
 		},
-		validAsync : new Set(['vault:contextResult']),
+		validAsync : new Set(['vault:contextResult', 'vault:progress']),
 	},
 	'version' : {
 		functions : {

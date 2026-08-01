@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>FSG Mod Assistant - Vault Updates</title>
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<style>
+		.vault-update-icon {
+			width: 64px;
+			height: 64px;
+			object-fit: contain;
+		}
+	</style>
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/vault_update_ui.js"></script>
+</head>
+<body data-bs-theme="dark" class="overflow-custom2">
+	<div class="container-fluid px-1">
+		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
+			<div class="row align-items-center m-2">
+				<div class="col"><h1>FSG Mod Assistant</h1></div>
+				<div class="col text-end"><span class="btn btn-warning fs-3 fw-bold">Vault Updates</span></div>
+			</div>
+			<div class="row g-2 mx-2">
+				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesRefresh" class="btn btn-primary w-100">Refresh Vault update checks</button></div>
+				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesOpenSelected" class="btn btn-success w-100">Open selected web pages</button></div>
+				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesDownloadSelected" class="btn btn-warning w-100">Download selected to Vault</button></div>
+				<div class="col-12"><button type="button" id="vaultUpdatesBack" class="btn btn-secondary w-100">Back to Mod Management</button></div>
+				<div class="col-12">
+					<div class="progress d-none" id="vaultUpdatesProgressWrap" role="progressbar" aria-label="Vault update progress">
+						<div id="vaultUpdatesProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0%</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="alert alert-secondary mx-2" id="vaultUpdateStatus">Loading Vault ZIPs…</div>
+		<div class="mx-2 mb-3 d-none" id="vaultUpdateSelectionControls">
+			<div class="btn-group w-100">
+				<button class="btn btn-outline-success" type="button" id="vaultUpdatesSelectAll">Select All</button>
+				<button class="btn btn-outline-secondary" type="button" id="vaultUpdatesSelectNone">Select None</button>
+				<button class="btn btn-secondary disabled" type="button" id="vaultUpdatesSelectedCount">Selected: 0</button>
+			</div>
+		</div>
+	<div class="alert alert-secondary mx-2" id="vaultUpdateSelection">0 update(s) selected. Downloads are stored in the Vault only.</div>
+	<div class="list-group mx-2 my-3" id="vaultUpdateList"></div>
+	</div>
+</body>
+</html>

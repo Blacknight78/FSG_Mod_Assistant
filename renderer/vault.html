@@ -81,6 +81,11 @@
 		</div>
 
 		<div class="mx-2 mb-3 alert alert-secondary" id="vaultStatus">Loading mod vault...</div>
+		<div class="mx-2 mb-3 d-none" id="vaultBusyProgress" aria-hidden="true">
+			<div class="progress" role="progressbar" aria-label="Vault window busy" aria-valuemin="0" aria-valuemax="100">
+				<div class="progress-bar progress-bar-striped progress-bar-animated" id="vaultBusyProgressBar" style="width: 100%"></div>
+			</div>
+		</div>
 
 		<div class="mx-2 mb-3 card">
 			<div class="card-body">
@@ -108,7 +113,7 @@
 						<button class="btn btn-sm btn-warning w-100" id="vaultRefreshModHub" type="button">Refresh ModHub information</button>
 					</div>
 					<div class="col-md-3 d-flex align-items-end">
-						<button class="btn btn-sm btn-info w-100" id="vaultBackToUpdates" type="button">Back to updates</button>
+						<button class="btn btn-sm btn-info w-100" id="vaultBackToUpdates" type="button">Back to Mod Management Menu</button>
 					</div>
 					<div class="col-md-4">
 						<label class="form-label small" for="vaultTypeFilter">Internal mod type</label>
@@ -198,6 +203,8 @@
 							<button aria-pressed="true" class="btn btn-outline-secondary active" data-source="" type="button">All</button>
 							<button aria-pressed="false" class="btn btn-outline-success" data-source="modhub" type="button">ModHub</button>
 							<button aria-pressed="false" class="btn btn-outline-warning" data-source="github" type="button">GitHub</button>
+							<button aria-pressed="false" class="btn btn-outline-info" data-source="kingmods" type="button">KingMods</button>
+							<button aria-pressed="false" class="btn btn-outline-info" data-source="itch" type="button">itch.io</button>
 							<button aria-pressed="false" class="btn btn-outline-info" data-source="manual" type="button">Manual</button>
 						</div>
 					</div>
