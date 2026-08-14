@@ -35,6 +35,11 @@ function sourceLabel(sourceType) {
 	return sourceType === 'modhub' ? 'ModHub' : 'GitHub'
 }
 
+function modHubReleasedLabel(value) {
+	const released = typeof value === 'string' ? value.trim() : ''
+	return released === '' ? 'not recorded' : released
+}
+
 function selectedCandidates() {
 	return candidates.filter((candidate) => selectedKeys.has(candidate.key))
 }
@@ -170,6 +175,13 @@ function cardFor(candidate) {
 	addBadge(versionBadges, `Vault ${candidate.localVersion}`, 'text-bg-secondary me-2')
 	addBadge(versionBadges, `${sourceLabel(candidate.sourceType)} ${candidate.remoteVersion}`, 'text-bg-warning')
 	actionColumn.append(versionBadges)
+
+	if ( candidate.sourceType === 'modhub' ) {
+		const released = document.createElement('div')
+		released.className = 'small text-body-secondary mb-2'
+		released.textContent = `ModHub released: ${modHubReleasedLabel(candidate.modHubReleased)}`
+		actionColumn.append(released)
+	}
 
 	const updateStatus = document.createElement('div')
 	updateStatus.className = 'text-warning mb-3'
