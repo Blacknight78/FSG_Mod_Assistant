@@ -248,6 +248,6 @@ document.addEventListener('DOMContentLoaded', () => {
 	MA.byIdEventIfExists('recentBackToUpdates', () => window.recent_changes_IPC.dispatchModManagement())
 	MA.byIdEventIfExists('recentRefresh', loadRecentChanges)
 	MA.byIdEventIfExists('recentDisableSelected', disableSelectedRecentMods)
-	MA.byIdEventIfExists('recentCollection', loadRecentChanges)
+	MA.byIdEventIfExists('recentCollection', loadRecentChanges, 'change')
 	loadRecentWindow()
 })

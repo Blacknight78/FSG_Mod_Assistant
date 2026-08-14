@@ -15,6 +15,8 @@ let vaultSourceFilter = ''
 let vaultSelectedHashes = new Set()
 let vaultGroupRows = new Map()
 let vaultBusyDepth = 0
+let vaultPreviewItems = []
+let vaultPreviewIndex = 0
 
 function showVaultBusyProgress(label = '', value = null) {
 	const wrapper = MA.byId('vaultBusyProgress')
@@ -89,6 +91,18 @@ function formatTimestamp(timestamp) {
 	return date.toLocaleString()
 }
 
+function newestDateLabel(values) {
+	const labels = uniqueValues(values ?? [])
+	if ( labels.length === 0 ) { return '' }
+
+	return labels.toSorted((left, right) => {
+		const leftTime = new Date(left).getTime()
+		const rightTime = new Date(right).getTime()
+		if ( Number.isNaN(leftTime) || Number.isNaN(rightTime) ) { return right.localeCompare(left) }
+		return rightTime - leftTime
+	})[0]
+}
+
 function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
 }
@@ -158,6 +172,13 @@ function sortTime(entry) {
 	return date.getTime()
 }
 
+function newestTime(entries, field) {
+	return Math.max(0, ...entries.map((entry) => {
+		const date = new Date(entry[field] ?? 0)
+		return Number.isNaN(date.getTime()) ? 0 : date.getTime()
+	}))
+}
+
 function sortableVersion(value) {
 	return (value ?? '')
 		.toString()
@@ -199,6 +220,43 @@ function compareVaultEntries(left, right) {
 	const versionCompare = compareVersionParts(sortableVersion(primaryVersion(right)), sortableVersion(primaryVersion(left)))
 	if ( versionCompare !== 0 ) { return versionCompare }
 	return sortTime(right) - sortTime(left)
+}
+
+function dateRangeMatches(timestamp, range) {
+	if ( range === '' ) { return true }
+	if ( timestamp === 0 ) { return range === 'none' }
+	if ( range === 'none' ) { return false }
+
+	const ageDays = (Date.now() - timestamp) / (1000 * 60 * 60 * 24)
+	switch ( range ) {
+		case '7' :
+			return ageDays <= 7
+		case '30' :
+			return ageDays <= 30
+		case '90' :
+			return ageDays <= 90
+		case 'older-90' :
+			return ageDays > 90
+		default :
+			return true
+	}
+}
+
+function compareVaultGroups(left, right, sortMode) {
+	switch ( sortMode ) {
+		case 'updated-asc' :
+			return left.updatedTime - right.updatedTime || left.modName.localeCompare(right.modName)
+		case 'size-desc' :
+			return right.totalSize - left.totalSize || left.modName.localeCompare(right.modName)
+		case 'size-asc' :
+			return left.totalSize - right.totalSize || left.modName.localeCompare(right.modName)
+		case 'name-desc' :
+			return right.modName.localeCompare(left.modName)
+		case 'updated-desc' :
+			return right.updatedTime - left.updatedTime || left.modName.localeCompare(right.modName)
+		default :
+			return left.modName.localeCompare(right.modName)
+	}
 }
 
 function badgeTooltip(value, type) {
@@ -389,17 +447,62 @@ function storePreviewIconSource(icon) {
 function storeItemPreviewHTML(previews, maxItems = 6) {
 	if ( !Array.isArray(previews) || previews.length === 0 ) { return '' }
 
-	const imageHTML = previews.slice(0, maxItems).map((preview) => {
+	const gallery = previews.map((preview) => ({
+		icon : preview?.icon,
+		name : preview?.name || 'Store item',
+	}))
+	const encodedGallery = DATA.escapeSpecial(encodeURIComponent(JSON.stringify(gallery)))
+	const imageHTML = gallery.slice(0, maxItems).map((preview, index) => {
 		const iconSource = DATA.escapeSpecial(storePreviewIconSource(preview.icon))
 		const title = DATA.escapeSpecial(preview.name || 'Store item')
-		return `<img alt="" data-bs-placement="top" data-bs-toggle="tooltip" src="${iconSource}" title="${title}">`
+		return `<button type="button" class="vault-store-preview-button" data-vault-preview-index="${index}" title="Open preview: ${title}"><img alt="" src="${iconSource}"></button>`
 	})
-	const remaining = previews.length - maxItems
+	const remaining = gallery.length - maxItems
 	if ( remaining > 0 ) {
-		imageHTML.push(`<span class="vault-store-preview-more">+${remaining}</span>`)
+		imageHTML.push(`<button type="button" class="vault-store-preview-more" data-vault-preview-index="${maxItems}" title="Open all ${gallery.length} previews">+${remaining}</button>`)
 	}
 
-	return `<div class="vault-store-preview mt-2">${imageHTML.join('')}</div>`
+	return `<div class="vault-store-preview mt-2" data-vault-preview-gallery="${encodedGallery}">${imageHTML.join('')}</div>`
+}
+
+function renderVaultPreview() {
+	const item = vaultPreviewItems[vaultPreviewIndex]
+	if ( item === undefined ) { return }
+
+	MA.byId('vaultPreviewImage').src = storePreviewIconSource(item.icon)
+	MA.byId('vaultPreviewImage').alt = item.name || 'Store item preview'
+	MA.byIdText('vaultPreviewTitle', item.name || 'Store item preview')
+	MA.byIdText('vaultPreviewCaption', `${vaultPreviewIndex + 1} of ${vaultPreviewItems.length}`)
+	MA.byId('vaultPreviewPrevious').disabled = vaultPreviewIndex === 0
+	MA.byId('vaultPreviewNext').disabled = vaultPreviewIndex >= vaultPreviewItems.length - 1
+}
+
+function showVaultPreviewGallery(previews, startIndex = 0) {
+	vaultPreviewItems = Array.isArray(previews) ? previews : []
+	if ( vaultPreviewItems.length === 0 ) { return }
+
+	vaultPreviewIndex = Math.max(0, Math.min(vaultPreviewItems.length - 1, startIndex))
+	renderVaultPreview()
+	const dialog = MA.byId('vaultPreviewDialog')
+	if ( !dialog.open ) { dialog.showModal() }
+}
+
+function openVaultPreview(event) {
+	if ( !(event.target instanceof Element) ) { return false }
+	const trigger = event.target.closest('[data-vault-preview-index]')
+	if ( trigger === null ) { return false }
+
+	const gallery = trigger.closest('[data-vault-preview-gallery]')
+	const serialized = gallery?.dataset.vaultPreviewGallery
+	if ( !serialized ) { return false }
+
+	try {
+		showVaultPreviewGallery(JSON.parse(decodeURIComponent(serialized)), Number.parseInt(trigger.dataset.vaultPreviewIndex, 10) || 0)
+	} catch (err) {
+		// eslint-disable-next-line no-console
+		console.warn('Unable to open Vault preview gallery', err)
+	}
+	return true
 }
 
 function cleanNumber(value) {
@@ -551,9 +654,11 @@ function groupEntries(entries) {
 		const versions = uniqueValues(group.entries.flatMap((entry) => entry.versions ?? []))
 		const collections = uniqueValues(group.entries.flatMap((entry) => entry.collections ?? []))
 		const categories = uniqueValues(group.entries.flatMap((entry) => entry.itemCategories ?? []))
+		const authors = uniqueValues(group.entries.flatMap((entry) => entry.authors ?? []))
 		const brands = uniqueValues(group.entries.flatMap((entry) => entry.itemBrands ?? []))
 		const equipmentSpecs = mergeEquipmentSpecsFromEntries(group.entries)
 		const modHubCategories = uniqueValues(group.entries.flatMap((entry) => entry.modHubCategories ?? []))
+		const modHubReleasedDates = uniqueValues(group.entries.flatMap((entry) => entry.modHubReleasedDates ?? []))
 		const modTypes = uniqueValues(group.entries.flatMap((entry) => entry.modTypes ?? []))
 		const sources = uniqueValues(group.entries.flatMap((entry) => entry.sources ?? []).map((source) => friendlySourceName(source)))
 		const sourceTypes = sourceTypesForEntries(group.entries)
@@ -567,11 +672,13 @@ function groupEntries(entries) {
 			group.modName,
 			note,
 			versions.join(' '),
+			authors.join(' '),
 			collections.join(' '),
 			categories.join(' '),
 			brands.join(' '),
 			equipmentSpecText(equipmentSpecs),
 			modHubCategories.join(' '),
+			modHubReleasedDates.join(' '),
 			modTypes.join(' '),
 			sources.join(' '),
 			storeItemTypes.join(' '),
@@ -583,15 +690,18 @@ function groupEntries(entries) {
 		].join(' '))
 		return {
 			...group,
+			authors,
 			brands,
 			categories,
 			collections,
+			createdTime : newestTime(group.entries, 'createdAt'),
 			entries : sortedEntries,
 			equipmentSpecs,
 			hasNote,
 			hasRollback,
 			hasUpdate,
 			modHubCategories,
+			modHubReleasedDates,
 			modIcon,
 			modTypes,
 			note,
@@ -601,13 +711,15 @@ function groupEntries(entries) {
 			storeItemPreviews,
 			storeItemTypes,
 			totalSize : group.entries.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
+			updatedTime : newestTime(group.entries, 'updatedAt'),
 			versions,
 		}
-	}).sort((a, b) => a.modName.localeCompare(b.modName))
+	})
 }
 
 function filterEntries() {
 	const textFilter = normalValue(MA.byId('vaultTextFilter').value)
+	const authorFilter = MA.byId('vaultAuthorFilter').value
 	const typeFilter = MA.byId('vaultTypeFilter').value
 	const categoryFilter = MA.byId('vaultCategoryFilter').value
 	const modHubCategoryFilter = MA.byId('vaultModHubCategoryFilter').value
@@ -619,11 +731,14 @@ function filterEntries() {
 	const priceFilter = MA.byId('vaultPriceFilter').value
 	const storeItemTypeFilter = MA.byId('vaultStoreItemTypeFilter').value
 	const updateFilter = MA.byId('vaultUpdateFilter').value
+	const updatedFilter = MA.byId('vaultUpdatedFilter').value
+	const sortMode = MA.byId('vaultSortFilter').value
 	const groups = groupEntries(vaultEntries)
 	// Each independent Vault filter contributes one simple predicate branch.
 	// eslint-disable-next-line complexity
 	return groups.filter((group) =>
 		(textFilter === '' || group.searchText.includes(textFilter)) &&
+		(authorFilter === '' || group.authors.includes(authorFilter)) &&
 		(typeFilter === '' || group.modTypes.includes(typeFilter)) &&
 		(categoryFilter === '' || group.categories.includes(categoryFilter)) &&
 		(brandFilter === '' || group.brands.includes(brandFilter)) &&
@@ -635,8 +750,9 @@ function filterEntries() {
 		(vaultSourceFilter === '' || group.sourceTypes.includes(vaultSourceFilter)) &&
 		(noteFilter === '' || (noteFilter === 'with' && group.hasNote) || (noteFilter === 'without' && !group.hasNote)) &&
 		(rollbackFilter === '' || (rollbackFilter === 'with' && group.hasRollback) || (rollbackFilter === 'without' && !group.hasRollback)) &&
-		(updateFilter === '' || (updateFilter === 'available' && group.hasUpdate) || (updateFilter === 'none' && !group.hasUpdate))
-	)
+		(updateFilter === '' || (updateFilter === 'available' && group.hasUpdate) || (updateFilter === 'none' && !group.hasUpdate)) &&
+		dateRangeMatches(group.updatedTime, updatedFilter)
+	).sort((left, right) => compareVaultGroups(left, right, sortMode))
 }
 
 function setSourceFilter(sourceType) {
@@ -678,6 +794,7 @@ async function renderFileRows(entries, groupIndex) {
 			modHubCategoryBadges : makeBadges(entry.modHubCategories ?? [], 'text-bg-success', 'modhub-category'),
 			modHubIDs        : DATA.escapeSpecial((entry.modHubIDs ?? []).join(', ') || 'none'),
 			modHubMatch      : DATA.escapeSpecial(`${entry.modHubMatchMethod ?? 'unmatched'} (${entry.modHubMatchConfidence ?? 'none'} confidence)`),
+			modHubReleasedDates : DATA.escapeSpecial((entry.modHubReleasedDates ?? []).join(', ') || 'none'),
 			modHubStatusBadge : modHubDisplay.badge,
 			modHubStatusLine : modHubDisplay.line,
 			modHubVersions   : DATA.escapeSpecial((entry.modHubVersions ?? []).join(', ') || 'none'),
@@ -716,7 +833,7 @@ async function renderFileRows(entries, groupIndex) {
 		rowNode.dataset.collections = JSON.stringify(entry.collections ?? [])
 		rowNode.dataset.fileName = entry.fileName ?? ''
 		rowNode.dataset.hash = entry.hash ?? ''
-	rowNode.dataset.modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '')
+		rowNode.dataset.modName = canonicalVaultModName(entry.modNames?.[0] ?? entry.fileName ?? '')
 		fillCollectionSelect(row.querySelector('.vault-copy-target'))
 		return fragmentToHTML(row)
 	}))
@@ -757,6 +874,7 @@ function fillSelect(selectID, values, firstLabel) {
 
 function refreshFilterOptions() {
 	fillSelect('vaultTypeFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.modTypes ?? [])), 'All mod types')
+	fillSelect('vaultAuthorFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.authors ?? [])), 'All authors')
 	fillSelect('vaultBrandFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.itemBrands ?? [])), 'All manufacturers/brands')
 	fillSelect('vaultCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.itemCategories ?? [])), 'All internal categories')
 	fillSelect('vaultModHubCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.modHubCategories ?? [])), 'All ModHub categories')
@@ -883,9 +1001,18 @@ async function renderVault(groups) {
 		const versionText = group.versions.length === 0 ?
 			'No version metadata recorded' :
 			`${group.versions.length} version label${group.versions.length === 1 ? '' : 's'} recorded`
+		const lastUpdatedText = group.updatedTime === 0 ?
+			'Last Vault updated: not recorded' :
+			`Last Vault updated: ${formatTimestamp(group.updatedTime)}`
+		const modHubReleased = newestDateLabel(group.modHubReleasedDates)
+		const modHubReleasedText = modHubReleased === '' ?
+			'ModHub released: not recorded' :
+			`ModHub released: ${modHubReleased}`
 		const node = DATA.templateEngine('vault_line', {
 			fileCount      : DATA.escapeSpecial(`${group.entries.length} stored ZIP file${group.entries.length === 1 ? '' : 's'}`),
 			fileRows       : '',
+			lastUpdated    : DATA.escapeSpecial(lastUpdatedText),
+			modHubReleased : DATA.escapeSpecial(modHubReleasedText),
 			modIcon        : modIconHTML(group.modIcon),
 			modName        : DATA.escapeSpecial(group.modName),
 			storeItemPreviews : storeItemPreviewHTML(group.storeItemPreviews, 6),
@@ -1477,11 +1604,29 @@ async function deleteSelectedUnusedVaultFiles() {
 window.addEventListener('DOMContentLoaded', () => {
 	window.vault_IPC.receive('vault:contextResult', handleVaultContextResult)
 	window.vault_IPC.receive('vault:progress', handleVaultProgress)
+	const previewDialog = MA.byId('vaultPreviewDialog')
+	MA.byId('vaultPreviewClose').addEventListener('click', () => { previewDialog.close() })
+	MA.byId('vaultPreviewPrevious').addEventListener('click', () => {
+		if ( vaultPreviewIndex > 0 ) {
+			vaultPreviewIndex -= 1
+			renderVaultPreview()
+		}
+	})
+	MA.byId('vaultPreviewNext').addEventListener('click', () => {
+		if ( vaultPreviewIndex < vaultPreviewItems.length - 1 ) {
+			vaultPreviewIndex += 1
+			renderVaultPreview()
+		}
+	})
+	previewDialog.addEventListener('click', (event) => {
+		if ( event.target === previewDialog ) { previewDialog.close() }
+	})
 	MA.byId('vaultList').addEventListener('contextmenu', openVaultDetail)
 	MA.byId('vaultList').addEventListener('show.bs.collapse', (event) => {
 		if ( event.target.classList.contains('vault-group-body') ) { ensureVaultGroupRows(event.target) }
 	})
 	MA.byId('vaultList').addEventListener('click', (event) => {
+		if ( openVaultPreview(event) ) { return }
 		const copyButton = event.target.closest('.vault-copy-button')
 		if ( copyButton !== null ) { copyVaultEntry(copyButton) }
 		const keepButton = event.target.closest('.vault-keep-button')
@@ -1511,6 +1656,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		updateVaultSelectionControls()
 	})
 	MA.byId('vaultTextFilter').addEventListener('input', () => { renderVault(filterEntries()) })
+	MA.byId('vaultAuthorFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultTypeFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultBrandFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
@@ -1522,12 +1668,15 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultPriceFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultStoreItemTypeFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultUpdateFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultUpdatedFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultSortFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultSourceFilter').addEventListener('click', (event) => {
 		const sourceButton = event.target.closest('button[data-source]')
 		if ( sourceButton !== null ) { setSourceFilter(sourceButton.dataset.source) }
 	})
 	MA.byId('vaultClearFilters').addEventListener('click', () => {
 		MA.byId('vaultTextFilter').value = ''
+		MA.byId('vaultAuthorFilter').value = ''
 		MA.byId('vaultTypeFilter').value = ''
 		MA.byId('vaultBrandFilter').value = ''
 		MA.byId('vaultCategoryFilter').value = ''
@@ -1539,6 +1688,8 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultPriceFilter').value = ''
 		MA.byId('vaultStoreItemTypeFilter').value = ''
 		MA.byId('vaultUpdateFilter').value = ''
+		MA.byId('vaultUpdatedFilter').value = ''
+		MA.byId('vaultSortFilter').value = 'name-asc'
 		setSourceFilter('')
 	})
 	MA.byId('vaultImportCollections').addEventListener('click', importCollections)

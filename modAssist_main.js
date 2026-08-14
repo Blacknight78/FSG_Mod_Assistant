@@ -3,6 +3,7 @@
    |       ||  _  |  _  |       ||__ --|__ --||  ||__ --||   _|
    |__|_|__||_____|_____|___|___||_____|_____||__||_____||____|
    (c) 2022-present FSG Modding.  MIT License. */
+/* eslint-disable sort-keys */
 // Main Program
 
 const superDebugCache = false
@@ -1357,6 +1358,7 @@ function collectionModVaultMetadata(modRecord, collectKey) {
 	const storeItemMetadata = storeItemVaultMetadataForMod(modRecord)
 
 	return {
+		author         : modRecord.modDesc?.author ?? null,
 		collectionName,
 		equipmentSpecs : storeItemMetadata.equipmentSpecs,
 		fileName       : path.basename(modRecord.fileDetail.fullPath),
@@ -1367,6 +1369,7 @@ function collectionModVaultMetadata(modRecord, collectKey) {
 		modHubCategory : modHubMetadata?.category ?? null,
 		modHubCategoryPath : modHubMetadata?.categoryPath ?? [],
 		modHubID       : modHubRecord.id ?? null,
+		modHubReleased : modHubMetadata?.released ?? null,
 		modHubVersion  : modHubRecord.version ?? null,
 		modIcon        : modRecord.modDesc?.iconImage ?? null,
 		modName        : modRecord.fileDetail.shortName,
@@ -1452,15 +1455,44 @@ function extractModHubDownloadURL(html) {
 	return null
 }
 
+function extractModHubAuthorURL(html) {
+	const decodedHTML = decodeHTMLEntities(html)
+	for ( const match of decodedHTML.matchAll(/href\s*=\s*["']([^"']+)["']/giu) ) {
+		try {
+			const authorPageURL = new URL(match[1], 'https://www.farming-simulator.com/')
+			const orgID = authorPageURL.searchParams.get('org_id')
+			if (
+				authorPageURL.hostname.toLowerCase() === 'www.farming-simulator.com' &&
+				authorPageURL.pathname.endsWith('/mods.php') &&
+				authorPageURL.searchParams.get('filter') === 'org' &&
+				/^\d+$/u.test(orgID ?? '')
+			) {
+				return `https://www.farming-simulator.com/mods.php?title=fs2025&filter=org&org_id=${encodeURIComponent(orgID)}&page=0`
+			}
+		} catch {
+			// Ignore malformed links and continue looking for the ModHub author page.
+		}
+	}
+	return null
+}
+
 async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
 
 	const idString = modHubID.toString()
 	const cached = getCachedModHubMetadata(idString)
-	if ( !force && cached !== null && modHubCacheFresh(cached) ) { return cached }
+	if (
+		!force &&
+		cached !== null &&
+		modHubCacheFresh(cached) &&
+		Object.prototype.hasOwnProperty.call(cached, 'authorURL') &&
+		Object.prototype.hasOwnProperty.call(cached, 'released')
+	) { return cached }
 
 	const url = funcLib.general.doModHub(idString)
 	const metadata = {
+		author       : null,
+		authorURL    : null,
 		category     : null,
 		categoryPath : [],
 		checkedAt    : new Date().toISOString(),
@@ -1468,6 +1500,7 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 		fileName     : null,
 		id           : idString,
 		ok           : false,
+		released     : null,
 		url,
 		version      : null,
 	}
@@ -1480,8 +1513,11 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 		const category = extractModHubCategory(html, compactText)
 		metadata.category = category
 		metadata.categoryPath = category === null ? [] : [category]
+		metadata.authorURL = extractModHubAuthorURL(html)
+		metadata.author = extractModHubDetail(compactText, 'author')
 		metadata.downloadURL = extractModHubDownloadURL(html)
 		metadata.fileName = extractModHubDetail(compactText, 'filename')
+		metadata.released = extractModHubDetail(compactText, 'released')
 		metadata.version = extractModHubDetail(compactText, 'version')
 		metadata.ok = category !== null || metadata.fileName !== null || metadata.version !== null
 	} catch (err) {
@@ -1493,24 +1529,33 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 	return metadata
 }
 
+// eslint-disable-next-line complexity
 async function getModHubLatestUpdate(modHubID, force = false) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) {
 		return { ok : false, error : 'missing_modhub_id' }
 	}
 
 	const cached = getCachedModHubMetadata(modHubID)
-	const metadata = await fetchModHubMetadata(modHubID, { force : force || cached?.downloadURL === null || typeof cached?.downloadURL === 'undefined' })
+	const metadata = await fetchModHubMetadata(modHubID, {
+		force : force ||
+			cached?.downloadURL === null ||
+			typeof cached?.downloadURL === 'undefined' ||
+			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'authorURL') ||
+			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'released'),
+	})
 	if ( metadata?.ok !== true || typeof metadata.version !== 'string' ) {
 		return { ok : false, error : metadata?.error ?? 'modhub_metadata_unavailable' }
 	}
 
 	const assetName = metadata.fileName ?? (typeof metadata.downloadURL === 'string' ? path.basename(new URL(metadata.downloadURL).pathname) : null)
 	return {
+		authorURL : metadata.authorURL,
 		assetName,
 		downloadURL : metadata.downloadURL,
 		hasDownload : typeof metadata.downloadURL === 'string' && typeof assetName === 'string' && assetName.toLowerCase().endsWith('.zip'),
 		modHubID    : metadata.id,
 		ok          : true,
+		released    : metadata.released,
 		source      : 'modhub',
 		url         : metadata.url,
 		version     : metadata.version,
@@ -1556,7 +1601,7 @@ function getStoredModLibraryRecords() {
 		.map(([hash, record]) => [hash, {
 			...record,
 			modNames : normalizedVaultModNames(
-				Array.isArray(record.modNames) && record.modNames.length > 0 ? record.modNames : record.fileName
+				Array.isArray(record.modNames) && record.modNames.length !== 0 ? record.modNames : record.fileName
 			),
 		}]))
 }
@@ -1665,10 +1710,12 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		hash         : hash,
 		itemBrands   : uniqueCleanArray([...(existingRecord.itemBrands ?? []), ...(metadata.itemBrands ?? [])]),
 		itemCategories : uniqueCleanArray([...(existingRecord.itemCategories ?? []), ...(metadata.itemCategories ?? [])]),
+		authors      : uniqueCleanArray([...(existingRecord.authors ?? []), metadata.author]),
 		mapConfigFiles : uniqueCleanArray([...(existingRecord.mapConfigFiles ?? []), metadata.mapConfigFile]),
 		modHubCategories : uniqueCleanArray([...(existingRecord.modHubCategories ?? []), metadata.modHubCategory]),
 		modHubCategoryPaths : uniqueCleanArray([...(existingRecord.modHubCategoryPaths ?? []), ...(metadata.modHubCategoryPath ?? [])]),
 		modHubIDs      : uniqueCleanArray([...(existingRecord.modHubIDs ?? []), metadata.modHubID === null || typeof metadata.modHubID === 'undefined' ? null : metadata.modHubID.toString()]),
+		modHubReleasedDates : uniqueCleanArray([...(existingRecord.modHubReleasedDates ?? []), metadata.modHubReleased]),
 		modHubVersions : uniqueCleanArray([...(existingRecord.modHubVersions ?? []), metadata.modHubVersion]),
 		modIcon     : metadata.modIcon ?? existingRecord.modIcon ?? null,
 		modNames    : normalizedVaultModNames([metadata.modName, ...(existingRecord.modNames ?? [])]),
@@ -1875,6 +1922,7 @@ function getModLibraryEntries() {
 				isUsed       : isUsed,
 				itemBrands   : Array.isArray(record.itemBrands) ? record.itemBrands : [],
 				itemCategories : Array.isArray(record.itemCategories) ? record.itemCategories : [],
+				authors      : Array.isArray(record.authors) ? record.authors : [],
 				keepPinned   : keepPinned,
 				mapConfigFiles : Array.isArray(record.mapConfigFiles) ? record.mapConfigFiles : [],
 				modHubCategories : Array.isArray(record.modHubCategories) ? record.modHubCategories : [],
@@ -1883,6 +1931,7 @@ function getModLibraryEntries() {
 				modHubLatestVersion : modHubState.latestVersion,
 				modHubMatchConfidence : modHubState.confidence,
 				modHubMatchMethod : modHubState.method,
+				modHubReleasedDates : Array.isArray(record.modHubReleasedDates) ? record.modHubReleasedDates : [],
 				modHubStatus   : modHubState.status,
 				modHubURL      : modHubState.url,
 				modHubVersions : Array.isArray(record.modHubVersions) ? record.modHubVersions : [],
@@ -2449,6 +2498,8 @@ async function refreshVaultModHubMetadata(progressCallback = null) {
 	for ( const [hash, record] of Object.entries(records) ) {
 		const categories = []
 		const categoryPaths = []
+		const authors = [...(record.authors ?? [])]
+		const releasedDates = [...(record.modHubReleasedDates ?? [])]
 		const versions = [...(record.modHubVersions ?? [])]
 		for ( const modHubID of record.modHubIDs ?? [] ) {
 			const metadata = getCachedModHubMetadata(modHubID)
@@ -2456,6 +2507,8 @@ async function refreshVaultModHubMetadata(progressCallback = null) {
 				categories.push(metadata.category)
 				categoryPaths.push(...(metadata.categoryPath ?? [metadata.category]))
 			}
+			if ( typeof metadata?.author === 'string' && metadata.author !== '' ) { authors.push(metadata.author) }
+			if ( typeof metadata?.released === 'string' && metadata.released !== '' ) { releasedDates.push(metadata.released) }
 			if ( typeof metadata?.version === 'string' && metadata.version !== '' ) { versions.push(metadata.version) }
 			const catalogueVersion = serveIPC.modCollect.modHubVersionModHubId(modHubID)
 			if ( typeof catalogueVersion === 'string' && catalogueVersion !== '' ) { versions.push(catalogueVersion) }
@@ -2464,7 +2517,9 @@ async function refreshVaultModHubMetadata(progressCallback = null) {
 			...record,
 			modHubCategories    : uniqueCleanArray(categories),
 			modHubCategoryPaths : uniqueCleanArray(categoryPaths),
+			modHubReleasedDates : uniqueCleanArray(releasedDates),
 			modHubVersions      : uniqueCleanArray(versions),
+			authors             : uniqueCleanArray(authors),
 			updatedAt           : new Date().toISOString(),
 		}
 	}
@@ -2492,6 +2547,7 @@ async function backupModToLibrary(filePath, metadata = {}) {
 	const libraryRecord = await registerModLibraryFile(filePath, {
 		collectionName : metadata.collectionName,
 		fileName       : metadata.fileName ?? path.basename(filePath),
+		author         : metadata.author,
 		modName        : metadata.modName,
 		source         : metadata.source ?? 'Collection',
 		sourceURL      : metadata.sourceURL ?? null,
@@ -2552,6 +2608,7 @@ async function downloadGitHubZipToPath(download, filePath) {
 	}
 }
 
+// eslint-disable-next-line complexity
 function validateModZipIntegrity(filePath, { expectedVersion = null, label = 'Mod ZIP' } = {}) {
 	if ( typeof filePath !== 'string' || !fs.existsSync(filePath) ) {
 		throw new Error(`${label} could not be found.`)
@@ -2579,6 +2636,7 @@ function validateModZipIntegrity(filePath, { expectedVersion = null, label = 'Mo
 
 	return {
 		fileName : path.basename(filePath),
+		author   : parsedMod?.modDesc?.author ?? null,
 		modName  : parsedMod?.fileDetail?.shortName ?? path.basename(filePath, path.extname(filePath)),
 		ok       : true,
 		size     : fileStats.size,
@@ -2592,6 +2650,7 @@ function getCollectionModRecord(collectionKey, modName) {
 	return Object.values(collection.mods).find((mod) => mod?.fileDetail?.shortName === modName) ?? null
 }
 
+// eslint-disable-next-line complexity
 async function downloadUpdateToVault(download) {
 	if (
 		typeof download?.fileName !== 'string' ||
@@ -2646,7 +2705,9 @@ async function downloadUpdateToVault(download) {
 			: safeDownloadFileName(`${canonicalModName}.zip`)
 		const record = await registerModLibraryFile(tempPath, {
 			fileName       : canonicalFileName,
+			author         : integrity.author,
 			modHubID       : download.modHubID ?? null,
+			modHubReleased : download.modHubReleased ?? null,
 			modHubVersion  : download.sourceType === 'modhub' ? download.version : null,
 			modName        : canonicalModName || download.modName,
 			source         : sourceName,
@@ -2707,13 +2768,14 @@ async function downloadAndApplyUpdate(download) {
 		let downloadLibrary = cachedLibrary
 		if ( downloadLibrary === null ) {
 			await downloadGitHubZipToPath(download, tempPath)
-			validateModZipIntegrity(tempPath, {
+			const integrity = validateModZipIntegrity(tempPath, {
 				expectedVersion : download.version,
 				label           : `${sourceName} download`,
 			})
 			downloadLibrary = await registerModLibraryFile(tempPath, {
 				collectionName,
 				fileName  : download.fileName,
+				author    : integrity.author,
 				modHubID  : download.modHubID ?? null,
 				modHubVersion : download.sourceType === 'modhub' ? download.version : null,
 				modName   : download.modName,
@@ -2729,6 +2791,7 @@ async function downloadAndApplyUpdate(download) {
 		const backupResult = await backupModToLibrary(targetPath, {
 			collectionName,
 			fileName  : path.basename(targetPath),
+			author    : modRecord.modDesc.author,
 			modName   : download.modName,
 			source    : 'Collection',
 			sourceURL : download.sourceURL ?? null,
@@ -2799,6 +2862,7 @@ async function installManifestMod(collectionKey, download) {
 			libraryRecord = await registerModLibraryFile(tempPath, {
 				collectionName : collection.name,
 				fileName       : assetName,
+				author         : integrity.author,
 				modHubID       : download.modHubID ?? null,
 				modHubVersion  : download.sourceType === 'modhub' ? download.remoteVersion : null,
 				modName        : integrity.modName,
@@ -3282,7 +3346,7 @@ function validateCollectionBackupManifest(manifest) {
 async function readCollectionBackupManifest(backupID) {
 	const safeBackupID = validateCollectionBackupID(backupID)
 	const filePath = path.join(collectionBackupsFolder(), `${safeBackupID}.json`)
-	const rawText = await fsPromise.readFile(filePath, 'utf8')
+	const rawText = await fsPromise.readFile(filePath)
 	return {
 		filePath,
 		manifest : validateCollectionBackupManifest(JSON.parse(rawText)),
@@ -3299,7 +3363,9 @@ async function listCollectionBackups() {
 		if ( !file.isFile() || !file.name.toLowerCase().endsWith('.json') ) { continue }
 		const filePath = path.join(backupFolder, file.name)
 		try {
-			const manifest = validateCollectionBackupManifest(JSON.parse(await fsPromise.readFile(filePath, 'utf8')))
+			// eslint-disable-next-line no-await-in-loop
+			const rawManifest = await fsPromise.readFile(filePath)
+			const manifest = validateCollectionBackupManifest(JSON.parse(rawManifest))
 			backups.push(collectionBackupSummary(manifest, filePath))
 		} catch (err) {
 			serveIPC.log.warning(`Skipping unreadable collection backup ${file.name}: ${err.message}`)
@@ -3324,7 +3390,7 @@ async function previewOldCollectionBackups({ keepPerCollection = 3 } = {}) {
 	const candidates = []
 	for ( const group of groupedBackups.values() ) {
 		const sortedGroup = group.toSorted((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
-		sortedGroup.forEach((backup, index) => {
+		for ( const [index, backup] of sortedGroup.entries() ) {
 			candidates.push({
 				...backup,
 				recommendedKeep : index < keepCount,
@@ -3332,7 +3398,7 @@ async function previewOldCollectionBackups({ keepPerCollection = 3 } = {}) {
 					? `Recommended keep: newest ${keepCount} for this collection.`
 					: `Older than the newest ${keepCount} for this collection.`,
 			})
-		})
+		}
 	}
 
 	let totalBytes = 0
@@ -3341,6 +3407,7 @@ async function previewOldCollectionBackups({ keepPerCollection = 3 } = {}) {
 	for ( const backup of candidates ) {
 		let size = 0
 		try {
+			// eslint-disable-next-line no-await-in-loop
 			size = (await fsPromise.stat(backup.filePath)).size
 		} catch {
 			size = 0
@@ -3372,6 +3439,7 @@ async function deleteOldCollectionBackups({ ids } = {}) {
 		validateCollectionBackupID(id)
 		const backup = backups.get(id)
 		if ( typeof backup === 'undefined' ) { continue }
+		// eslint-disable-next-line no-await-in-loop
 		await fsPromise.unlink(backup.filePath)
 		deletedIDs.push(id)
 	}
@@ -3508,6 +3576,7 @@ function findVaultRecordForBackupMod(mod) {
 	return records[0] ?? null
 }
 
+// eslint-disable-next-line complexity
 async function restoreCollectionBackup({ backupID, collectionKey } = {}) {
 	const { manifest } = await readCollectionBackupManifest(backupID)
 	const targetCollectionKey = collectionKey || manifest.collectionKey
@@ -3533,6 +3602,7 @@ async function restoreCollectionBackup({ backupID, collectionKey } = {}) {
 			const existingMod = getCollectionModRecord(targetCollectionKey, path.basename(fileName, path.extname(fileName)))
 			const sourceIntegrity = validateModZipIntegrity(record.filePath, { expectedVersion : mod.version ?? undefined, label : 'Backup restore Vault ZIP' })
 			const backupResult = targetExists ?
+				// eslint-disable-next-line no-await-in-loop
 				await backupModToLibrary(targetPath, {
 					collectionName : collection.name,
 					fileName,
@@ -3547,6 +3617,7 @@ async function restoreCollectionBackup({ backupID, collectionKey } = {}) {
 					didBackup  : false,
 				}
 
+			// eslint-disable-next-line no-await-in-loop
 			await fsPromise.copyFile(record.filePath, targetPath)
 			const copiedIntegrity = validateModZipIntegrity(targetPath, { expectedVersion : sourceIntegrity.version, label : 'Restored collection ZIP' })
 
@@ -3674,6 +3745,7 @@ function disabledCollectionZipPath(collectionPath, fileName) {
 	return path.join(disabledFolder, `${parsed.name}-${stamp}${parsed.ext || '.zip'}`)
 }
 
+// eslint-disable-next-line complexity
 async function disableRecentCollectionMods({ collectionKey, items = [] } = {}) {
 	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
 	if ( !Array.isArray(items) || items.length === 0 ) { throw new Error('No recent mods were selected.') }
@@ -3699,6 +3771,7 @@ async function disableRecentCollectionMods({ collectionKey, items = [] } = {}) {
 			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected ZIP is no longer in the collection folder.') }
 
 			const targetPath = disabledCollectionZipPath(collection.path, fileName)
+			// eslint-disable-next-line no-await-in-loop
 			await fsPromise.rename(sourcePath, targetPath)
 			addCollectionHistoryEntry({
 				action          : 'collection_mod_disabled',
@@ -4103,6 +4176,7 @@ ipcMain.handle('vault:updateDownloadSelected', async (_, downloads) => {
 		}
 		const results = []
 		for ( const download of downloads ) {
+			// eslint-disable-next-line no-await-in-loop
 			results.push(await downloadUpdateToVault(download))
 		}
 		invalidateModLibrarySummary()

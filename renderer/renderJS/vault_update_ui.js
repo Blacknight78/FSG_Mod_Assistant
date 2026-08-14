@@ -50,9 +50,9 @@ function setBusy(value, label = '') {
 	isBusy = value
 	for ( const element of document.querySelectorAll('button') ) {
 		element.disabled = value
-    }
-    syncSelectionCheckboxes()
-    byID('vaultUpdatesProgressWrap').classList.toggle('d-none', !value)
+	}
+	syncSelectionCheckboxes()
+	byID('vaultUpdatesProgressWrap').classList.toggle('d-none', !value)
 	byID('vaultUpdatesProgress').style.width = value ? '8%' : '0%'
 	byID('vaultUpdatesProgress').textContent = label
 }
@@ -251,6 +251,7 @@ function renderCandidates(skipped) {
 	updateSelectionText()
 }
 
+// eslint-disable-next-line complexity
 async function loadCandidates(force = false) {
 	setBusy(true, 'Loading Vault...')
 	// A fresh update check must never inherit selection from an older result
@@ -269,7 +270,7 @@ async function loadCandidates(force = false) {
 		for ( const record of vaultEntries ) {
 			const source = getSource(record)
 			if ( source === null ) { skipped++; continue }
-		const modName = vaultRecordModName(record)
+			const modName = vaultRecordModName(record)
 			const key = makeGroupKey(modName, source)
 			const existing = groups.get(key) ?? {
 				fileName      : record.fileName,
@@ -308,6 +309,7 @@ async function loadCandidates(force = false) {
 				key           : group.key,
 				localVersion,
 				modHubID      : group.modHubID,
+				modHubReleased : remote.released ?? null,
 				modIcon       : group.modIcon,
 				modName       : group.modName,
 				pageURL       : remote.url ?? group.sourceURL,
@@ -335,6 +337,7 @@ async function downloadSelected() {
 		.map((candidate) => ({
 			fileName   : candidate.assetName,
 			modHubID   : candidate.modHubID,
+			modHubReleased : candidate.modHubReleased,
 			modName    : candidate.modName,
 			sourceType : candidate.sourceType,
 			sourceURL  : candidate.sourceURL,
@@ -353,9 +356,9 @@ async function downloadSelected() {
 			: ''
 		setStatus(`Stored ${result.count} update(s) in the Vault.${manualMessage} Matching collection updates will reuse these cached ZIPs when available.`, 'success')
 		selectedKeys.clear()
-    // Re-read the Vault and its update state after storing files so completed
-    // downloads disappear from the update list immediately.
-    await loadCandidates(true)
+		// Re-read the Vault and its update state after storing files so completed
+		// downloads disappear from the update list immediately.
+		await loadCandidates(true)
 	} catch (err) {
 		setStatus(`Vault download failed: ${err.message}`, 'danger')
 	} finally {
