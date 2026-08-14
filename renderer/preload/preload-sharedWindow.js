@@ -3,6 +3,7 @@
    |       ||  _  |  _  |       ||__ --|__ --||  ||__ --||   _|
    |__|_|__||_____|_____|___|___||_____|_____||__||_____||____|
    (c) 2022-present FSG Modding.  MIT License. */
+/* eslint-disable sort-keys */
 
 // preload file.  all windows.
 
@@ -289,11 +290,11 @@ const pageAPI = {
 		},
 		validAsync : new Set(['mods:list']),
 	},
-  'vault_update' : {
-    functions : {
-      dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
-      downloadToVaultSelected : (downloads) => ipcRenderer.invoke('vault:updateDownloadSelected', downloads),
-      getGitHub : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
+	'vault_update' : {
+		functions : {
+			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
+			downloadToVaultSelected : (downloads) => ipcRenderer.invoke('vault:updateDownloadSelected', downloads),
+			getGitHub : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
 			getModHub : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
 			getVault : () => ipcRenderer.invoke('vault:all'),
 			openURL : (url) => ipcRenderer.send('win:openURL', url),

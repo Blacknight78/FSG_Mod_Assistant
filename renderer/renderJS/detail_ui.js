@@ -243,7 +243,7 @@ class windowState {
 			mh_version     : ( this.mod.modHub.id !== null && typeof this.mod.modHub.version === 'string' ) ?
 				`<a href="https://www.farming-simulator.com/mod.php?mod_id=${this.mod.modHub.id}" target="_BLANK">${this.mod.modHub.version}</a>` :
 				`<em>${I18N.defer(this.mod.modHub.id === null ? 'mh_norecord' : 'mh_unknown', false )}</em>`,
-			mod_author     : DATA.escapeSpecial(this.mod.modDesc.author),
+			mod_author     : this.#authorHTML(sourceURL),
 			mod_collection : `${I18N.defer('detail_mod_collection', false)}: ${DATA.escapeSpecial(collectionName ?? this.mod.currentCollection)}`,
 			mod_location   : this.mod.fileDetail.fullPath,
 			modhub_status  : this.#modHubStatusHTML(),
@@ -345,6 +345,30 @@ class windowState {
 		}
 	}
 
+	#authorHTML(sourceURL, modHubAuthorURL = null) {
+		const author = String(this.mod.modDesc.author ?? '').trim()
+		const safeAuthor = DATA.escapeSpecial(author || '--')
+		const normalizedSourceURL = String(sourceURL ?? '')
+
+		const githubOwner = normalizedSourceURL.match(/^https?:\/\/(?:www\.)?github\.com\/([^/?#]+)/iu)?.[1]
+		if ( githubOwner !== undefined && githubOwner !== '' ) {
+			const profileURL = `https://github.com/${encodeURIComponent(githubOwner)}`
+			return `<a href="${DATA.escapeSpecial(profileURL)}" target="_BLANK" title="Open GitHub profile">${safeAuthor}</a>`
+		}
+
+		if ( typeof modHubAuthorURL === 'string' && modHubAuthorURL !== '' ) {
+			return `<a href="${DATA.escapeSpecial(modHubAuthorURL)}" target="_BLANK" title="Open ModHub author page">${safeAuthor}</a>`
+		}
+
+		const modHubID = String(this.mod.modHub.id ?? '').trim()
+		if ( /^\d+$/u.test(modHubID) && modHubID !== '0' ) {
+			const modHubURL = `https://www.farming-simulator.com/mod.php?mod_id=${encodeURIComponent(modHubID)}`
+			return `<a href="${DATA.escapeSpecial(modHubURL)}" target="_BLANK" title="Open ModHub page">${safeAuthor}</a>`
+		}
+
+		return safeAuthor
+	}
+
 	#updateSourceHTML(sourceURL) {
 		if ( sourceURL !== '' ) {
 			const safeURL = DATA.escapeSpecial(sourceURL)
@@ -429,6 +453,7 @@ class windowState {
 		window.settings.site(this.mod.fileDetail.shortName, sourceURL).then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
+			MA.byIdHTML('mod_author', this.#authorHTML(value))
 			this.#refreshGitHubVersion(value)
 		})
 	}
@@ -438,6 +463,7 @@ class windowState {
 		window.settings.site(this.mod.fileDetail.shortName, '').then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
+			MA.byIdHTML('mod_author', this.#authorHTML(value))
 			this.#refreshGitHubVersion(value)
 		})
 	}
@@ -507,6 +533,7 @@ class windowState {
 				return
 			}
 
+			MA.byIdHTML('mod_author', this.#authorHTML(MA.byId('update_source_input')?.value ?? '', result.authorURL))
 			const hasRollbackBackup = await window.detail_IPC.hasRollbackBackup(updatePointer)
 			MA.byIdHTML('mh_version', `<a href="${DATA.escapeSpecial(result.url)}" target="_BLANK">${DATA.escapeSpecial(result.version)}</a>`)
 			MA.byIdHTML('modhub_status', this.#versionStatusHTML(this.mod.modDesc.version, result.version, hasRollbackBackup))

@@ -245,6 +245,7 @@ const compareBackup = async (backupID, options = {}) => {
 	setBackupStatus('Backup comparison complete. Restore will copy backup mods from the Vault and will not delete extra current mods.', 'info')
 }
 
+// eslint-disable-next-line complexity
 const executeRestoreBackup = async (backupID, ui = {}) => {
 	if ( typeof backupID !== 'string' || backupID === '' || backupState.isRestoring ) { return }
 
@@ -298,6 +299,7 @@ const executeRestoreBackup = async (backupID, ui = {}) => {
 	}
 
 	if ( restoreSucceeded ) {
+		// eslint-disable-next-line require-atomic-updates
 		backupState.backups = await window.backups_IPC.list()
 		renderBackupList()
 		await compareBackup(backupID, { force : true })
@@ -584,37 +586,37 @@ const reviewOldManifests = async () => {
 			wrapper.appendChild(confirmPanel)
 
 			confirmDeleteButton.addEventListener('click', async () => {
-			deleteButton.disabled = true
-			cancelButton.disabled = true
+				deleteButton.disabled = true
+				cancelButton.disabled = true
 				selectOlderButton.disabled = true
 				selectNoneButton.disabled = true
 				confirmDeleteButton.disabled = true
 				backButton.disabled = true
 				confirmDeleteButton.textContent = 'Deleting...'
 
-			try {
-				const deleteResult = await window.backups_IPC.deleteOldManifests({
+				try {
+					const deleteResult = await window.backups_IPC.deleteOldManifests({
 						ids,
-				})
-				if ( deleteResult.ok === false ) { throw new Error(deleteResult.error) }
+					})
+					if ( deleteResult.ok === false ) { throw new Error(deleteResult.error) }
 
-				backupState.backups = await window.backups_IPC.list()
-				if ( backupState.selectedBackup !== null && Array.isArray(deleteResult.deletedIDs) && deleteResult.deletedIDs.includes(backupState.selectedBackup) ) {
-					backupState.selectedBackup = null
-					renderCompareEmpty()
+					backupState.backups = await window.backups_IPC.list()
+					if ( backupState.selectedBackup !== null && Array.isArray(deleteResult.deletedIDs) && deleteResult.deletedIDs.includes(backupState.selectedBackup) ) {
+						backupState.selectedBackup = null
+						renderCompareEmpty()
+					}
+					renderBackupList()
+
+					const success = document.createElement('div')
+					success.className = 'alert alert-success mb-0'
+					success.textContent = `Deleted ${deleteResult.deleted} old backup manifest(s). Collection ZIPs and Vault ZIPs were not touched.`
+					setCleanupStatus(success)
+				} catch (err) {
+					const failure = document.createElement('div')
+					failure.className = 'alert alert-danger mb-0'
+					failure.textContent = `Manifest cleanup failed: ${err.message}`
+					setCleanupStatus(failure)
 				}
-				renderBackupList()
-
-				const success = document.createElement('div')
-				success.className = 'alert alert-success mb-0'
-				success.textContent = `Deleted ${deleteResult.deleted} old backup manifest(s). Collection ZIPs and Vault ZIPs were not touched.`
-				setCleanupStatus(success)
-			} catch (err) {
-				const failure = document.createElement('div')
-				failure.className = 'alert alert-danger mb-0'
-				failure.textContent = `Manifest cleanup failed: ${err.message}`
-				setCleanupStatus(failure)
-			}
 			})
 		})
 		updateSelectionSummary()
