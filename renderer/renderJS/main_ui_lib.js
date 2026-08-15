@@ -51,6 +51,7 @@ class StateManager {
 	extSites    = {}
 	updateCheckCache = new Map()
 	rollbackCheckCache = new Map()
+	backgroundDisplayRefreshTimer = null
 
 	loader = null
 
@@ -483,6 +484,14 @@ class StateManager {
 		this.#logPerformance('Main renderer doDisplay', displayStartedAt, `collections=${this.orderMap.keys.length.toString()} displayedMods=${displayedMods.toString()} folderEdit=${this.flag.folderEdit.toString()}`)
 	}
 
+	#scheduleBackgroundDisplayRefresh() {
+		if ( this.backgroundDisplayRefreshTimer !== null ) { return }
+		this.backgroundDisplayRefreshTimer = setTimeout(() => {
+			this.backgroundDisplayRefreshTimer = null
+			this.doDisplay()
+		}, 100)
+	}
+
 	doVersionChanger(version, options, modCollect) {
 		const counts = { collect : 0, mods : 0 }
 		
@@ -885,7 +894,7 @@ class StateManager {
 
 			this.#applyModRollbackBadge(modRec)
 
-			if ( hadRollback !== hasRollback ) { this.doDisplay() }
+			if ( hadRollback !== hasRollback ) { this.#scheduleBackgroundDisplayRefresh() }
 		})
 	}
 
@@ -923,7 +932,7 @@ class StateManager {
 
 			this.#applyModUpdateBadge(modRec)
 
-			if ( hadUpdate !== hasUpdate ) { this.doDisplay() }
+			if ( hadUpdate !== hasUpdate ) { this.#scheduleBackgroundDisplayRefresh() }
 		})
 	}
 
