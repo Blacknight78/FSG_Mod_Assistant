@@ -2057,7 +2057,7 @@ function modLibraryRetentionInfo({ fileExists, isCurrent, isRetained, isUsed, ke
 	}
 }
 
-function getModLibraryEntries() {
+function getModLibraryEntries({ verifyFiles = true } = {}) {
 	const records = getStoredModLibraryRecords()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
@@ -2068,8 +2068,9 @@ function getModLibraryEntries() {
 	const baseEntries = Object.entries(records)
 		// eslint-disable-next-line complexity
 		.map(([recordHash, record]) => {
-			const fileExists = typeof record?.filePath === 'string' && fs.existsSync(record.filePath)
-			const size = fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
+			const hasFilePath = typeof record?.filePath === 'string'
+			const fileExists = hasFilePath && (!verifyFiles || fs.existsSync(record.filePath))
+			const size = verifyFiles && fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
 			const modHubState = modHubStateForLibraryRecord(record, savedIDsByNormalizedName)
 			const hash = record.hash ?? recordHash
 			const keepPinned = record.keepPinned === true
@@ -2319,7 +2320,7 @@ function getModLibraryIndexEntrySnapshot() {
 	if ( modLibraryIndexEntrySnapshot !== null ) { return modLibraryIndexEntrySnapshot }
 
 	const startedAt = performance.now()
-	modLibraryIndexEntrySnapshot = getModLibraryEntries()
+	modLibraryIndexEntrySnapshot = getModLibraryEntries({ verifyFiles : false })
 	logPerformanceDuration('Vault entry snapshot build', startedAt, `records=${modLibraryIndexEntrySnapshot.length.toString()}`)
 	return modLibraryIndexEntrySnapshot
 }
