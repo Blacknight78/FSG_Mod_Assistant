@@ -1690,9 +1690,14 @@ function isPathInsideFolder(childPath, parentPath) {
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
 }
 
-function getStoredModLibraryRecords() {
+function getRawStoredModLibraryRecords() {
 	const storedRecords = serveIPC.storeLibrary.get('records', {})
 	if ( typeof storedRecords !== 'object' || storedRecords === null || Array.isArray(storedRecords) ) { return {} }
+	return storedRecords
+}
+
+function getStoredModLibraryRecords() {
+	const storedRecords = getRawStoredModLibraryRecords()
 
 	return Object.fromEntries(Object.entries(storedRecords)
 		.filter(([, record]) => typeof record === 'object' && record !== null && !Array.isArray(record))
@@ -2058,7 +2063,10 @@ function modLibraryRetentionInfo({ fileExists, isCurrent, isRetained, isUsed, ke
 }
 
 function getModLibraryEntries({ verifyFiles = true } = {}) {
-	const records = getStoredModLibraryRecords()
+	const startedAt = performance.now()
+	const records = getRawStoredModLibraryRecords()
+	logPerformanceDuration('Vault raw records read', startedAt, `records=${Object.keys(records).length.toString()} verifyFiles=${verifyFiles.toString()}`)
+	const prepareStartedAt = performance.now()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
 	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
@@ -2104,7 +2112,7 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 				modHubURL      : modHubState.url,
 				modHubVersions : Array.isArray(record.modHubVersions) ? record.modHubVersions : [],
 				modIcon      : record.modIcon ?? null,
-				modNames     : Array.isArray(record.modNames) ? record.modNames : [],
+				modNames     : normalizedVaultModNames(Array.isArray(record.modNames) && record.modNames.length !== 0 ? record.modNames : record.fileName),
 				modTypes     : Array.isArray(record.modTypes) ? record.modTypes : [],
 				scriptFiles  : Number.isFinite(record.scriptFiles) ? record.scriptFiles : 0,
 				size         : size,
@@ -2118,7 +2126,9 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 				versions     : Array.isArray(record.versions) ? record.versions : [],
 			}
 		})
+	logPerformanceDuration('Vault base entries prepare', prepareStartedAt, `entries=${baseEntries.length.toString()} verifyFiles=${verifyFiles.toString()}`)
 
+	const retentionStartedAt = performance.now()
 	const retentionGroups = new Map()
 	for ( const entry of baseEntries.filter((candidate) => candidate.fileExists) ) {
 		const identity = modLibraryRetentionIdentity(entry)
@@ -2128,7 +2138,7 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 	const retainedHashes = new Set([...retentionGroups.values()]
 		.flatMap((entries) => entries.toSorted(compareModLibraryRetentionEntries).slice(0, retentionCount).map((entry) => entry.hash)))
 
-	return baseEntries
+	const entries = baseEntries
 		.map((entry) => {
 			const retentionInfo = modLibraryRetentionInfo({
 				fileExists     : entry.fileExists,
@@ -2148,6 +2158,8 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 			}
 		})
 		.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+	logPerformanceDuration('Vault retention/status prepare', retentionStartedAt, `entries=${baseEntries.length.toString()}`)
+	return entries
 }
 
 function getModLibraryCleanupPreview(entries = getModLibraryEntries()) {
