@@ -321,6 +321,48 @@ function getSelectedDownloadCandidates() {
 		}))
 }
 
+function clearUpdateResultSummary() {
+	const summary = MA.byId('updateResultSummary')
+	if ( summary === null ) { return }
+	summary.classList.add('d-none')
+	summary.replaceChildren()
+}
+
+function fileNameFromPath(value) {
+	if ( typeof value !== 'string' || value === '' ) { return 'unknown ZIP' }
+	return value.split(/[\\/]/u).at(-1) ?? value
+}
+
+function versionChangeText(result) {
+	const previous = typeof result.previousVersion === 'string' && result.previousVersion !== '' ? result.previousVersion : 'none'
+	const current = typeof result.currentVersion === 'string' && result.currentVersion !== '' ? result.currentVersion : 'unknown'
+	return `${previous} -> ${current}`
+}
+
+function renderUpdateResultSummary(result, totalDownloads) {
+	const summary = MA.byId('updateResultSummary')
+	if ( summary === null ) { return }
+	const rows = Array.isArray(result.results) ? result.results : []
+	summary.replaceChildren()
+	summary.className = 'mx-2 mb-3 alert alert-success'
+
+	const title = document.createElement('div')
+	title.className = 'fw-bold mb-2'
+	title.textContent = `Updated ${result.count ?? rows.length} of ${totalDownloads} selected mod(s).`
+	summary.append(title)
+
+	const list = document.createElement('ul')
+	list.className = 'mb-0'
+	for ( const item of rows ) {
+		const line = document.createElement('li')
+		const sourceText = item.usedCache ? `${item.source ?? 'Source'} reused cached ZIP` : `${item.source ?? 'Source'} downloaded ZIP`
+		const backupText = item.replacedExisting ? `backup saved as ${fileNameFromPath(item.backupPath)}` : 'no previous ZIP replaced'
+		line.textContent = `${item.modName ?? 'Unknown mod'} (${item.collectionName ?? 'collection'}): ${versionChangeText(item)}; ${sourceText}; ${backupText}; installed ${fileNameFromPath(item.targetPath)}.`
+		list.append(line)
+	}
+	summary.append(list)
+}
+
 async function downloadSelectedZIPs() {
 	const downloads = getSelectedDownloadCandidates()
 	if ( downloads.length === 0 ) { return }
@@ -333,7 +375,8 @@ async function downloadSelectedZIPs() {
 		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
 		if ( result.ok ) {
 			const modCollect = await window.update_IPC.get()
-			await startFromModList(modCollect)
+			await startFromModList(modCollect, false, { clearSummary : false })
+			renderUpdateResultSummary(result, downloads.length)
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
 		} else {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
@@ -448,8 +491,9 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	)
 }
 
-async function startFromModList(modCollect, forceRemoteRefresh = false) {
+async function startFromModList(modCollect, forceRemoteRefresh = false, options = {}) {
 	const renderID = ++activeRenderID
+	if ( options.clearSummary !== false ) { clearUpdateResultSummary() }
 
 	if ( modCollect === null ) {
 		renderEmpty('update_list_load_failed')
