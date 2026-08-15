@@ -47,8 +47,64 @@ function sourceBadgeLabel(candidate) {
 	return `${sourceLabel(candidate.sourceType)} source`
 }
 
+const REVIEW_REASON_LABELS = {
+	manualOnly       : 'manual download only',
+	missingModHubDate : 'ModHub release date not recorded',
+	repositoryZip    : 'repository ZIP instead of release asset',
+	sourceMismatch   : 'source mismatch risk',
+	versionUnclear   : 'version comparison unclear',
+}
+
+function sourceMismatchRisk(candidate) {
+	const assetName = canonicalVaultModName(candidate.assetName ?? candidate.fileName ?? '')
+	const modName = canonicalVaultModName(candidate.modName ?? '')
+	if ( assetName === '' || modName === '' ) { return false }
+	return !assetName.toLocaleLowerCase().includes(modName.toLocaleLowerCase()) &&
+		!modName.toLocaleLowerCase().includes(assetName.toLocaleLowerCase())
+}
+
+function reviewReasons(candidate) {
+	const reasons = []
+	if ( candidate.downloadURL === null ) {
+		reasons.push('manualOnly')
+	}
+	if ( candidate.sourceType === 'modhub' && modHubReleasedLabel(candidate.modHubReleased) === 'not recorded' ) {
+		reasons.push('missingModHubDate')
+	}
+	if ( candidate.sourceType === 'github' && candidate.downloadSource === 'repositoryFile' ) {
+		reasons.push('repositoryZip')
+	}
+	if ( candidate.localVersion === 'unknown' || compareVersions(candidate.remoteVersion, candidate.localVersion) === 0 ) {
+		reasons.push('versionUnclear')
+	}
+	if ( sourceMismatchRisk(candidate) ) {
+		reasons.push('sourceMismatch')
+	}
+	return reasons
+}
+
+function reviewNoteText(reasons) {
+	if ( reasons.length === 0 ) { return '' }
+	return `Needs review: ${reasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join(', ')}`
+}
+
+function selectedReviewReasons() {
+	return [...document.querySelectorAll('.vault-review-reason-filter:checked')].map((filter) => filter.value)
+}
+
+function visibleCandidates() {
+	const needsReviewOnly = byID('vaultNeedsReviewOnly')?.checked === true
+	const selectedReasons = selectedReviewReasons()
+	return candidates.filter((candidate) => {
+		if ( !needsReviewOnly ) { return true }
+		if ( candidate.needsReview !== true ) { return false }
+		return selectedReasons.length === 0 || selectedReasons.some((reason) => candidate.reviewReasons.includes(reason))
+	})
+}
+
 function selectedCandidates() {
-	return candidates.filter((candidate) => selectedKeys.has(candidate.key))
+	const visibleKeys = new Set(visibleCandidates().map((candidate) => candidate.key))
+	return candidates.filter((candidate) => visibleKeys.has(candidate.key) && selectedKeys.has(candidate.key))
 }
 
 function syncSelectionCheckboxes() {
@@ -56,6 +112,19 @@ function syncSelectionCheckboxes() {
 		checkbox.checked = selectedKeys.has(checkbox.dataset.candidateKey ?? '')
 		checkbox.disabled = isBusy
 	}
+}
+
+function applyNeedsReviewFilter() {
+	const needsReviewOnly = byID('vaultNeedsReviewOnly')?.checked === true
+	const reasonFilters = byID('vaultReviewReasonFilters')
+	const visibleKeys = new Set(visibleCandidates().map((candidate) => candidate.key))
+	if ( reasonFilters !== null ) {
+		reasonFilters.classList.toggle('d-none', !needsReviewOnly)
+	}
+	for ( const card of document.querySelectorAll('.vault-update-card') ) {
+		card.classList.toggle('d-none', !visibleKeys.has(card.dataset.candidateKey ?? ''))
+	}
+	updateSelectionText()
 }
 
 function setBusy(value, label = '') {
@@ -122,7 +191,8 @@ function addBadge(parent, text, className) {
 
 function cardFor(candidate) {
 	const card = document.createElement('div')
-	card.className = 'card mb-3 bg-dark border-secondary'
+	card.className = 'card mb-3 bg-dark border-secondary vault-update-card'
+	card.dataset.candidateKey = candidate.key
 
 	const body = document.createElement('div')
 	body.className = 'card-body'
@@ -188,6 +258,13 @@ function cardFor(candidate) {
 	addBadge(sourceBadges, sourceBadgeLabel(candidate), 'text-bg-info')
 	actionColumn.append(sourceBadges)
 
+	if ( candidate.needsReview ) {
+		const review = document.createElement('div')
+		review.className = 'small text-warning mb-2'
+		review.textContent = reviewNoteText(candidate.reviewReasons)
+		actionColumn.append(review)
+	}
+
 	if ( candidate.sourceType === 'modhub' ) {
 		const released = document.createElement('div')
 		released.className = 'small text-body-secondary mb-2'
@@ -225,10 +302,11 @@ function cardFor(candidate) {
 }
 
 function setAllSelections(selected) {
+	const visibleKeys = new Set(visibleCandidates().map((candidate) => candidate.key))
 	if ( selected ) {
-		selectedKeys = new Set(candidates.map((candidate) => candidate.key))
+		for ( const key of visibleKeys ) { selectedKeys.add(key) }
 	} else {
-		selectedKeys.clear()
+		selectedKeys = new Set([...selectedKeys].filter((key) => !visibleKeys.has(key)))
 	}
 	syncSelectionCheckboxes()
 	updateSelectionText()
@@ -238,7 +316,8 @@ function updateSelectionText() {
 	const candidateKeys = new Set(candidates.map((candidate) => candidate.key))
 	selectedKeys = new Set([...selectedKeys].filter((key) => candidateKeys.has(key)))
 	syncSelectionCheckboxes()
-	const selectedCount = selectedKeys.size
+	const visibleCount = visibleCandidates().length
+	const selectedCount = selectedCandidates().length
 	const selectedDownloadableCount = selectedCandidates().filter((candidate) => candidate.downloadURL).length
 	const manualCount = selectedCount - selectedDownloadableCount
 
@@ -253,7 +332,7 @@ function updateSelectionText() {
 	}
 	byID('vaultUpdatesDownloadSelected').disabled = isBusy || selectedDownloadableCount === 0
 	byID('vaultUpdatesOpenSelected').disabled = isBusy || selectedCount === 0
-	byID('vaultUpdatesSelectAll').disabled = isBusy || candidates.length === 0
+	byID('vaultUpdatesSelectAll').disabled = isBusy || visibleCount === 0
 	byID('vaultUpdatesSelectNone').disabled = isBusy || selectedCount === 0
 }
 
@@ -271,7 +350,9 @@ function renderCandidates(skipped) {
 		for ( const candidate of candidates ) { list.append(cardFor(candidate)) }
 	}
 
-	setStatus(`${candidates.length} Vault update(s) found.${skipped > 0 ? ` ${skipped} item(s) skipped because they have no supported update source.` : ''}`, candidates.length !== 0 ? 'warning' : 'success')
+	applyNeedsReviewFilter()
+	const reviewCount = candidates.filter((candidate) => candidate.needsReview).length
+	setStatus(`${candidates.length} Vault update(s) found.${reviewCount === 0 ? '' : ` ${reviewCount} need review.`}${skipped > 0 ? ` ${skipped} item(s) skipped because they have no supported update source.` : ''}`, candidates.length !== 0 ? 'warning' : 'success')
 	updateSelectionText()
 }
 
@@ -281,6 +362,8 @@ async function loadCandidates(force = false) {
 	// A fresh update check must never inherit selection from an older result
 	// set. Only the visible ticked rows may be downloaded.
 	selectedKeys.clear()
+	if ( byID('vaultNeedsReviewOnly') !== null ) { byID('vaultNeedsReviewOnly').checked = false }
+	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) { filter.checked = false }
 	syncSelectionCheckboxes()
 	try {
 		const vault = await window.vault_update_IPC.getVault()
@@ -326,7 +409,7 @@ async function loadCandidates(force = false) {
 			if ( !remote?.ok || typeof remote.version !== 'string' ) { continue }
 			const localVersion = newestVersion(group.localVersions)
 			if ( compareVersions(remote.version, localVersion) <= 0 ) { continue }
-			candidates.push({
+			const candidate = {
 				assetName     : remote.assetName ?? group.fileName,
 				downloadSource : remote.downloadSource ?? null,
 				downloadURL   : remote.hasDownload ? remote.downloadURL : null,
@@ -341,7 +424,10 @@ async function loadCandidates(force = false) {
 				remoteVersion : remote.version,
 				sourceType    : group.sourceType,
 				sourceURL     : group.sourceURL,
-			})
+			}
+			candidate.reviewReasons = reviewReasons(candidate)
+			candidate.needsReview = candidate.reviewReasons.length !== 0
+			candidates.push(candidate)
 		}
 
 		candidates.sort((left, right) => left.modName.localeCompare(right.modName))
@@ -398,10 +484,14 @@ window.addEventListener('DOMContentLoaded', () => {
 	byID('vaultUpdatesSelectAll').addEventListener('click', () => setAllSelections(true))
 	byID('vaultUpdatesSelectNone').addEventListener('click', () => setAllSelections(false))
 	byID('vaultUpdatesOpenSelected').addEventListener('click', () => {
-		for ( const candidate of candidates.filter((item) => selectedKeys.has(item.key)) ) {
+		for ( const candidate of selectedCandidates() ) {
 			window.vault_update_IPC.openURL(candidate.pageURL)
 		}
 	})
+	byID('vaultNeedsReviewOnly').addEventListener('change', applyNeedsReviewFilter)
+	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) {
+		filter.addEventListener('change', applyNeedsReviewFilter)
+	}
 	byID('vaultUpdatesBack').addEventListener('click', () => window.vault_update_IPC.dispatchModManagement())
 	loadCandidates(false)
 })
