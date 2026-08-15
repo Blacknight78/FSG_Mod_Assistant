@@ -217,6 +217,12 @@
 						</select>
 					</div>
 					<div class="col-md-4">
+						<label class="form-label small" for="vaultGameVersionFilter">Game</label>
+						<select class="form-select form-select-sm" id="vaultGameVersionFilter">
+							<option value="">All games</option>
+						</select>
+					</div>
+					<div class="col-md-4">
 						<label class="form-label small" for="vaultPriceFilter">Price</label>
 						<select class="form-select form-select-sm" id="vaultPriceFilter">
 							<option value="">Any price</option>
@@ -289,7 +295,7 @@
 					</div>
 					<div class="col-12">
 						<label class="form-label small" for="vaultTextFilter">Search</label>
-						<input class="form-control form-control-sm" id="vaultTextFilter" placeholder="Search mod name, author, version, category, brand, specs, source, collection, or notes" type="search">
+						<input class="form-control form-control-sm" id="vaultTextFilter" placeholder="Search mod name, author, game, version, category, brand, specs, source, collection, or notes" type="search">
 					</div>
 					<div class="col-12 small text-body-secondary">
 						Vault folder: <span class="vault-path user-select-text" id="vaultFolder"></span>
@@ -383,6 +389,7 @@
 			<div class="text-end">
 				<div class="fw-bold"><template-var>totalSize</template-var></div>
 				<div class="small text-body-secondary"><template-var>versionSummary</template-var></div>
+				<div class="small text-body-secondary"><template-var>gameSummary</template-var></div>
 				<div class="small text-body-secondary"><template-var>modHubReleased</template-var></div>
 				<div class="small text-body-secondary"><template-var>lastUpdated</template-var></div>
 			</div>
