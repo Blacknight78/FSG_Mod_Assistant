@@ -1676,6 +1676,7 @@ function getStoredModLibraryRecords() {
 const MOD_LIBRARY_INDEX_SCHEMA = 1
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
+let modLibraryIndexWarmupStarted = false
 
 function invalidateModLibrarySummary() {
 	modLibrarySummaryCache.clear()
@@ -1689,6 +1690,10 @@ function modLibraryIndexFolder() {
 
 function modLibraryIndexFilePath(gameKey) {
 	return path.join(modLibraryIndexFolder(), `vault-index-${gameKey}.json`)
+}
+
+function modLibraryIndexGameKeys() {
+	return ['all', 'unknown', ...supportedModLibraryGameVersions().map((version) => `fs${version}`)]
 }
 
 function supportedModLibraryGameVersions() {
@@ -2270,7 +2275,9 @@ function buildModLibraryIndexes() {
 	const groupedEntries = new Map([
 		['all', entries],
 		['unknown', []],
-		...supportedModLibraryGameVersions().map((version) => [`fs${version}`, []]),
+		...modLibraryIndexGameKeys()
+			.filter((gameKey) => !['all', 'unknown'].includes(gameKey))
+			.map((gameKey) => [gameKey, []]),
 	])
 
 	for ( const entry of entries ) {
@@ -2286,6 +2293,30 @@ function buildModLibraryIndexes() {
 		writeModLibraryIndex(gameKey, summary)
 	}
 	serveIPC.log.info('performance', `Built Vault indexes for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+}
+
+function warmModLibraryIndexes() {
+	if ( modLibraryIndexWarmupStarted ) { return }
+	modLibraryIndexWarmupStarted = true
+
+	const startedAt = performance.now()
+	try {
+		const diskSummaries = new Map()
+		for ( const gameKey of modLibraryIndexGameKeys() ) {
+			const diskSummary = readModLibraryIndex(gameKey)
+			if ( diskSummary === null ) {
+				buildModLibraryIndexes()
+				return
+			}
+			diskSummaries.set(gameKey, diskSummary)
+		}
+		for ( const [gameKey, diskSummary] of diskSummaries ) {
+			modLibrarySummaryCache.set(gameKey, diskSummary)
+		}
+		serveIPC.log.info('performance', `Warmed Vault indexes from disk in ${(performance.now() - startedAt).toFixed(1)} ms`)
+	} catch (err) {
+		serveIPC.log.warning('performance', 'Unable to warm Vault indexes', err)
+	}
 }
 
 function getModLibrarySummary(gameVersion = null) {
@@ -4806,6 +4837,8 @@ app.whenReady().then(() => {
 
 
 		serveIPC.windowLib.createMainWindow(() => {
+			setTimeout(() => { warmModLibraryIndexes() }, 2500)
+
 			if ( serveIPC.storeSet.has('modFolders') ) {
 				serveIPC.modFolders   = new Set(serveIPC.storeSet.get('modFolders'))
 				funcLib.general.toggleFolderDirty()
