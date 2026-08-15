@@ -302,17 +302,20 @@ class StateManager {
 
 	// MARK: finish sort trees
 	fixSorts() {
+		const collator = Intl.Collator()
+		const compareText = (left, right) => collator.compare(left, right)
+
 		for ( const CKey of this.orderMap.keys ) {
 			const thisCol = this.collections[CKey]
-			thisCol.sorter       = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[1], b[1]))
+			thisCol.sorter       = thisCol.sorter.sort((a, b) => compareText(a[1], b[1]))
 			thisCol.sort_name    = thisCol.sorter.map((x) => x[0])
-			thisCol.sort_author  = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[2], b[2])).map((x) => x[0])
-			thisCol.sort_title   = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[3], b[3])).map((x) => x[0])
-			thisCol.sort_version = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[4], b[4])).map((x) => x[0])
-			thisCol.sort_date    = thisCol.sorter.sort((a, b) => Intl.Collator().compare(b[5], a[5])).map((x) => x[0])
+			thisCol.sort_author  = thisCol.sorter.sort((a, b) => compareText(a[2], b[2])).map((x) => x[0])
+			thisCol.sort_title   = thisCol.sorter.sort((a, b) => compareText(a[3], b[3])).map((x) => x[0])
+			thisCol.sort_version = thisCol.sorter.sort((a, b) => compareText(a[4], b[4])).map((x) => x[0])
+			thisCol.sort_date    = thisCol.sorter.sort((a, b) => compareText(b[5], a[5])).map((x) => x[0])
 			thisCol.sort_size    = thisCol.sorter.sort((a, b) => a[6] - b[6]).map((x) => x[0])
-			thisCol.sort_brand   = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[7], b[7])).map((x) => x[0])
-			thisCol.sort_cat     = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[8], b[8])).map((x) => x[0])
+			thisCol.sort_brand   = thisCol.sorter.sort((a, b) => compareText(a[7], b[7])).map((x) => x[0])
+			thisCol.sort_cat     = thisCol.sorter.sort((a, b) => compareText(a[8], b[8])).map((x) => x[0])
 		}
 	}
 
