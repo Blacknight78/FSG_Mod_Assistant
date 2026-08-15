@@ -149,6 +149,11 @@ class StateManager {
 			addCollectionsMS    : 0,
 			addModsMS           : 0,
 			collectionsRendered : 0,
+			finalDisplayMS      : 0,
+			finalFixSortsMS     : 0,
+			finalPrefsMS        : 0,
+			finalUpdateUIMS     : 0,
+			finalUpdateVerMS    : 0,
 			modsRendered        : 0,
 			processCollectionMS : 0,
 		}
@@ -240,14 +245,24 @@ class StateManager {
 		const editLoopMS = performance.now() - editLoopStartedAt
 
 		const finalUiStartedAt = performance.now()
+		const finalUpdateVerStartedAt = performance.now()
 		this.updateVerPick(data)
+		updateStats.finalUpdateVerMS = performance.now() - finalUpdateVerStartedAt
+		const finalUpdateUIStartedAt = performance.now()
 		this.updateUI()
+		updateStats.finalUpdateUIMS = performance.now() - finalUpdateUIStartedAt
+		const finalFixSortsStartedAt = performance.now()
 		this.fixSorts()
+		updateStats.finalFixSortsMS = performance.now() - finalFixSortsStartedAt
 		if ( this.track.openCollection !== null ) {
 			this.collections[this.track.openCollection]?.modNode?.classList?.remove?.('d-none')
 		}
+		const finalPrefsStartedAt = performance.now()
 		this.prefs.forceUpdate()
+		updateStats.finalPrefsMS = performance.now() - finalPrefsStartedAt
+		const finalDisplayStartedAt = performance.now()
 		this.doDisplay()
+		updateStats.finalDisplayMS = performance.now() - finalDisplayStartedAt
 		const finalUiMS = performance.now() - finalUiStartedAt
 
 		if ( this.track.newFolder !== null ) {
@@ -263,6 +278,11 @@ class StateManager {
 			`processCollections=${updateStats.processCollectionMS.toFixed(1)} ms`,
 			`editLoop=${editLoopMS.toFixed(1)} ms`,
 			`finalUI=${finalUiMS.toFixed(1)} ms`,
+			`finalUpdateVer=${updateStats.finalUpdateVerMS.toFixed(1)} ms`,
+			`finalUpdateUI=${updateStats.finalUpdateUIMS.toFixed(1)} ms`,
+			`finalFixSorts=${updateStats.finalFixSortsMS.toFixed(1)} ms`,
+			`finalPrefs=${updateStats.finalPrefsMS.toFixed(1)} ms`,
+			`finalDisplay=${updateStats.finalDisplayMS.toFixed(1)} ms`,
 		].join(' '))
 	}
 
