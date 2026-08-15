@@ -1159,7 +1159,7 @@ function modHubSavedIDsByNormalizedName(records) {
 }
 
 // eslint-disable-next-line complexity
-function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null) {
+function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null, cachedModHubMetadata = null) {
 	const modNames = safeModArray(record?.modNames)
 	const storedID = safeModArray(record?.modHubIDs).at(0) ?? null
 	const nameMatch = storedID === null ?
@@ -1169,7 +1169,7 @@ function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null) {
 		null
 	const modHubID = nameMatch?.id ?? storedID
 	const localVersion = newestKnownVersion(record?.versions)
-	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID)?.version
+	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)?.version
 	const catalogueVersion = modHubID === null ? null : serveIPC.modCollect.modHubVersionModHubId(modHubID)
 	const latestVersion = typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion
 	const comparison = compareModVersions(localVersion, latestVersion)
@@ -1482,8 +1482,9 @@ function collectionModVaultMetadata(modRecord, collectKey) {
 	}
 }
 
-function getCachedModHubMetadata(modHubID) {
+function getCachedModHubMetadata(modHubID, cachedModHubMetadata = null) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
+	if ( cachedModHubMetadata !== null ) { return cachedModHubMetadata[modHubID] ?? null }
 	return serveIPC.storeLibrary.get(`modHub.${modHubID}`, null)
 }
 
@@ -2069,23 +2070,29 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 	const prepareStartedAt = performance.now()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
+	const cachedModHubMetadata = serveIPC.storeLibrary.get('modHub', {})
 	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
 	const retentionCount = getModLibraryRetentionCount()
 	const usedHashes = new Set(historyEntries.flatMap((entry) => [entry.backupHash, entry.currentHash]).filter((value) => typeof value === 'string'))
 	const usedPaths = new Set(historyEntries.flatMap((entry) => [entry.backupPath, entry.currentLibraryPath]).filter((value) => typeof value === 'string'))
+	let modHubStateTotalMS = 0
+	let entryObjectTotalMS = 0
 	const baseEntries = Object.entries(records)
 		// eslint-disable-next-line complexity
 		.map(([recordHash, record]) => {
+			const entryStartedAt = performance.now()
 			const hasFilePath = typeof record?.filePath === 'string'
 			const fileExists = hasFilePath && (!verifyFiles || fs.existsSync(record.filePath))
 			const size = verifyFiles && fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
-			const modHubState = modHubStateForLibraryRecord(record, savedIDsByNormalizedName)
+			const modHubStartedAt = performance.now()
+			const modHubState = modHubStateForLibraryRecord(record, savedIDsByNormalizedName, cachedModHubMetadata)
+			modHubStateTotalMS += performance.now() - modHubStartedAt
 			const hash = record.hash ?? recordHash
 			const keepPinned = record.keepPinned === true
 			const sources = Array.isArray(record.sources) ? record.sources : []
 			const isUsed = usedHashes.has(hash) || usedPaths.has(record.filePath)
 			const collections = Array.isArray(record.collections) ? record.collections.filter((collectionName) => currentCollectionNames.has(collectionName)) : []
-			return {
+			const entry = {
 				collections,
 				createdAt    : record.createdAt ?? null,
 				equipmentSpecs : safeEquipmentSpecs(record.equipmentSpecs),
@@ -2125,8 +2132,11 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 				updatedAt    : record.updatedAt ?? null,
 				versions     : Array.isArray(record.versions) ? record.versions : [],
 			}
+			entryObjectTotalMS += performance.now() - entryStartedAt
+			return entry
 		})
 	logPerformanceDuration('Vault base entries prepare', prepareStartedAt, `entries=${baseEntries.length.toString()} verifyFiles=${verifyFiles.toString()}`)
+	serveIPC.log.info('performance', `Vault base entries internals modHubState=${modHubStateTotalMS.toFixed(1)} ms entryObjects=${entryObjectTotalMS.toFixed(1)} ms`)
 
 	const retentionStartedAt = performance.now()
 	const retentionGroups = new Map()
