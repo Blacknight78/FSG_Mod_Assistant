@@ -187,8 +187,7 @@ class StateManager {
 					const thisModName = thisMod.fileDetail.shortName
 
 					const addModStartedAt = performance.now()
-					// eslint-disable-next-line no-await-in-loop
-					const thisModRec  = await this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
+					const thisModRec  = this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
 					updateStats.addModsMS += performance.now() - addModStartedAt
 					updateStats.modsRendered++
 
@@ -732,9 +731,32 @@ class StateManager {
 	#findExtraInfo(item) {
 		return item.map((x) => x.toLowerCase()).join(' ')
 	}
+	#bytesToHR(inBytes, { forceMB = false, showSuffix = true } = {}) {
+		let bytes = inBytes
+
+		if (Math.abs(bytes) < 1024) { return '0 kB' }
+
+		const units = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+		let u = -1
+		const r = 10**2
+
+		if ( !forceMB ) {
+			do {
+				bytes /= 1024
+				++u
+			} while (Math.round(Math.abs(bytes) * r) / r >= 1024 && u < units.length - 1)
+		} else {
+			bytes = Math.round((bytes / ( 1024 * 1024) * 100 )) / 100
+		}
+
+		return [
+			bytes.toLocaleString( this.flag.currentLocale ?? 'en', { minimumFractionDigits : 2, maximumFractionDigits : 2 } ),
+			showSuffix ? (forceMB ? 'MB' : units[u]) : null
+		].filter((x) => x !== null).join(' ')
+	}
 	// MARK: addMod
 	/* eslint-disable-next-line complexity */
-	async #addMod(thisMod, overBadges = null, isHolding = false) {
+	#addMod(thisMod, overBadges = null, isHolding = false) {
 		const mod = {
 			filters : new Set(thisMod?.displayBadges?.map?.((x) => x.name) || []),
 			node    : document.createElement('tr'),
@@ -806,7 +828,7 @@ class StateManager {
 			author_cat : authorCat.filter((x) => x !== null).join(' '),
 			brand_title : brandTitle.filter((x) => x !== null).join(' '),
 			fileDate   : thisMod.fileDetail.fileDate.slice(0, 10),
-			fileSize   : await DATA.bytesToHR(thisMod.fileDetail.fileSize),
+			fileSize   : this.#bytesToHR(thisMod.fileDetail.fileSize),
 			fileTime   : thisMod.fileDetail.fileDate.slice(11, 16),
 			folderIcon : thisMod.badgeArray.includes('folder') ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
 			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImage)}">`,
