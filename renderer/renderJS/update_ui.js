@@ -62,6 +62,12 @@ function sourceTypeLabel(sourceType) {
 	return 'Manual web page'
 }
 
+function modHubReleasedText(result) {
+	if ( result.source !== 'modhub' ) { return '' }
+	const released = typeof result.released === 'string' && result.released.trim() !== '' ? result.released.trim() : 'not recorded'
+	return `<div class="small text-body-secondary mb-2">ModHub released: ${DATA.escapeSpecial(released)}</div>`
+}
+
 function manualSourceMessage(sourceType) {
 	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
 }
@@ -292,6 +298,7 @@ function getSelectedDownloadCandidates() {
 			collectionName : checkbox.dataset.collectionName,
 			fileName : checkbox.dataset.assetName,
 			modHubID : checkbox.dataset.modHubId,
+			modHubReleased : checkbox.dataset.modHubReleased,
 			modName  : checkbox.dataset.modName,
 			sourceType : checkbox.dataset.sourceType,
 			sourceURL : checkbox.dataset.sourceUrl,
@@ -368,12 +375,14 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 			collectionName : collectionName,
 			downloadURL    : result.downloadURL ?? null,
 			modHubID       : entry.modHubID,
+			modHubReleased : result.released ?? null,
 			modName        : entry.modName,
 			node           : DATA.templateEngine('update_line', {
 				collections   : collectionList.join(''),
 				downloadStatus : downloadStatusText(result),
 				iconImage     : `<img class="img-fluid" src="${DATA.iconMaker(entry.icon)}" />`,
 				localVersion  : DATA.escapeSpecial([...entry.local].sort().join(', ')),
+				modHubReleased : modHubReleasedText(result),
 				realName      : entry.title,
 				remoteVersion : DATA.escapeSpecial(result.version),
 				shortName     : DATA.escapeSpecial(entry.modName),
@@ -388,7 +397,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 
 	if ( renderID !== activeRenderID ) { return }
 
-	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modName, node, sourceType, sourceURL, version } of updateRows ) {
+	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, node, sourceType, sourceURL, version } of updateRows ) {
 		node.firstElementChild.classList.add('bg-warning-subtle')
 		const selectCheckbox = node.querySelector('.update-select-checkbox')
 		if ( assetName !== null ) {
@@ -396,6 +405,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 			selectCheckbox.dataset.collectionName = collectionName
 			selectCheckbox.dataset.collectionKey = collectionKey
 			selectCheckbox.dataset.modHubId = modHubID ?? ''
+			selectCheckbox.dataset.modHubReleased = modHubReleased ?? ''
 			selectCheckbox.dataset.modName = modName
 		}
 		if ( downloadURL !== null ) { selectCheckbox.dataset.downloadUrl = downloadURL }
