@@ -1687,6 +1687,7 @@ const MOD_LIBRARY_INDEX_SCHEMA = 1
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 let modLibraryIndexWarmupStarted = false
+let modLibraryIndexEntrySnapshot = null
 let modLibraryIndexIdleQueue = []
 let modLibraryIndexIdleTimer = null
 let modFolderScanStartedAt = null
@@ -1695,6 +1696,7 @@ function invalidateModLibrarySummary() {
 	modLibrarySummaryCache.clear()
 	vaultDetailCache.clear()
 	modLibraryIndexWarmupStarted = false
+	modLibraryIndexEntrySnapshot = null
 	modLibraryIndexIdleQueue = []
 	clearTimeout(modLibraryIndexIdleTimer)
 	modLibraryIndexIdleTimer = null
@@ -2291,13 +2293,23 @@ function readModLibraryIndex(gameKey) {
 	}
 }
 
-function buildModLibraryIndex(gameKey, entries = getModLibraryEntries()) {
+function getModLibraryIndexEntrySnapshot() {
+	if ( modLibraryIndexEntrySnapshot !== null ) { return modLibraryIndexEntrySnapshot }
+
 	const startedAt = performance.now()
-	const gameEntries = entries.filter((entry) => modLibraryEntryMatchesGameKey(entry, gameKey))
+	modLibraryIndexEntrySnapshot = getModLibraryEntries()
+	logPerformanceDuration('Vault entry snapshot build', startedAt, `records=${modLibraryIndexEntrySnapshot.length.toString()}`)
+	return modLibraryIndexEntrySnapshot
+}
+
+function buildModLibraryIndex(gameKey, entries) {
+	const startedAt = performance.now()
+	const sourceEntries = entries ?? getModLibraryIndexEntrySnapshot()
+	const gameEntries = sourceEntries.filter((entry) => modLibraryEntryMatchesGameKey(entry, gameKey))
 	const summary = modLibrarySummaryForEntries(gameEntries)
 	modLibrarySummaryCache.set(gameKey, summary)
 	writeModLibraryIndex(gameKey, summary)
-	serveIPC.log.info('performance', `Built Vault index ${gameKey} for ${gameEntries.length} of ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+	serveIPC.log.info('performance', `Built Vault index ${gameKey} for ${gameEntries.length} of ${sourceEntries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
 	return summary
 }
 
@@ -2334,11 +2346,17 @@ function scheduleNextModLibraryIdleIndex(delay = 10000) {
 		}
 
 		const nextGameKey = modLibraryIndexIdleQueue.shift()
-		if ( typeof nextGameKey === 'undefined' ) { return }
+		if ( typeof nextGameKey === 'undefined' ) {
+			modLibraryIndexEntrySnapshot = null
+			return
+		}
 		serveIPC.log.info('performance', `Starting idle Vault index warm-up for ${nextGameKey}`)
 		warmModLibraryIndex(nextGameKey)
 		if ( modLibraryIndexIdleQueue.length !== 0 ) {
 			scheduleNextModLibraryIdleIndex(10000)
+		} else {
+			modLibraryIndexEntrySnapshot = null
+			serveIPC.log.info('performance', 'Vault index warm-up queue completed')
 		}
 	}, delay)
 }
