@@ -91,6 +91,10 @@
 					<i18n-text data-key="update_list_selected"></i18n-text> 0
 				</button>
 			</div>
+			<div class="form-check form-switch mt-2">
+				<input class="form-check-input" type="checkbox" id="needsReviewOnly">
+				<label class="form-check-label" for="needsReviewOnly">Needs review only</label>
+			</div>
 		</div>
 		<div class="list-group mx-2 my-3" id="modList"></div>
 	</div>
@@ -116,6 +120,7 @@
 					<span class="badge text-bg-warning"><template-var>sourceName</template-var> <template-var>remoteVersion</template-var></span>
 				</div>
 				<div class="mb-2"><template-var>sourceBadge</template-var></div>
+				<template-var>reviewNote</template-var>
 				<template-var>modHubReleased</template-var>
 				<div class="small mb-3"><template-var>statusText</template-var></div>
 				<div class="small mb-3"><template-var>downloadStatus</template-var></div>

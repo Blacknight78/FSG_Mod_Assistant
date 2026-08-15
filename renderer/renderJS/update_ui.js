@@ -82,6 +82,31 @@ function sourceBadgeText(entry, result) {
 	return `<span class="badge text-bg-secondary">${sourceTypeLabel(entry.sourceType)} source</span>`
 }
 
+function reviewReasons(entry, result) {
+	const reasons = []
+	if ( isManualSourceType(entry.sourceType) ) {
+		reasons.push('manual source')
+	}
+	if ( result.hasDownload !== true ) {
+		reasons.push('no direct ZIP')
+	}
+	if ( result.source === 'modhub' && (typeof result.released !== 'string' || result.released.trim() === '') ) {
+		reasons.push('ModHub release date not recorded')
+	}
+	if ( entry.sourceType === 'github' && result.downloadSource === 'repositoryFile' ) {
+		reasons.push('repository ZIP instead of release asset')
+	}
+	if ( typeof result.version !== 'string' || ![...entry.local].some((version) => !Number.isNaN(DATA.versionCompare(version, result.version))) ) {
+		reasons.push('version comparison unclear')
+	}
+	return reasons
+}
+
+function reviewNoteText(reasons) {
+	if ( reasons.length === 0 ) { return '' }
+	return `<div class="small text-warning mb-2">Needs review: ${DATA.escapeSpecial(reasons.join(', '))}</div>`
+}
+
 function manualSourceMessage(sourceType) {
 	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
 }
@@ -274,7 +299,7 @@ function renderEmpty(messageKey) {
 }
 
 function getUpdateCheckboxes() {
-	return [...document.querySelectorAll('.update-select-checkbox')]
+	return [...document.querySelectorAll('.update-candidate-row:not(.d-none) .update-select-checkbox')]
 }
 
 function updateSelectedCount() {
@@ -294,6 +319,15 @@ function setAllSelections(isChecked) {
 
 function getSelectedCheckboxes() {
 	return getUpdateCheckboxes().filter((checkbox) => checkbox.checked)
+}
+
+function applyNeedsReviewFilter() {
+	const filter = MA.byId('needsReviewOnly')
+	const needsReviewOnly = filter !== null && filter.checked
+	for ( const row of document.querySelectorAll('.update-candidate-row') ) {
+		row.classList.toggle('d-none', needsReviewOnly && row.dataset.needsReview !== 'true')
+	}
+	updateSelectedCount()
 }
 
 function openSelectedSources() {
@@ -383,6 +417,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 		const assetName = result.assetName ?? null
 		const collectionKey = entry.collectionKeys[0] ?? null
 		const collectionName = entry.collections[0] ?? 'updates'
+		const review = reviewReasons(entry, result)
 		return {
 			assetName      : assetName,
 			collectionKey  : collectionKey,
@@ -391,6 +426,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 			modHubID       : entry.modHubID,
 			modHubReleased : result.released ?? null,
 			modName        : entry.modName,
+			needsReview    : review.length !== 0,
 			node           : DATA.templateEngine('update_line', {
 				collections   : collectionList.join(''),
 				downloadStatus : downloadStatusText(result),
@@ -399,6 +435,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 				modHubReleased : modHubReleasedText(result),
 				realName      : entry.title,
 				remoteVersion : DATA.escapeSpecial(result.version),
+				reviewNote    : reviewNoteText(review),
 				shortName     : DATA.escapeSpecial(entry.modName),
 				sourceBadge   : sourceBadgeText(entry, result),
 				sourceName    : DATA.escapeSpecial(entry.sourceLabel),
@@ -412,8 +449,10 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 
 	if ( renderID !== activeRenderID ) { return }
 
-	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, node, sourceType, sourceURL, version } of updateRows ) {
-		node.firstElementChild.classList.add('bg-warning-subtle')
+	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, needsReview, node, sourceType, sourceURL, version } of updateRows ) {
+		const row = node.firstElementChild
+		row.classList.add('bg-warning-subtle', 'update-candidate-row')
+		row.dataset.needsReview = needsReview ? 'true' : 'false'
 		const selectCheckbox = node.querySelector('.update-select-checkbox')
 		if ( assetName !== null ) {
 			selectCheckbox.dataset.assetName = assetName
@@ -440,11 +479,13 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	}
 
 	MA.byId('selectionControls').classList.toggle('d-none', updateRows.length === 0)
+	applyNeedsReviewFilter()
 	updateSelectedCount()
 
+	const reviewCount = updateRows.filter((row) => row.needsReview).length
 	MA.byIdHTML(
 		'updateStatus',
-		updateRows.length === 0 ? I18N.defer('update_list_none_found', false) : `${updateRows.length} ${I18N.defer('update_list_found', false)}`
+		updateRows.length === 0 ? I18N.defer('update_list_none_found', false) : `${updateRows.length} ${I18N.defer('update_list_found', false)}${reviewCount === 0 ? '' : `; ${reviewCount} need review`}`
 	)
 }
 
@@ -461,6 +502,7 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		beginUpdateBusy(I18N.defer('update_list_loading', false), null)
 		MA.byIdHTML('modList', '')
 		MA.byId('selectionControls').classList.add('d-none')
+		if ( MA.byId('needsReviewOnly') !== null ) { MA.byId('needsReviewOnly').checked = false }
 		updateSelectedCount()
 		await displayCandidates(makeCandidateMap(modCollect), renderID, forceRemoteRefresh)
 	} catch (err) {
@@ -493,6 +535,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byIdEventIfExists('downloadSelectedButton', downloadSelectedZIPs)
 	MA.byIdEventIfExists('refreshUpdatesButton', refreshUpdateCandidates)
 	MA.byIdEventIfExists('updateMenuButton', () => window.update_IPC.dispatchModManagement())
+	MA.byIdEventIfExists('needsReviewOnly', applyNeedsReviewFilter)
 
 	window.update_IPC.receive('mods:list', (modCollect) => {
 		startFromModList(modCollect)
