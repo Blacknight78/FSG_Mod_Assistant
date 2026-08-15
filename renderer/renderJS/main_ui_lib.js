@@ -175,8 +175,7 @@ class StateManager {
 			})
 
 			const addCollectionStartedAt = performance.now()
-			// eslint-disable-next-line no-await-in-loop
-			const thisCol = await this.#addCollection(CKey, data.modList[CKey], data.collectionNotes[CKey], data.collectionToStatus[CKey])
+			const thisCol = this.#addCollection(CKey, data.modList[CKey], data.collectionNotes[CKey], data.collectionToStatus[CKey])
 			updateStats.addCollectionsMS += performance.now() - addCollectionStartedAt
 			this.collections[CKey] = thisCol
 
@@ -536,7 +535,7 @@ class StateManager {
 	}
 
 	// MARK: addCollection
-	async #addCollection(CKey, collection, notes, online) {
+	#addCollection(CKey, collection, notes, online) {
 		const colRec = {
 			data         : collection,
 			mapList      : [],
@@ -565,7 +564,7 @@ class StateManager {
 
 		if ( ! this.flag.folderEdit ) {
 			colRec.node.appendChild(DATA.templateEngine('item_collect', {
-				folderSize : colRec.online ? await DATA.bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
+				folderSize : colRec.online ? this.#bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
 				name       : collection.name,
 				tagLine    : notes.notes_tagline,
 				totalCount : collection.alphaSort.length > 999 ? '999+' : collection.alphaSort.length,
@@ -591,7 +590,7 @@ class StateManager {
 			colRec.node.appendChild(DATA.templateEngine('item_collect_edit', {
 				dateAdd    : DATA.dateToString(notes.notes_add_date),
 				dateUsed   : DATA.dateToString(notes.notes_last),
-				folderSize : colRec.online ? await DATA.bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
+				folderSize : colRec.online ? this.#bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
 				name       : collection.name,
 				tagLine    : notes.notes_tagline,
 				totalCount : collection.alphaSort.length > 999 ? '999+' : collection.alphaSort.length,
