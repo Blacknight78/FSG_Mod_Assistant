@@ -94,6 +94,7 @@ class PrefLib {
 		}
 
 		this.update.push(() => { this.#doFolders() })
+		MA.byId('scanGameInstallations')?.addEventListener('click', () => { this.#scanGameInstallations() })
 
 		this.forceUpdate()
 	}
@@ -111,6 +112,46 @@ class PrefLib {
 
 	open() {
 		this.forceUpdate()
+	}
+
+	#scanSummary(result) {
+		const configured = (result.results ?? []).filter((item) => item.enabled)
+		if ( configured.length === 0 ) { return 'No installed Farming Simulator games were found in the standard locations.' }
+
+		const changed = configured.filter((item) => item.gameChanged || item.settingsChanged)
+		const versionText = configured
+			.map((item) => `FS${item.version}${item.gameFound ? '' : ' (settings only)'}`)
+			.join(', ')
+		const changedText = changed.length === 0 ? ' Existing valid paths were kept.' : ` Updated ${changed.length} game setup${changed.length === 1 ? '' : 's'}.`
+		const activeText = result.activeChanged ? ' Active game was switched to the newest detected setup.' : ''
+		return `Configured ${configured.length} game${configured.length === 1 ? '' : 's'}: ${versionText}.${changedText}${activeText}`
+	}
+
+	async #scanGameInstallations() {
+		const button = MA.byId('scanGameInstallations')
+		const status = MA.byId('scanGameInstallationsStatus')
+		const originalText = button.textContent
+		button.disabled = true
+		button.textContent = 'Scanning...'
+		status.className = 'col-12 small text-info'
+		status.textContent = 'Scanning installed games and game settings...'
+
+		try {
+			const result = await window.setup_IPC.scanGames()
+			this.folders = result.folders ?? this.folders
+			this.wizard = result.wizard ?? this.wizard
+			for ( const update of this.update ) { update() }
+			status.className = result.results?.some((item) => item.enabled) ?
+				'col-12 small text-success' :
+				'col-12 small text-warning'
+			status.textContent = this.#scanSummary(result)
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Game scan failed: ${err.message}`
+		} finally {
+			button.disabled = false
+			button.textContent = originalText
+		}
 	}
 
 	#doFolderLine(folder, alreadyExists, version) {

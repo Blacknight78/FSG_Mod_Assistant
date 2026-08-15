@@ -51,6 +51,7 @@ class StateManager {
 	extSites    = {}
 	updateCheckCache = new Map()
 	rollbackCheckCache = new Map()
+	backgroundDisplayRefreshTimer = null
 
 	loader = null
 
@@ -135,13 +136,36 @@ class StateManager {
 	emptySort(text) {
 		return text || 'ZZZZ'
 	}
+
+	#logPerformance(label, startedAt, extraDetail = '') {
+		const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+		window.main_IPC.performance(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+	}
+
 	// MARK: process data
 	async updateFromData(data) {
+		const updateStartedAt = performance.now()
+		const updateStats = {
+			addCollectionsMS    : 0,
+			addModsMS           : 0,
+			collectionsRendered : 0,
+			finalDisplayMS      : 0,
+			finalFixSortsMS     : 0,
+			finalPrefsMS        : 0,
+			finalUpdateUIMS     : 0,
+			finalUpdateVerMS    : 0,
+			modsRendered        : 0,
+			processCollectionMS : 0,
+		}
 		window.data = data
+		const trackingStartedAt = performance.now()
 		this.#updateTracking(data)
+		const trackingMS = performance.now() - trackingStartedAt
 	
+		const collectionLoopStartedAt = performance.now()
 		for ( const [CIndex, CKey] of Object.entries([...data.set_Collections]) ) {
 			if ( !data.collectionNotes[CKey].notes_holding && data.collectionNotes[CKey].notes_version !== this.flag.currentVersion ) { continue }
+			updateStats.collectionsRendered++
 
 			this.orderMap.keys.push(CKey)
 			this.orderMap.keyToNum[CKey]   = parseInt(CIndex)
@@ -156,8 +180,9 @@ class StateManager {
 				tag    : data.collectionNotes[CKey].notes_tagline,
 			})
 
-			// eslint-disable-next-line no-await-in-loop
-			const thisCol = await this.#addCollection(CKey, data.modList[CKey], data.collectionNotes[CKey], data.collectionToStatus[CKey])
+			const addCollectionStartedAt = performance.now()
+			const thisCol = this.#addCollection(CKey, data.modList[CKey], data.collectionNotes[CKey], data.collectionToStatus[CKey])
+			updateStats.addCollectionsMS += performance.now() - addCollectionStartedAt
 			this.collections[CKey] = thisCol
 
 			if ( !this.flag.folderEdit ) {
@@ -166,8 +191,10 @@ class StateManager {
 				for ( const [MKey, thisMod] of Object.entries(data.modList[CKey].mods) ) {
 					const thisModName = thisMod.fileDetail.shortName
 
-					// eslint-disable-next-line no-await-in-loop
-					const thisModRec  = await this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
+					const addModStartedAt = performance.now()
+					const thisModRec  = this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
+					updateStats.addModsMS += performance.now() - addModStartedAt
+					updateStats.modsRendered++
 
 					for ( const tag of thisModRec.filters ) { this.searchTagList.add(tag) }
 
@@ -201,29 +228,62 @@ class StateManager {
 					}
 					this.verList[thisModName] = thisMod.modDesc.version
 				}
+				const processCollectionStartedAt = performance.now()
 				this.#processCollection_std(CKey)
+				updateStats.processCollectionMS += performance.now() - processCollectionStartedAt
 			}
 		}
+		const collectionLoopMS = performance.now() - collectionLoopStartedAt
 		this.mapCollectionDropdown.set(999, `--${data.opts.l10n.unknown}--`)
 
+		const editLoopStartedAt = performance.now()
 		if ( this.flag.folderEdit ) {
 			for ( const CKey of Object.keys(this.collections) ) {
 				this.#processCollection_edit(CKey)
 			}
 		}
+		const editLoopMS = performance.now() - editLoopStartedAt
 
+		const finalUiStartedAt = performance.now()
+		const finalUpdateVerStartedAt = performance.now()
 		this.updateVerPick(data)
+		updateStats.finalUpdateVerMS = performance.now() - finalUpdateVerStartedAt
+		const finalUpdateUIStartedAt = performance.now()
 		this.updateUI()
+		updateStats.finalUpdateUIMS = performance.now() - finalUpdateUIStartedAt
+		const finalFixSortsStartedAt = performance.now()
 		this.fixSorts()
+		updateStats.finalFixSortsMS = performance.now() - finalFixSortsStartedAt
 		if ( this.track.openCollection !== null ) {
 			this.collections[this.track.openCollection]?.modNode?.classList?.remove?.('d-none')
 		}
+		const finalPrefsStartedAt = performance.now()
 		this.prefs.forceUpdate()
+		updateStats.finalPrefsMS = performance.now() - finalPrefsStartedAt
+		const finalDisplayStartedAt = performance.now()
 		this.doDisplay()
+		updateStats.finalDisplayMS = performance.now() - finalDisplayStartedAt
+		const finalUiMS = performance.now() - finalUiStartedAt
 
 		if ( this.track.newFolder !== null ) {
 			this.colScroll(this.track.newFolder)
 		}
+		this.#logPerformance('Main renderer updateFromData', updateStartedAt, [
+			`collections=${updateStats.collectionsRendered.toString()}`,
+			`mods=${updateStats.modsRendered.toString()}`,
+			`tracking=${trackingMS.toFixed(1)} ms`,
+			`collectionLoop=${collectionLoopMS.toFixed(1)} ms`,
+			`addCollections=${updateStats.addCollectionsMS.toFixed(1)} ms`,
+			`addMods=${updateStats.addModsMS.toFixed(1)} ms`,
+			`processCollections=${updateStats.processCollectionMS.toFixed(1)} ms`,
+			`editLoop=${editLoopMS.toFixed(1)} ms`,
+			`finalUI=${finalUiMS.toFixed(1)} ms`,
+			`finalUpdateVer=${updateStats.finalUpdateVerMS.toFixed(1)} ms`,
+			`finalUpdateUI=${updateStats.finalUpdateUIMS.toFixed(1)} ms`,
+			`finalFixSorts=${updateStats.finalFixSortsMS.toFixed(1)} ms`,
+			`finalPrefs=${updateStats.finalPrefsMS.toFixed(1)} ms`,
+			`finalDisplay=${updateStats.finalDisplayMS.toFixed(1)} ms`,
+		].join(' '))
 	}
 
 	updateVerPick(data) {
@@ -242,17 +302,20 @@ class StateManager {
 
 	// MARK: finish sort trees
 	fixSorts() {
+		const collator = Intl.Collator()
+		const compareText = (left, right) => collator.compare(left, right)
+
 		for ( const CKey of this.orderMap.keys ) {
 			const thisCol = this.collections[CKey]
-			thisCol.sorter       = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[1], b[1]))
+			thisCol.sorter       = thisCol.sorter.sort((a, b) => compareText(a[1], b[1]))
 			thisCol.sort_name    = thisCol.sorter.map((x) => x[0])
-			thisCol.sort_author  = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[2], b[2])).map((x) => x[0])
-			thisCol.sort_title   = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[3], b[3])).map((x) => x[0])
-			thisCol.sort_version = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[4], b[4])).map((x) => x[0])
-			thisCol.sort_date    = thisCol.sorter.sort((a, b) => Intl.Collator().compare(b[5], a[5])).map((x) => x[0])
+			thisCol.sort_author  = thisCol.sorter.sort((a, b) => compareText(a[2], b[2])).map((x) => x[0])
+			thisCol.sort_title   = thisCol.sorter.sort((a, b) => compareText(a[3], b[3])).map((x) => x[0])
+			thisCol.sort_version = thisCol.sorter.sort((a, b) => compareText(a[4], b[4])).map((x) => x[0])
+			thisCol.sort_date    = thisCol.sorter.sort((a, b) => compareText(b[5], a[5])).map((x) => x[0])
 			thisCol.sort_size    = thisCol.sorter.sort((a, b) => a[6] - b[6]).map((x) => x[0])
-			thisCol.sort_brand   = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[7], b[7])).map((x) => x[0])
-			thisCol.sort_cat     = thisCol.sorter.sort((a, b) => Intl.Collator().compare(a[8], b[8])).map((x) => x[0])
+			thisCol.sort_brand   = thisCol.sorter.sort((a, b) => compareText(a[7], b[7])).map((x) => x[0])
+			thisCol.sort_cat     = thisCol.sorter.sort((a, b) => compareText(a[8], b[8])).map((x) => x[0])
 		}
 	}
 
@@ -385,8 +448,10 @@ class StateManager {
 
 	// MARK: update display
 	doDisplay() {
+		const displayStartedAt = performance.now()
 		const scrollFrag = document.createDocumentFragment()
 		const docFrag    = document.createDocumentFragment()
+		let displayedMods = 0
 
 		if ( this.flag.folderEdit ) {
 			const editNode = document.createElement('tr')
@@ -427,6 +492,7 @@ class StateManager {
 					this.#applyModUpdateBadge(modRec)
 					thisCol.modNodePoint.appendChild(modRec.node)
 					scrollFrag.appendChild(modRec.scroll)
+					displayedMods++
 				}
 			}
 
@@ -438,6 +504,15 @@ class StateManager {
 		MA.byId('scroll-bar-fake').appendChild(scrollFrag)
 		this.doSideBar()
 		this.refreshSelected()
+		this.#logPerformance('Main renderer doDisplay', displayStartedAt, `collections=${this.orderMap.keys.length.toString()} displayedMods=${displayedMods.toString()} folderEdit=${this.flag.folderEdit.toString()}`)
+	}
+
+	#scheduleBackgroundDisplayRefresh() {
+		if ( this.backgroundDisplayRefreshTimer !== null ) { return }
+		this.backgroundDisplayRefreshTimer = setTimeout(() => {
+			this.backgroundDisplayRefreshTimer = null
+			this.doDisplay()
+		}, 100)
 	}
 
 	doVersionChanger(version, options, modCollect) {
@@ -492,7 +567,7 @@ class StateManager {
 	}
 
 	// MARK: addCollection
-	async #addCollection(CKey, collection, notes, online) {
+	#addCollection(CKey, collection, notes, online) {
 		const colRec = {
 			data         : collection,
 			mapList      : [],
@@ -521,7 +596,7 @@ class StateManager {
 
 		if ( ! this.flag.folderEdit ) {
 			colRec.node.appendChild(DATA.templateEngine('item_collect', {
-				folderSize : colRec.online ? await DATA.bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
+				folderSize : colRec.online ? this.#bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
 				name       : collection.name,
 				tagLine    : notes.notes_tagline,
 				totalCount : collection.alphaSort.length > 999 ? '999+' : collection.alphaSort.length,
@@ -547,7 +622,7 @@ class StateManager {
 			colRec.node.appendChild(DATA.templateEngine('item_collect_edit', {
 				dateAdd    : DATA.dateToString(notes.notes_add_date),
 				dateUsed   : DATA.dateToString(notes.notes_last),
-				folderSize : colRec.online ? await DATA.bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
+				folderSize : colRec.online ? this.#bytesToHR(collection.folderSize) : I18N.defer('removable_offline', false),
 				name       : collection.name,
 				tagLine    : notes.notes_tagline,
 				totalCount : collection.alphaSort.length > 999 ? '999+' : collection.alphaSort.length,
@@ -687,9 +762,58 @@ class StateManager {
 	#findExtraInfo(item) {
 		return item.map((x) => x.toLowerCase()).join(' ')
 	}
+	#bytesToHR(inBytes, { forceMB = false, showSuffix = true } = {}) {
+		let bytes = inBytes
+
+		if (Math.abs(bytes) < 1024) { return '0 kB' }
+
+		const units = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+		let u = -1
+		const r = 10**2
+
+		if ( !forceMB ) {
+			do {
+				bytes /= 1024
+				++u
+			} while (Math.round(Math.abs(bytes) * r) / r >= 1024 && u < units.length - 1)
+		} else {
+			bytes = Math.round((bytes / ( 1024 * 1024) * 100 )) / 100
+		}
+
+		return [
+			bytes.toLocaleString( this.flag.currentLocale ?? 'en', { minimumFractionDigits : 2, maximumFractionDigits : 2 } ),
+			showSuffix ? (forceMB ? 'MB' : units[u]) : null
+		].filter((x) => x !== null).join(' ')
+	}
+	#renderModRow({
+		authorCat,
+		brandTitle,
+		fileDate,
+		fileSize,
+		fileTime,
+		folderIcon,
+		iconImage,
+		shortName,
+		version,
+	}) {
+		return [
+			'<td style="width: 4.6rem; height: 4.6rem; white-space: nowrap">',
+			iconImage,
+			folderIcon,
+			'</td>',
+			'<td><div class="d-flex flex-row"><div>',
+			`<span class="mod-short-name">${shortName}</span><br>`,
+			`<small class="ps-2">${brandTitle}</small><br>`,
+			`<small class="text-body-tertiary ps-2">${authorCat}</small>`,
+			'</div><div class="issue_badges fs-5 flex-grow-1 text-end"></div></div></td>',
+			'<td class="text-end" style="width: 100px; line-height: 1.25;">',
+			`${version}<br><em class="ex-small px-0">${fileDate}<br>${fileTime}</em><br><em class="small px-0">${fileSize}</em>`,
+			'</td>'
+		].join('')
+	}
 	// MARK: addMod
 	/* eslint-disable-next-line complexity */
-	async #addMod(thisMod, overBadges = null, isHolding = false) {
+	#addMod(thisMod, overBadges = null, isHolding = false) {
 		const mod = {
 			filters : new Set(thisMod?.displayBadges?.map?.((x) => x.name) || []),
 			node    : document.createElement('tr'),
@@ -757,17 +881,17 @@ class StateManager {
 			fixCat.length !== 0 ? `<em>${this.#addExtraInfo(fixCat)}</em>` : null,
 		]
 
-		mod.node.appendChild(DATA.templateEngine('item_mod', {
-			author_cat : authorCat.filter((x) => x !== null).join(' '),
-			brand_title : brandTitle.filter((x) => x !== null).join(' '),
+		mod.node.innerHTML = this.#renderModRow({
+			authorCat  : authorCat.filter((x) => x !== null).join(' '),
+			brandTitle : brandTitle.filter((x) => x !== null).join(' '),
 			fileDate   : thisMod.fileDetail.fileDate.slice(0, 10),
-			fileSize   : await DATA.bytesToHR(thisMod.fileDetail.fileSize),
+			fileSize   : this.#bytesToHR(thisMod.fileDetail.fileSize),
 			fileTime   : thisMod.fileDetail.fileDate.slice(11, 16),
 			folderIcon : thisMod.badgeArray.includes('folder') ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
 			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImage)}">`,
-			shortname  : thisMod.fileDetail.shortName,
+			shortName  : thisMod.fileDetail.shortName,
 			version    : DATA.escapeSpecial(thisMod.modDesc.version),
-		}))
+		})
 
 		const badgeContain = mod.node.querySelector('.issue_badges')
 
@@ -819,7 +943,7 @@ class StateManager {
 
 			this.#applyModRollbackBadge(modRec)
 
-			if ( hadRollback !== hasRollback ) { this.doDisplay() }
+			if ( hadRollback !== hasRollback ) { this.#scheduleBackgroundDisplayRefresh() }
 		})
 	}
 
@@ -857,7 +981,7 @@ class StateManager {
 
 			this.#applyModUpdateBadge(modRec)
 
-			if ( hadUpdate !== hasUpdate ) { this.doDisplay() }
+			if ( hadUpdate !== hasUpdate ) { this.#scheduleBackgroundDisplayRefresh() }
 		})
 	}
 

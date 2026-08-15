@@ -7,6 +7,7 @@
 // Main Program
 
 const superDebugCache = false
+const appStartupStartedAt = performance.now()
 
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, Tray, clipboard, net } = require('electron')
 
@@ -67,6 +68,11 @@ process.on('unhandledRejection', (err, origin) => { funcLib.general.handleUnhand
 
 if ( process.platform === 'win32' && app.isPackaged && gotTheLock && !isPortable ) { funcLib.general.initUpdater() }
 
+function logPerformanceDuration(label, startedAt, extraDetail = '') {
+	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+	serveIPC.log.info('performance', `${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+}
+
 funcLib.wizard.initMain()
 
 // const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
@@ -75,6 +81,7 @@ const { parseModFirstPass, parseModLastPass, parseSaveGame } = require('fs_mod_p
 
 const settingDefault = new (require('./lib/modAssist_window_lib.js')).defaultSettings()
 
+const storeLoadStartedAt = performance.now()
 serveIPC.isFirstRun = !fs.existsSync(path.join(app.getPath('userData'), 'config.json'))
 
 serveIPC.storeSet         = new Store({schema : settingDefault.defaults, migrations : settingDefault.migrateBase, clearInvalidConfig : true })
@@ -85,8 +92,11 @@ serveIPC.storeHistory     = new Store({name : 'collection_history', clearInvalid
 serveIPC.storeLibrary     = new Store({name : 'mod_library', clearInvalidConfig : true})
 
 serveIPC.windowLib.loadSettings()
+logPerformanceDuration('Store and settings load', storeLoadStartedAt)
 
+const modCacheCheckStartedAt = performance.now()
 funcLib.general.doModCacheCheck() // Check and upgrade Mod Cache & Mod Detail Cache
+logPerformanceDuration('Mod cache check', modCacheCheckStartedAt)
 
 serveIPC.modCollect = new modFileCollection( app.getPath('home'), modQueueRunner )
 
@@ -782,6 +792,73 @@ ipcMain.handle('wizard:update', () => ({
 	folders : [...serveIPC.modFolders],
 	wizard  : funcLib.wizard.getSettings(),
 }))
+function setupScanExistingPath(value) {
+	return typeof value === 'string' && value.trim() !== '' && fs.existsSync(value)
+}
+
+function setupScanApplyPath(version, settingKey, detectedPath) {
+	const fullKey = `${settingKey}_${version}`
+	const currentPath = serveIPC.storeSet.get(fullKey, '')
+	if ( typeof detectedPath !== 'string' || detectedPath === '' ) {
+		return { changed : false, currentPath, detectedPath : null }
+	}
+	if ( setupScanExistingPath(currentPath) ) {
+		return { changed : false, currentPath, detectedPath }
+	}
+	funcLib.prefs.verSet(settingKey, detectedPath, version)
+	return { changed : true, currentPath : detectedPath, detectedPath }
+}
+
+function setupScanConfigureVersion(version, scan) {
+	const gamePath = scan.games[version]?.[0]?.[1] ?? null
+	const settingsPath = scan.settings[version]?.[0] ?? null
+	const gameResult = setupScanApplyPath(version, 'game_path', gamePath)
+	const settingsResult = setupScanApplyPath(version, 'game_settings', settingsPath)
+	const configured = setupScanExistingPath(gameResult.currentPath) || setupScanExistingPath(settingsResult.currentPath)
+	if ( configured ) { funcLib.prefs.verSet('game_enabled', true, version) }
+
+	return {
+		enabled      : configured,
+		gameChanged  : gameResult.changed,
+		gameFound    : setupScanExistingPath(gameResult.currentPath),
+		gamePath     : gameResult.currentPath,
+		settingsChanged : settingsResult.changed,
+		settingsFound : setupScanExistingPath(settingsResult.currentPath),
+		settingsPath  : settingsResult.currentPath,
+		version,
+	}
+}
+
+function setupScanActiveGame(results) {
+	const currentVersion = serveIPC.storeSet.get('game_version')
+	const currentSettings = serveIPC.storeSet.get(`game_settings_${currentVersion}`, '')
+	if ( setupScanExistingPath(currentSettings) ) { return false }
+
+	const newestConfigured = results
+		.filter((result) => result.enabled)
+		.toSorted((left, right) => right.version - left.version)[0]
+	if ( typeof newestConfigured === 'undefined' ) { return false }
+
+	funcLib.prefs.changeGameVersion(newestConfigured.version)
+	return true
+}
+
+ipcMain.handle('wizard:scanGames', () => {
+	const scan = funcLib.wizard.getSettings()
+	const versions = funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10))
+	const results = versions.map((version) => setupScanConfigureVersion(version, scan))
+	const activeChanged = setupScanActiveGame(results)
+	funcLib.gameSet.read()
+	refreshClientModList()
+	serveIPC.windowLib.sendToValidWindow('main', 'settings:invalidate')
+	serveIPC.windowLib.sendToValidWindow('setup', 'settings:invalidate')
+	return {
+		activeChanged,
+		results,
+		updated : results.filter((result) => result.gameChanged || result.settingsChanged || result.enabled).length,
+		wizard  : funcLib.wizard.getSettings(),
+	}
+})
 ipcMain.on('dispatch:wizard', () => { openWizard() })
 function openWizard() {
 	serveIPC.windowLib.createNamedWindow('setup')
@@ -1036,6 +1113,10 @@ function normalizedVaultModNames(values) {
 	return uniqueCleanArray(sourceValues.map((value) => normalizeVaultModName(value)).filter((value) => value !== ''))
 }
 
+function normalizeModHubLookupName(value) {
+	return typeof value === 'string' ? value.trim().replace(/\.zip$/iu, '').toLocaleLowerCase() : ''
+}
+
 function uniqueCleanNumberArray(values) {
 	return [...new Set(values.filter((value) => Number.isFinite(value)))]
 }
@@ -1062,16 +1143,33 @@ function newestKnownVersion(versions) {
 	}).at(-1) ?? null
 }
 
+function modHubSavedIDsByNormalizedName(records) {
+	const savedIDsByName = new Map()
+	for ( const record of Object.values(records) ) {
+		for ( const name of [record?.fileName, ...(record?.modNames ?? [])] ) {
+			const normalizedName = normalizeModHubLookupName(name)
+			if ( normalizedName === '' ) { continue }
+			if ( !savedIDsByName.has(normalizedName) ) { savedIDsByName.set(normalizedName, new Set()) }
+			for ( const modHubID of safeModArray(record?.modHubIDs) ) {
+				savedIDsByName.get(normalizedName).add(modHubID)
+			}
+		}
+	}
+	return savedIDsByName
+}
+
 // eslint-disable-next-line complexity
-function modHubStateForLibraryRecord(record) {
+function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null, cachedModHubMetadata = null) {
 	const modNames = safeModArray(record?.modNames)
-	const nameMatch = modNames
-		.map((modName) => serveIPC.modCollect.modHubMatchShortName(modName))
-		.find((match) => match.id !== null) ?? null
 	const storedID = safeModArray(record?.modHubIDs).at(0) ?? null
+	const nameMatch = storedID === null ?
+		(modNames
+			.map((modName) => serveIPC.modCollect.modHubMatchShortName(modName, savedIDsByNormalizedName))
+			.find((match) => match.id !== null) ?? null) :
+		null
 	const modHubID = nameMatch?.id ?? storedID
 	const localVersion = newestKnownVersion(record?.versions)
-	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID)?.version
+	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)?.version
 	const catalogueVersion = modHubID === null ? null : serveIPC.modCollect.modHubVersionModHubId(modHubID)
 	const latestVersion = typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion
 	const comparison = compareModVersions(localVersion, latestVersion)
@@ -1384,8 +1482,9 @@ function collectionModVaultMetadata(modRecord, collectKey) {
 	}
 }
 
-function getCachedModHubMetadata(modHubID) {
+function getCachedModHubMetadata(modHubID, cachedModHubMetadata = null) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
+	if ( cachedModHubMetadata !== null ) { return cachedModHubMetadata[modHubID] ?? null }
 	return serveIPC.storeLibrary.get(`modHub.${modHubID}`, null)
 }
 
@@ -1592,9 +1691,14 @@ function isPathInsideFolder(childPath, parentPath) {
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
 }
 
-function getStoredModLibraryRecords() {
+function getRawStoredModLibraryRecords() {
 	const storedRecords = serveIPC.storeLibrary.get('records', {})
 	if ( typeof storedRecords !== 'object' || storedRecords === null || Array.isArray(storedRecords) ) { return {} }
+	return storedRecords
+}
+
+function getStoredModLibraryRecords() {
+	const storedRecords = getRawStoredModLibraryRecords()
 
 	return Object.fromEntries(Object.entries(storedRecords)
 		.filter(([, record]) => typeof record === 'object' && record !== null && !Array.isArray(record))
@@ -1606,12 +1710,80 @@ function getStoredModLibraryRecords() {
 		}]))
 }
 
-let modLibrarySummaryCache = null
+const MOD_LIBRARY_INDEX_SCHEMA = 1
+const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
+let modLibraryIndexWarmupStarted = false
+let modLibraryIndexEntrySnapshot = null
+let modLibraryIndexIdleQueue = []
+let modLibraryIndexIdleTimer = null
+let modFolderScanStartedAt = null
 
 function invalidateModLibrarySummary() {
-	modLibrarySummaryCache = null
+	modLibrarySummaryCache.clear()
 	vaultDetailCache.clear()
+	modLibraryIndexWarmupStarted = false
+	modLibraryIndexEntrySnapshot = null
+	modLibraryIndexIdleQueue = []
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = null
+	fs.rmSync(modLibraryIndexFolder(), { force : true, recursive : true })
+}
+
+function modLibraryIndexFolder() {
+	return path.join(modLibraryFolder(), 'index')
+}
+
+function modLibraryIndexFilePath(gameKey) {
+	return path.join(modLibraryIndexFolder(), `vault-index-${gameKey}.json`)
+}
+
+function modLibraryIndexGameKeys() {
+	return ['all', 'unknown', ...supportedModLibraryGameVersions().map((version) => `fs${version}`)]
+}
+
+function supportedModLibraryGameVersions() {
+	return funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10))
+}
+
+function normalizeModLibraryGameVersion(value) {
+	let version = null
+	if ( Number.isFinite(value) ) {
+		version = Math.trunc(value)
+	} else if ( typeof value === 'string' ) {
+		const match = value.trim().match(/^(?:FS|Farming Simulator)?\s*(\d{2,4})$/iu)
+		if ( match !== null ) {
+			const parsedValue = Number.parseInt(match[1], 10)
+			version = parsedValue >= 2000 ? parsedValue - 2000 : parsedValue
+		}
+	}
+	return supportedModLibraryGameVersions().includes(version) ? version : null
+}
+
+function modLibraryGameKey(value, fallback = 'all') {
+	if ( value === '' || value === 'all' ) { return 'all' }
+	if ( value === 'unknown' ) { return 'unknown' }
+	const version = normalizeModLibraryGameVersion(value)
+	return version === null ? fallback : `fs${version}`
+}
+
+function modLibraryRequestedGameKey(gameVersion) {
+	if ( gameVersion === null || typeof gameVersion === 'undefined' ) {
+		return modLibraryGameKey(serveIPC.storeSet.get('game_version'), 'all')
+	}
+	return modLibraryGameKey(gameVersion, 'all')
+}
+
+function modLibraryEntryGameKeys(entry) {
+	const versions = uniqueCleanNumberArray((entry.gameVersions ?? [])
+		.map((version) => normalizeModLibraryGameVersion(version))
+		.filter((version) => version !== null))
+	return versions.length === 0 ? ['unknown'] : versions.map((version) => `fs${version}`)
+}
+
+function modLibraryEntryMatchesGameKey(entry, gameKey) {
+	if ( gameKey === 'all' ) { return true }
+	return modLibraryEntryGameKeys(entry).includes(gameKey)
 }
 
 function getVaultDetailRecord(hash) {
@@ -1891,25 +2063,36 @@ function modLibraryRetentionInfo({ fileExists, isCurrent, isRetained, isUsed, ke
 	}
 }
 
-function getModLibraryEntries() {
-	const records = getStoredModLibraryRecords()
+function getModLibraryEntries({ verifyFiles = true } = {}) {
+	const startedAt = performance.now()
+	const records = getRawStoredModLibraryRecords()
+	logPerformanceDuration('Vault raw records read', startedAt, `records=${Object.keys(records).length.toString()} verifyFiles=${verifyFiles.toString()}`)
+	const prepareStartedAt = performance.now()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
+	const cachedModHubMetadata = serveIPC.storeLibrary.get('modHub', {})
+	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
 	const retentionCount = getModLibraryRetentionCount()
 	const usedHashes = new Set(historyEntries.flatMap((entry) => [entry.backupHash, entry.currentHash]).filter((value) => typeof value === 'string'))
 	const usedPaths = new Set(historyEntries.flatMap((entry) => [entry.backupPath, entry.currentLibraryPath]).filter((value) => typeof value === 'string'))
+	let modHubStateTotalMS = 0
+	let entryObjectTotalMS = 0
 	const baseEntries = Object.entries(records)
 		// eslint-disable-next-line complexity
 		.map(([recordHash, record]) => {
-			const fileExists = typeof record?.filePath === 'string' && fs.existsSync(record.filePath)
-			const size = fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
-			const modHubState = modHubStateForLibraryRecord(record)
+			const entryStartedAt = performance.now()
+			const hasFilePath = typeof record?.filePath === 'string'
+			const fileExists = hasFilePath && (!verifyFiles || fs.existsSync(record.filePath))
+			const size = verifyFiles && fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
+			const modHubStartedAt = performance.now()
+			const modHubState = modHubStateForLibraryRecord(record, savedIDsByNormalizedName, cachedModHubMetadata)
+			modHubStateTotalMS += performance.now() - modHubStartedAt
 			const hash = record.hash ?? recordHash
 			const keepPinned = record.keepPinned === true
 			const sources = Array.isArray(record.sources) ? record.sources : []
 			const isUsed = usedHashes.has(hash) || usedPaths.has(record.filePath)
 			const collections = Array.isArray(record.collections) ? record.collections.filter((collectionName) => currentCollectionNames.has(collectionName)) : []
-			return {
+			const entry = {
 				collections,
 				createdAt    : record.createdAt ?? null,
 				equipmentSpecs : safeEquipmentSpecs(record.equipmentSpecs),
@@ -1936,7 +2119,7 @@ function getModLibraryEntries() {
 				modHubURL      : modHubState.url,
 				modHubVersions : Array.isArray(record.modHubVersions) ? record.modHubVersions : [],
 				modIcon      : record.modIcon ?? null,
-				modNames     : Array.isArray(record.modNames) ? record.modNames : [],
+				modNames     : normalizedVaultModNames(Array.isArray(record.modNames) && record.modNames.length !== 0 ? record.modNames : record.fileName),
 				modTypes     : Array.isArray(record.modTypes) ? record.modTypes : [],
 				scriptFiles  : Number.isFinite(record.scriptFiles) ? record.scriptFiles : 0,
 				size         : size,
@@ -1949,8 +2132,13 @@ function getModLibraryEntries() {
 				updatedAt    : record.updatedAt ?? null,
 				versions     : Array.isArray(record.versions) ? record.versions : [],
 			}
+			entryObjectTotalMS += performance.now() - entryStartedAt
+			return entry
 		})
+	logPerformanceDuration('Vault base entries prepare', prepareStartedAt, `entries=${baseEntries.length.toString()} verifyFiles=${verifyFiles.toString()}`)
+	serveIPC.log.info('performance', `Vault base entries internals modHubState=${modHubStateTotalMS.toFixed(1)} ms entryObjects=${entryObjectTotalMS.toFixed(1)} ms`)
 
+	const retentionStartedAt = performance.now()
 	const retentionGroups = new Map()
 	for ( const entry of baseEntries.filter((candidate) => candidate.fileExists) ) {
 		const identity = modLibraryRetentionIdentity(entry)
@@ -1960,7 +2148,7 @@ function getModLibraryEntries() {
 	const retainedHashes = new Set([...retentionGroups.values()]
 		.flatMap((entries) => entries.toSorted(compareModLibraryRetentionEntries).slice(0, retentionCount).map((entry) => entry.hash)))
 
-	return baseEntries
+	const entries = baseEntries
 		.map((entry) => {
 			const retentionInfo = modLibraryRetentionInfo({
 				fileExists     : entry.fileExists,
@@ -1980,6 +2168,8 @@ function getModLibraryEntries() {
 			}
 		})
 		.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+	logPerformanceDuration('Vault retention/status prepare', retentionStartedAt, `entries=${baseEntries.length.toString()}`)
+	return entries
 }
 
 function getModLibraryCleanupPreview(entries = getModLibraryEntries()) {
@@ -2110,16 +2300,12 @@ function setModLibraryRetentionCount({ count } = {}) {
 	}
 }
 
-function getModLibrarySummary() {
-	if ( modLibrarySummaryCache !== null ) { return modLibrarySummaryCache }
-
-	const startedAt = performance.now()
-	const entries = getModLibraryEntries()
-
-	modLibrarySummaryCache = {
+function modLibrarySummaryForEntries(entries) {
+	return {
 		cleanup    : getModLibraryCleanupPreview(entries),
 		entries,
 		folder     : modLibraryFolder(),
+		gameVersions : supportedModLibraryGameVersions(),
 		notes      : getVaultNotes(),
 		retentionPolicy : {
 			maximum : MOD_LIBRARY_MAX_RETENTION_COUNT,
@@ -2129,8 +2315,138 @@ function getModLibrarySummary() {
 		totalSize  : entries.reduce((sum, entry) => sum + entry.size, 0),
 		usedCount  : entries.filter((entry) => entry.isUsed).length,
 	}
-	serveIPC.log.info('performance', `Built Vault summary for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
-	return modLibrarySummaryCache
+}
+
+function writeModLibraryIndex(gameKey, summary) {
+	fs.mkdirSync(modLibraryIndexFolder(), { recursive : true })
+	fs.writeFileSync(modLibraryIndexFilePath(gameKey), JSON.stringify({
+		schema  : MOD_LIBRARY_INDEX_SCHEMA,
+		summary,
+		writtenAt : new Date().toISOString(),
+	}))
+}
+
+function readModLibraryIndex(gameKey) {
+	try {
+		const payload = JSON.parse(fs.readFileSync(modLibraryIndexFilePath(gameKey)))
+		if ( payload?.schema !== MOD_LIBRARY_INDEX_SCHEMA || typeof payload?.summary !== 'object' || payload.summary === null ) {
+			return null
+		}
+		return payload.summary
+	} catch {
+		return null
+	}
+}
+
+function getModLibraryIndexEntrySnapshot() {
+	if ( modLibraryIndexEntrySnapshot !== null ) { return modLibraryIndexEntrySnapshot }
+
+	const startedAt = performance.now()
+	modLibraryIndexEntrySnapshot = getModLibraryEntries({ verifyFiles : false })
+	logPerformanceDuration('Vault entry snapshot build', startedAt, `records=${modLibraryIndexEntrySnapshot.length.toString()}`)
+	return modLibraryIndexEntrySnapshot
+}
+
+function buildModLibraryIndex(gameKey, entries) {
+	const startedAt = performance.now()
+	const sourceEntries = entries ?? getModLibraryIndexEntrySnapshot()
+	const gameEntries = sourceEntries.filter((entry) => modLibraryEntryMatchesGameKey(entry, gameKey))
+	const summary = modLibrarySummaryForEntries(gameEntries)
+	modLibrarySummaryCache.set(gameKey, summary)
+	writeModLibraryIndex(gameKey, summary)
+	serveIPC.log.info('performance', `Built Vault index ${gameKey} for ${gameEntries.length} of ${sourceEntries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+	return summary
+}
+
+function warmModLibraryIndex(gameKey) {
+	const startedAt = performance.now()
+	try {
+		const cachedSummary = modLibrarySummaryCache.get(gameKey)
+		if ( typeof cachedSummary !== 'undefined' ) {
+			serveIPC.log.info('performance', `Vault index ${gameKey} already warm`)
+			return cachedSummary
+		}
+
+		const diskSummary = readModLibraryIndex(gameKey)
+		if ( diskSummary !== null ) {
+			modLibrarySummaryCache.set(gameKey, diskSummary)
+			logPerformanceDuration(`Vault index ${gameKey} warm-up from disk`, startedAt)
+			return diskSummary
+		}
+		return buildModLibraryIndex(gameKey)
+	} catch (err) {
+		serveIPC.log.warning('performance', `Unable to warm Vault index ${gameKey}`, err)
+		return null
+	}
+}
+
+function scheduleNextModLibraryIdleIndex(delay = 10000) {
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = setTimeout(() => {
+		modLibraryIndexIdleTimer = null
+		if ( serveIPC.isProcessing ) {
+			serveIPC.log.info('performance', 'Vault idle index warm-up deferred; mod folder scan is running')
+			scheduleNextModLibraryIdleIndex(5000)
+			return
+		}
+
+		const nextGameKey = modLibraryIndexIdleQueue.shift()
+		if ( typeof nextGameKey === 'undefined' ) {
+			modLibraryIndexEntrySnapshot = null
+			return
+		}
+		serveIPC.log.info('performance', `Starting idle Vault index warm-up for ${nextGameKey}`)
+		warmModLibraryIndex(nextGameKey)
+		if ( modLibraryIndexIdleQueue.length !== 0 ) {
+			scheduleNextModLibraryIdleIndex(10000)
+		} else {
+			modLibraryIndexEntrySnapshot = null
+			serveIPC.log.info('performance', 'Vault index warm-up queue completed')
+		}
+	}, delay)
+}
+
+function scheduleModLibraryIndexesAfterScan(delay = 2500) {
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = setTimeout(() => {
+		modLibraryIndexIdleTimer = null
+		if ( serveIPC.isProcessing ) {
+			serveIPC.log.info('performance', 'Vault active-game index warm-up deferred; mod folder scan is running')
+			scheduleModLibraryIndexesAfterScan(2500)
+			return
+		}
+
+		if ( modLibraryIndexWarmupStarted ) { return }
+		modLibraryIndexWarmupStarted = true
+		const activeGameKey = modLibraryRequestedGameKey(null)
+		serveIPC.log.info('performance', `Starting active-game Vault index warm-up for ${activeGameKey}`)
+		warmModLibraryIndex(activeGameKey)
+		modLibraryIndexIdleQueue = modLibraryIndexGameKeys().filter((gameKey) => gameKey !== activeGameKey)
+		scheduleNextModLibraryIdleIndex(10000)
+	}, delay)
+}
+
+function getModLibrarySummary(gameVersion = null) {
+	const gameKey = modLibraryRequestedGameKey(gameVersion)
+	const cachedSummary = modLibrarySummaryCache.get(gameKey)
+	if ( typeof cachedSummary !== 'undefined' ) { return modLibrarySummaryWithActiveGame(cachedSummary, gameKey) }
+
+	const diskSummary = readModLibraryIndex(gameKey)
+	if ( diskSummary !== null ) {
+		modLibrarySummaryCache.set(gameKey, diskSummary)
+		return modLibrarySummaryWithActiveGame(diskSummary, gameKey)
+	}
+
+	buildModLibraryIndex(gameKey)
+	return modLibrarySummaryWithActiveGame(modLibrarySummaryCache.get(gameKey) ?? modLibrarySummaryForEntries([]), gameKey)
+}
+
+function modLibrarySummaryWithActiveGame(summary, gameKey = 'all') {
+	return {
+		...summary,
+		activeGameVersion : serveIPC.storeSet.get('game_version'),
+		gameKey,
+	}
 }
 
 async function getVaultCollections() {
@@ -4167,7 +4483,7 @@ ipcMain.handle('history:clear', () => {
 	invalidateModLibrarySummary()
 	return { ok : true }
 })
-ipcMain.handle('vault:all', () => getModLibrarySummary())
+ipcMain.handle('vault:all', (_, payload = {}) => getModLibrarySummary(payload?.gameVersion))
 ipcMain.handle('vault:collections', () => getVaultCollections())
 ipcMain.handle('vault:updateDownloadSelected', async (_, downloads) => {
 	try {
@@ -4434,6 +4750,7 @@ function refreshTransientStatus() {
 
 // MARK: refresh list
 function refreshClientModList(closeLoader = true) {
+	const startedAt = performance.now()
 	// DATA STRUCT - send mod list
 	const currentVersion = funcLib.prefs.ver()
 	const pollGame       = serveIPC.storeSet.get('poll_game', true)
@@ -4464,6 +4781,7 @@ function refreshClientModList(closeLoader = true) {
 		closeLoader
 	)
 	serveIPC.windowLib.sendToValidWindow('version', 'win:forceRefresh')
+	logPerformanceDuration('Client mod list refresh dispatch', startedAt, `closeLoader=${closeLoader.toString()}`)
 }
 
 function refreshUpdateList() {
@@ -4484,8 +4802,13 @@ ipcMain.handle('file:operation', async (_, operations) => funcLib.fileOperation.
 // MARK: run scan
 async function processModFolders(force = false) {
 	if ( serveIPC.isProcessing ) { return }
-	if ( !force && !serveIPC.isFoldersDirty ) { serveIPC.loadWindow.hide(500); return }
+	if ( !force && !serveIPC.isFoldersDirty ) {
+		serveIPC.log.info('performance', 'Mod folder scan skipped; folders are clean')
+		serveIPC.loadWindow.hide(500)
+		return
+	}
 
+	modFolderScanStartedAt = performance.now()
 	serveIPC.isProcessing = true
 	serveIPC.isPrefWrong  = false
 
@@ -4497,6 +4820,10 @@ async function processModFolders(force = false) {
 
 // MARK: run scan (post)
 modQueueRunner.on('process-mods-done', () => {
+	if ( modFolderScanStartedAt !== null ) {
+		logPerformanceDuration('Mod folder scan', modFolderScanStartedAt, `collections=${serveIPC.modCollect.collections.size.toString()} mods=${serveIPC.modCollect.totalModCount.toString()}`)
+		modFolderScanStartedAt = null
+	}
 	invalidateModLibrarySummary()
 	funcLib.general.toggleFolderDirty(false)
 	funcLib.gameSet.read()
@@ -4509,6 +4836,7 @@ modQueueRunner.on('process-mods-done', () => {
 	refreshClientModList()
 
 	serveIPC.isProcessing = false
+	scheduleModLibraryIndexesAfterScan(2500)
 
 	if ( serveIPC.modCollect.isDangerMods ) {
 		const trashPromises = []
@@ -4591,21 +4919,26 @@ modQueueRunner.on('process-mods-done', () => {
 // MARK: APP START
 app.whenReady().then(() => {
 	if ( gotTheLock ) {
+		logPerformanceDuration('Electron app ready', appStartupStartedAt)
 		if ( serveIPC.storeSet.has('force_lang') && serveIPC.storeSet.get('lock_lang', false) ) {
 			// If language is locked, switch to it.
 			serveIPC.l10n.currentLocale = serveIPC.storeSet.get('force_lang')
 		}
 
+		const shellSetupStartedAt = performance.now()
 		if (process.platform === 'win32') {
 			app.setAppUserModelId('jtsage.fsmodassist')
 		}
-		
+
 		serveIPC.windowLib.tray = new Tray(serveIPC.icon.tray)
 		serveIPC.windowLib.tray.setToolTip('FSG Mod Assist')
 		serveIPC.windowLib.tray.on('click', () => { serveIPC.windowLib.win.main.show() })
 		serveIPC.windowLib.trayContextMenu()
+		logPerformanceDuration('Shell and tray setup', shellSetupStartedAt)
 
+		const modHubRefreshStartedAt = performance.now()
 		funcLib.modHub.refresh()
+		logPerformanceDuration('ModHub refresh request dispatch', modHubRefreshStartedAt)
 
 		// 6 hour timer on refresh
 		serveIPC.interval.modHub = setInterval(() => { funcLib.modHub.refresh() }, (216e5))
@@ -4627,11 +4960,16 @@ app.whenReady().then(() => {
 		})
 
 
+		const mainWindowCreateStartedAt = performance.now()
 		serveIPC.windowLib.createMainWindow(() => {
+			logPerformanceDuration('Main window startup callback', mainWindowCreateStartedAt)
+			scheduleModLibraryIndexesAfterScan(2500)
+
 			if ( serveIPC.storeSet.has('modFolders') ) {
 				serveIPC.modFolders   = new Set(serveIPC.storeSet.get('modFolders'))
 				funcLib.general.toggleFolderDirty()
 				setTimeout(() => {
+					serveIPC.log.info('performance', 'Starting delayed startup mod folder scan')
 					if ( serveIPC.isFirstRun ) { openWizard() }
 					processModFolders()
 				}, 1500)

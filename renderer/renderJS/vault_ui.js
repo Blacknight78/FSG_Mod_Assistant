@@ -9,6 +9,9 @@
 let vaultEntries = []
 let vaultCollections = []
 let vaultCleanup = { count : 0, entries : [], totalSize : 0 }
+let vaultActiveGameVersion = ''
+let vaultGameVersions = []
+let vaultGameVersionUserSelected = false
 let vaultNotes = {}
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
@@ -107,16 +110,32 @@ function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
 }
 
-function normalizeGameVersion(value) {
-	if ( typeof value === 'number' && Number.isFinite(value) ) { return Math.trunc(value).toString() }
-	if ( typeof value !== 'string' ) { return '' }
-	const trimmed = value.trim()
-	if ( trimmed === '' ) { return '' }
-	const match = trimmed.match(/(?:FS|Farming Simulator)?\s*(\d{2,4})/iu)
-	if ( match === null ) { return '' }
-	const year = Number.parseInt(match[1], 10)
-	if ( !Number.isInteger(year) ) { return '' }
-	return year >= 2000 ? (year - 2000).toString() : year.toString()
+function supportedVaultGameVersions() {
+	const configuredVersions = uniqueValues(vaultGameVersions
+		.map((value) => normalizeGameVersion(value, false))
+		.filter((value) => value !== ''))
+	return configuredVersions.length === 0 ? ['25', '22', '19', '17', '15', '13'] : configuredVersions
+}
+
+function isSupportedVaultGameVersion(value) {
+	return supportedVaultGameVersions().includes(value)
+}
+
+function normalizeGameVersion(value, requireSupported = true) {
+	let normalizedValue = ''
+	if ( typeof value === 'number' && Number.isFinite(value) ) {
+		normalizedValue = Math.trunc(value).toString()
+	} else if ( typeof value === 'string' ) {
+		const trimmed = value.trim()
+		if ( trimmed === '' ) { return '' }
+		const match = trimmed.match(/^(?:FS|Farming Simulator)?\s*(\d{2,4})$/iu)
+		if ( match === null ) { return '' }
+		const year = Number.parseInt(match[1], 10)
+		if ( !Number.isInteger(year) ) { return '' }
+		normalizedValue = year >= 2000 ? (year - 2000).toString() : year.toString()
+	}
+	if ( normalizedValue === '' ) { return '' }
+	return !requireSupported || isSupportedVaultGameVersion(normalizedValue) ? normalizedValue : ''
 }
 
 function gameVersionLabel(value) {
@@ -132,6 +151,15 @@ function gameVersionsForEntry(entry) {
 
 function gameVersionLabels(values) {
 	return uniqueValues((values ?? []).map((value) => gameVersionLabel(value)))
+}
+
+function activeVaultGameVersion() {
+	return normalizeGameVersion(vaultActiveGameVersion)
+}
+
+function requestedVaultGameVersion() {
+	if ( !vaultGameVersionUserSelected ) { return null }
+	return MA.byId('vaultGameVersionFilter')?.value ?? null
 }
 
 function canonicalVaultModName(value) {
@@ -916,7 +944,11 @@ function fillSelect(selectID, values, firstLabel) {
 function fillGameVersionSelect() {
 	const select = MA.byId('vaultGameVersionFilter')
 	const currentValue = select.value
-	const values = uniqueValues(vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)))
+	const activeVersion = activeVaultGameVersion()
+	const values = uniqueValues([
+		...supportedVaultGameVersions(),
+		...vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)),
+	])
 		.toSorted(compareGameVersions)
 	select.innerHTML = '<option value="">All games</option>'
 	for ( const value of values ) {
@@ -925,8 +957,10 @@ function fillGameVersionSelect() {
 		option.textContent = gameVersionLabel(value)
 		select.appendChild(option)
 	}
-	if ( values.includes(currentValue) ) {
+	if ( vaultGameVersionUserSelected && (currentValue === '' || values.includes(currentValue)) ) {
 		select.value = currentValue
+	} else if ( values.includes(activeVersion) ) {
+		select.value = activeVersion
 	}
 }
 
@@ -1001,6 +1035,8 @@ async function updateCleanupSelectionPreview() {
 async function updateVaultSummary(summary) {
 	vaultEntries = summary.entries
 	vaultCleanup = summary.cleanup ?? { count : 0, entries : [], totalSize : 0 }
+	vaultActiveGameVersion = summary.activeGameVersion ?? vaultActiveGameVersion
+	vaultGameVersions = summary.gameVersions ?? vaultGameVersions
 	vaultNotes = summary.notes ?? vaultNotes
 	vaultRetentionPolicy = summary.retentionPolicy ?? vaultRetentionPolicy
 	MA.byIdText('vaultCount', summary.totalCount.toString())
@@ -1025,9 +1061,7 @@ async function updateVaultRetentionCount(event) {
 			select.value = vaultRetentionPolicy.versionCount.toString()
 			return
 		}
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		restoreVaultViewState(viewState)
 		MA.byIdText('vaultStatus', `Retention policy updated: keeping the newest ${count} version${count === 1 ? '' : 's'} of each mod.`)
 	} catch (err) {
@@ -1127,7 +1161,7 @@ async function loadVault() {
 	beginVaultBusy('Loading vault...', null)
 	try {
 		const [vault, collections] = await Promise.all([
-			window.vault_IPC.all(),
+			window.vault_IPC.all({ gameVersion : requestedVaultGameVersion() }),
 			window.vault_IPC.collections(),
 		])
 		vaultCollections = collections
@@ -1580,9 +1614,7 @@ async function importCollections() {
 	try {
 		const result = await window.vault_IPC.importCollections()
 		vaultCollections = await window.vault_IPC.collections()
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be added.`
 		MA.byIdText('vaultStatus', `Scanned ${result.scanned} collection mod${result.scanned === 1 ? '' : 's'} and updated ${result.imported} vault record${result.imported === 1 ? '' : 's'}.${errorText}`)
 	} catch (err) {
@@ -1603,9 +1635,7 @@ async function refreshModHubCategories() {
 	beginVaultBusy('Refreshing ModHub information...', null)
 	try {
 		const result = await window.vault_IPC.refreshModHub()
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} ModHub page${result.errors.length === 1 ? '' : 's'} could not be read.`
 		const emptyText = result.scanned === 0 ? ' No ModHub IDs were found in the vault yet; scan collections into the vault first, then refresh ModHub information.' : ''
 		MA.byIdText('vaultStatus', `Checked ${result.scanned} ModHub-linked vault record${result.scanned === 1 ? '' : 's'} and refreshed ${result.refreshed} ModHub record${result.refreshed === 1 ? '' : 's'}.${errorText}${emptyText}`)
@@ -1644,9 +1674,7 @@ async function deleteSelectedUnusedVaultFiles() {
 	try {
 		const result = await window.vault_IPC.cleanupUnused({ hashes : selectedHashes })
 		if ( typeof result.summary !== 'undefined' ) {
-			await updateVaultSummary(result.summary)
-			refreshFilterOptions()
-			await renderVault(filterEntries())
+			await loadVault()
 		}
 		if ( result.error ) {
 			MA.byIdText('vaultStatus', `Vault cleanup failed: ${result.error}`)
@@ -1726,7 +1754,10 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultGameVersionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultGameVersionFilter').addEventListener('change', () => {
+		vaultGameVersionUserSelected = true
+		loadVaultPreservingView()
+	})
 	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultHorsepowerFilter').addEventListener('change', () => { renderVault(filterEntries()) })
@@ -1747,7 +1778,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultCategoryFilter').value = ''
 		MA.byId('vaultModHubCategoryFilter').value = ''
 		MA.byId('vaultCollectionFilter').value = ''
-		MA.byId('vaultGameVersionFilter').value = ''
 		MA.byId('vaultNoteFilter').value = ''
 		MA.byId('vaultRollbackFilter').value = ''
 		MA.byId('vaultHorsepowerFilter').value = ''

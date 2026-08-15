@@ -142,6 +142,7 @@ const pageAPI = {
 			getGitHub         : (url) => ipcRenderer.invoke('settings:site:githubLatest', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			minimizeToTray    : () => { ipcRenderer.send('main:minimizeToTray') },
+			performance       : (message) => { ipcRenderer.send('debug:log', 'info', 'performance', message) },
 			startFarmSim      : () => { ipcRenderer.send('dispatch:game') },
 			updateApplication : () => { ipcRenderer.send('main:runUpdateInstall') },
 			updateState       : () => ipcRenderer.invoke('state:all'),
@@ -271,6 +272,7 @@ const pageAPI = {
 	'setup' : {
 		functions : {
 			addFolder : ( folder, version ) => { ipcRenderer.send('folders:addDirect', folder, version) },
+			scanGames : () => ipcRenderer.invoke('wizard:scanGames'),
 			update    : () => ipcRenderer.invoke('wizard:update'),
 		},
 		validAsync : new Set(['mods:list']),
@@ -353,7 +355,7 @@ const pageAPI = {
 	},
 	'vault' : {
 		functions : {
-			all        : () => ipcRenderer.invoke('vault:all'),
+			all        : (payload = {}) => ipcRenderer.invoke('vault:all', payload),
 			cleanupUnused : (payload) => ipcRenderer.invoke('vault:cleanupUnused', payload),
 			collections : () => ipcRenderer.invoke('vault:collections'),
 			context    : (payload) => ipcRenderer.send('context:vault', payload),
