@@ -1687,11 +1687,17 @@ const MOD_LIBRARY_INDEX_SCHEMA = 1
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 let modLibraryIndexWarmupStarted = false
+let modLibraryIndexIdleQueue = []
+let modLibraryIndexIdleTimer = null
 let modFolderScanStartedAt = null
 
 function invalidateModLibrarySummary() {
 	modLibrarySummaryCache.clear()
 	vaultDetailCache.clear()
+	modLibraryIndexWarmupStarted = false
+	modLibraryIndexIdleQueue = []
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = null
 	fs.rmSync(modLibraryIndexFolder(), { force : true, recursive : true })
 }
 
@@ -1744,6 +1750,11 @@ function modLibraryEntryGameKeys(entry) {
 		.map((version) => normalizeModLibraryGameVersion(version))
 		.filter((version) => version !== null))
 	return versions.length === 0 ? ['unknown'] : versions.map((version) => `fs${version}`)
+}
+
+function modLibraryEntryMatchesGameKey(entry, gameKey) {
+	if ( gameKey === 'all' ) { return true }
+	return modLibraryEntryGameKeys(entry).includes(gameKey)
 }
 
 function getVaultDetailRecord(hash) {
@@ -2280,54 +2291,76 @@ function readModLibraryIndex(gameKey) {
 	}
 }
 
-function buildModLibraryIndexes() {
+function buildModLibraryIndex(gameKey, entries = getModLibraryEntries()) {
 	const startedAt = performance.now()
-	const entries = getModLibraryEntries()
-	const groupedEntries = new Map([
-		['all', entries],
-		['unknown', []],
-		...modLibraryIndexGameKeys()
-			.filter((gameKey) => !['all', 'unknown'].includes(gameKey))
-			.map((gameKey) => [gameKey, []]),
-	])
-
-	for ( const entry of entries ) {
-		for ( const gameKey of modLibraryEntryGameKeys(entry) ) {
-			if ( !groupedEntries.has(gameKey) ) { groupedEntries.set(gameKey, []) }
-			groupedEntries.get(gameKey).push(entry)
-		}
-	}
-
-	for ( const [gameKey, gameEntries] of groupedEntries ) {
-		const summary = modLibrarySummaryForEntries(gameEntries)
-		modLibrarySummaryCache.set(gameKey, summary)
-		writeModLibraryIndex(gameKey, summary)
-	}
-	serveIPC.log.info('performance', `Built Vault indexes for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+	const gameEntries = entries.filter((entry) => modLibraryEntryMatchesGameKey(entry, gameKey))
+	const summary = modLibrarySummaryForEntries(gameEntries)
+	modLibrarySummaryCache.set(gameKey, summary)
+	writeModLibraryIndex(gameKey, summary)
+	serveIPC.log.info('performance', `Built Vault index ${gameKey} for ${gameEntries.length} of ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+	return summary
 }
 
-function warmModLibraryIndexes() {
-	if ( modLibraryIndexWarmupStarted ) { return }
-	modLibraryIndexWarmupStarted = true
-
+function warmModLibraryIndex(gameKey) {
 	const startedAt = performance.now()
 	try {
-		const diskSummaries = new Map()
-		for ( const gameKey of modLibraryIndexGameKeys() ) {
-			const diskSummary = readModLibraryIndex(gameKey)
-			if ( diskSummary === null ) {
-				buildModLibraryIndexes()
-				return
-			}
-			diskSummaries.set(gameKey, diskSummary)
+		const cachedSummary = modLibrarySummaryCache.get(gameKey)
+		if ( typeof cachedSummary !== 'undefined' ) {
+			serveIPC.log.info('performance', `Vault index ${gameKey} already warm`)
+			return cachedSummary
 		}
-		for ( const [gameKey, diskSummary] of diskSummaries ) {
+
+		const diskSummary = readModLibraryIndex(gameKey)
+		if ( diskSummary !== null ) {
 			modLibrarySummaryCache.set(gameKey, diskSummary)
+			logPerformanceDuration(`Vault index ${gameKey} warm-up from disk`, startedAt)
+			return diskSummary
 		}
-		logPerformanceDuration('Vault index warm-up from disk', startedAt)
+		return buildModLibraryIndex(gameKey)
 	} catch (err) {
-		serveIPC.log.warning('performance', 'Unable to warm Vault indexes', err)
+		serveIPC.log.warning('performance', `Unable to warm Vault index ${gameKey}`, err)
+		return null
 	}
+}
+
+function scheduleNextModLibraryIdleIndex(delay = 10000) {
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = setTimeout(() => {
+		modLibraryIndexIdleTimer = null
+		if ( serveIPC.isProcessing ) {
+			serveIPC.log.info('performance', 'Vault idle index warm-up deferred; mod folder scan is running')
+			scheduleNextModLibraryIdleIndex(5000)
+			return
+		}
+
+		const nextGameKey = modLibraryIndexIdleQueue.shift()
+		if ( typeof nextGameKey === 'undefined' ) { return }
+		serveIPC.log.info('performance', `Starting idle Vault index warm-up for ${nextGameKey}`)
+		warmModLibraryIndex(nextGameKey)
+		if ( modLibraryIndexIdleQueue.length !== 0 ) {
+			scheduleNextModLibraryIdleIndex(10000)
+		}
+	}, delay)
+}
+
+function scheduleModLibraryIndexesAfterScan(delay = 2500) {
+	clearTimeout(modLibraryIndexIdleTimer)
+	modLibraryIndexIdleTimer = setTimeout(() => {
+		modLibraryIndexIdleTimer = null
+		if ( serveIPC.isProcessing ) {
+			serveIPC.log.info('performance', 'Vault active-game index warm-up deferred; mod folder scan is running')
+			scheduleModLibraryIndexesAfterScan(2500)
+			return
+		}
+
+		if ( modLibraryIndexWarmupStarted ) { return }
+		modLibraryIndexWarmupStarted = true
+		const activeGameKey = modLibraryRequestedGameKey(null)
+		serveIPC.log.info('performance', `Starting active-game Vault index warm-up for ${activeGameKey}`)
+		warmModLibraryIndex(activeGameKey)
+		modLibraryIndexIdleQueue = modLibraryIndexGameKeys().filter((gameKey) => gameKey !== activeGameKey)
+		scheduleNextModLibraryIdleIndex(10000)
+	}, delay)
 }
 
 function getModLibrarySummary(gameVersion = null) {
@@ -2341,7 +2374,7 @@ function getModLibrarySummary(gameVersion = null) {
 		return modLibrarySummaryWithActiveGame(diskSummary, gameKey)
 	}
 
-	buildModLibraryIndexes()
+	buildModLibraryIndex(gameKey)
 	return modLibrarySummaryWithActiveGame(modLibrarySummaryCache.get(gameKey) ?? modLibrarySummaryForEntries([]), gameKey)
 }
 
@@ -4740,6 +4773,7 @@ modQueueRunner.on('process-mods-done', () => {
 	refreshClientModList()
 
 	serveIPC.isProcessing = false
+	scheduleModLibraryIndexesAfterScan(2500)
 
 	if ( serveIPC.modCollect.isDangerMods ) {
 		const trashPromises = []
@@ -4866,10 +4900,7 @@ app.whenReady().then(() => {
 		const mainWindowCreateStartedAt = performance.now()
 		serveIPC.windowLib.createMainWindow(() => {
 			logPerformanceDuration('Main window startup callback', mainWindowCreateStartedAt)
-			setTimeout(() => {
-				serveIPC.log.info('performance', 'Starting delayed Vault index warm-up')
-				warmModLibraryIndexes()
-			}, 2500)
+			scheduleModLibraryIndexesAfterScan(2500)
 
 			if ( serveIPC.storeSet.has('modFolders') ) {
 				serveIPC.modFolders   = new Set(serveIPC.storeSet.get('modFolders'))
