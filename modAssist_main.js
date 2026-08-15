@@ -1113,6 +1113,10 @@ function normalizedVaultModNames(values) {
 	return uniqueCleanArray(sourceValues.map((value) => normalizeVaultModName(value)).filter((value) => value !== ''))
 }
 
+function normalizeModHubLookupName(value) {
+	return typeof value === 'string' ? value.trim().replace(/\.zip$/iu, '').toLocaleLowerCase() : ''
+}
+
 function uniqueCleanNumberArray(values) {
 	return [...new Set(values.filter((value) => Number.isFinite(value)))]
 }
@@ -1139,13 +1143,30 @@ function newestKnownVersion(versions) {
 	}).at(-1) ?? null
 }
 
+function modHubSavedIDsByNormalizedName(records) {
+	const savedIDsByName = new Map()
+	for ( const record of Object.values(records) ) {
+		for ( const name of [record?.fileName, ...(record?.modNames ?? [])] ) {
+			const normalizedName = normalizeModHubLookupName(name)
+			if ( normalizedName === '' ) { continue }
+			if ( !savedIDsByName.has(normalizedName) ) { savedIDsByName.set(normalizedName, new Set()) }
+			for ( const modHubID of safeModArray(record?.modHubIDs) ) {
+				savedIDsByName.get(normalizedName).add(modHubID)
+			}
+		}
+	}
+	return savedIDsByName
+}
+
 // eslint-disable-next-line complexity
-function modHubStateForLibraryRecord(record) {
+function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null) {
 	const modNames = safeModArray(record?.modNames)
-	const nameMatch = modNames
-		.map((modName) => serveIPC.modCollect.modHubMatchShortName(modName))
-		.find((match) => match.id !== null) ?? null
 	const storedID = safeModArray(record?.modHubIDs).at(0) ?? null
+	const nameMatch = storedID === null ?
+		(modNames
+			.map((modName) => serveIPC.modCollect.modHubMatchShortName(modName, savedIDsByNormalizedName))
+			.find((match) => match.id !== null) ?? null) :
+		null
 	const modHubID = nameMatch?.id ?? storedID
 	const localVersion = newestKnownVersion(record?.versions)
 	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID)?.version
@@ -2040,6 +2061,7 @@ function getModLibraryEntries() {
 	const records = getStoredModLibraryRecords()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
+	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
 	const retentionCount = getModLibraryRetentionCount()
 	const usedHashes = new Set(historyEntries.flatMap((entry) => [entry.backupHash, entry.currentHash]).filter((value) => typeof value === 'string'))
 	const usedPaths = new Set(historyEntries.flatMap((entry) => [entry.backupPath, entry.currentLibraryPath]).filter((value) => typeof value === 'string'))
@@ -2048,7 +2070,7 @@ function getModLibraryEntries() {
 		.map(([recordHash, record]) => {
 			const fileExists = typeof record?.filePath === 'string' && fs.existsSync(record.filePath)
 			const size = fileExists ? fs.statSync(record.filePath).size : (record.size ?? 0)
-			const modHubState = modHubStateForLibraryRecord(record)
+			const modHubState = modHubStateForLibraryRecord(record, savedIDsByNormalizedName)
 			const hash = record.hash ?? recordHash
 			const keepPinned = record.keepPinned === true
 			const sources = Array.isArray(record.sources) ? record.sources : []
