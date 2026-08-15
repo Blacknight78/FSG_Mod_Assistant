@@ -1673,12 +1673,61 @@ function getStoredModLibraryRecords() {
 		}]))
 }
 
-let modLibrarySummaryCache = null
+const MOD_LIBRARY_INDEX_SCHEMA = 1
+const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 
 function invalidateModLibrarySummary() {
-	modLibrarySummaryCache = null
+	modLibrarySummaryCache.clear()
 	vaultDetailCache.clear()
+	fs.rmSync(modLibraryIndexFolder(), { force : true, recursive : true })
+}
+
+function modLibraryIndexFolder() {
+	return path.join(modLibraryFolder(), 'index')
+}
+
+function modLibraryIndexFilePath(gameKey) {
+	return path.join(modLibraryIndexFolder(), `vault-index-${gameKey}.json`)
+}
+
+function supportedModLibraryGameVersions() {
+	return funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10))
+}
+
+function normalizeModLibraryGameVersion(value) {
+	let version = null
+	if ( Number.isFinite(value) ) {
+		version = Math.trunc(value)
+	} else if ( typeof value === 'string' ) {
+		const match = value.trim().match(/^(?:FS|Farming Simulator)?\s*(\d{2,4})$/iu)
+		if ( match !== null ) {
+			const parsedValue = Number.parseInt(match[1], 10)
+			version = parsedValue >= 2000 ? parsedValue - 2000 : parsedValue
+		}
+	}
+	return supportedModLibraryGameVersions().includes(version) ? version : null
+}
+
+function modLibraryGameKey(value, fallback = 'all') {
+	if ( value === '' || value === 'all' ) { return 'all' }
+	if ( value === 'unknown' ) { return 'unknown' }
+	const version = normalizeModLibraryGameVersion(value)
+	return version === null ? fallback : `fs${version}`
+}
+
+function modLibraryRequestedGameKey(gameVersion) {
+	if ( gameVersion === null || typeof gameVersion === 'undefined' ) {
+		return modLibraryGameKey(serveIPC.storeSet.get('game_version'), 'all')
+	}
+	return modLibraryGameKey(gameVersion, 'all')
+}
+
+function modLibraryEntryGameKeys(entry) {
+	const versions = uniqueCleanNumberArray((entry.gameVersions ?? [])
+		.map((version) => normalizeModLibraryGameVersion(version))
+		.filter((version) => version !== null))
+	return versions.length === 0 ? ['unknown'] : versions.map((version) => `fs${version}`)
 }
 
 function getVaultDetailRecord(hash) {
@@ -2177,17 +2226,12 @@ function setModLibraryRetentionCount({ count } = {}) {
 	}
 }
 
-function getModLibrarySummary() {
-	if ( modLibrarySummaryCache !== null ) { return modLibrarySummaryWithActiveGame(modLibrarySummaryCache) }
-
-	const startedAt = performance.now()
-	const entries = getModLibraryEntries()
-
-	modLibrarySummaryCache = {
+function modLibrarySummaryForEntries(entries) {
+	return {
 		cleanup    : getModLibraryCleanupPreview(entries),
 		entries,
 		folder     : modLibraryFolder(),
-		gameVersions : funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10)),
+		gameVersions : supportedModLibraryGameVersions(),
 		notes      : getVaultNotes(),
 		retentionPolicy : {
 			maximum : MOD_LIBRARY_MAX_RETENTION_COUNT,
@@ -2197,14 +2241,73 @@ function getModLibrarySummary() {
 		totalSize  : entries.reduce((sum, entry) => sum + entry.size, 0),
 		usedCount  : entries.filter((entry) => entry.isUsed).length,
 	}
-	serveIPC.log.info('performance', `Built Vault summary for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
-	return modLibrarySummaryWithActiveGame(modLibrarySummaryCache)
 }
 
-function modLibrarySummaryWithActiveGame(summary) {
+function writeModLibraryIndex(gameKey, summary) {
+	fs.mkdirSync(modLibraryIndexFolder(), { recursive : true })
+	fs.writeFileSync(modLibraryIndexFilePath(gameKey), JSON.stringify({
+		schema  : MOD_LIBRARY_INDEX_SCHEMA,
+		summary,
+		writtenAt : new Date().toISOString(),
+	}))
+}
+
+function readModLibraryIndex(gameKey) {
+	try {
+		const payload = JSON.parse(fs.readFileSync(modLibraryIndexFilePath(gameKey)))
+		if ( payload?.schema !== MOD_LIBRARY_INDEX_SCHEMA || typeof payload?.summary !== 'object' || payload.summary === null ) {
+			return null
+		}
+		return payload.summary
+	} catch {
+		return null
+	}
+}
+
+function buildModLibraryIndexes() {
+	const startedAt = performance.now()
+	const entries = getModLibraryEntries()
+	const groupedEntries = new Map([
+		['all', entries],
+		['unknown', []],
+		...supportedModLibraryGameVersions().map((version) => [`fs${version}`, []]),
+	])
+
+	for ( const entry of entries ) {
+		for ( const gameKey of modLibraryEntryGameKeys(entry) ) {
+			if ( !groupedEntries.has(gameKey) ) { groupedEntries.set(gameKey, []) }
+			groupedEntries.get(gameKey).push(entry)
+		}
+	}
+
+	for ( const [gameKey, gameEntries] of groupedEntries ) {
+		const summary = modLibrarySummaryForEntries(gameEntries)
+		modLibrarySummaryCache.set(gameKey, summary)
+		writeModLibraryIndex(gameKey, summary)
+	}
+	serveIPC.log.info('performance', `Built Vault indexes for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
+}
+
+function getModLibrarySummary(gameVersion = null) {
+	const gameKey = modLibraryRequestedGameKey(gameVersion)
+	const cachedSummary = modLibrarySummaryCache.get(gameKey)
+	if ( typeof cachedSummary !== 'undefined' ) { return modLibrarySummaryWithActiveGame(cachedSummary, gameKey) }
+
+	const diskSummary = readModLibraryIndex(gameKey)
+	if ( diskSummary !== null ) {
+		modLibrarySummaryCache.set(gameKey, diskSummary)
+		return modLibrarySummaryWithActiveGame(diskSummary, gameKey)
+	}
+
+	buildModLibraryIndexes()
+	return modLibrarySummaryWithActiveGame(modLibrarySummaryCache.get(gameKey) ?? modLibrarySummaryForEntries([]), gameKey)
+}
+
+function modLibrarySummaryWithActiveGame(summary, gameKey = 'all') {
 	return {
 		...summary,
 		activeGameVersion : serveIPC.storeSet.get('game_version'),
+		gameKey,
 	}
 }
 
@@ -4242,7 +4345,7 @@ ipcMain.handle('history:clear', () => {
 	invalidateModLibrarySummary()
 	return { ok : true }
 })
-ipcMain.handle('vault:all', () => getModLibrarySummary())
+ipcMain.handle('vault:all', (_, payload = {}) => getModLibrarySummary(payload?.gameVersion))
 ipcMain.handle('vault:collections', () => getVaultCollections())
 ipcMain.handle('vault:updateDownloadSelected', async (_, downloads) => {
 	try {

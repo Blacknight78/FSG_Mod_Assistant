@@ -354,7 +354,7 @@ const pageAPI = {
 	},
 	'vault' : {
 		functions : {
-			all        : () => ipcRenderer.invoke('vault:all'),
+			all        : (payload = {}) => ipcRenderer.invoke('vault:all', payload),
 			cleanupUnused : (payload) => ipcRenderer.invoke('vault:cleanupUnused', payload),
 			collections : () => ipcRenderer.invoke('vault:collections'),
 			context    : (payload) => ipcRenderer.send('context:vault', payload),

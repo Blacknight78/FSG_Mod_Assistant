@@ -157,6 +157,11 @@ function activeVaultGameVersion() {
 	return normalizeGameVersion(vaultActiveGameVersion)
 }
 
+function requestedVaultGameVersion() {
+	if ( !vaultGameVersionUserSelected ) { return null }
+	return MA.byId('vaultGameVersionFilter')?.value ?? null
+}
+
 function canonicalVaultModName(value) {
 	const raw = String(value ?? '').trim()
 	const withoutPath = raw.split(/[\\/]/u).at(-1) ?? ''
@@ -1056,9 +1061,7 @@ async function updateVaultRetentionCount(event) {
 			select.value = vaultRetentionPolicy.versionCount.toString()
 			return
 		}
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		restoreVaultViewState(viewState)
 		MA.byIdText('vaultStatus', `Retention policy updated: keeping the newest ${count} version${count === 1 ? '' : 's'} of each mod.`)
 	} catch (err) {
@@ -1158,7 +1161,7 @@ async function loadVault() {
 	beginVaultBusy('Loading vault...', null)
 	try {
 		const [vault, collections] = await Promise.all([
-			window.vault_IPC.all(),
+			window.vault_IPC.all({ gameVersion : requestedVaultGameVersion() }),
 			window.vault_IPC.collections(),
 		])
 		vaultCollections = collections
@@ -1611,9 +1614,7 @@ async function importCollections() {
 	try {
 		const result = await window.vault_IPC.importCollections()
 		vaultCollections = await window.vault_IPC.collections()
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be added.`
 		MA.byIdText('vaultStatus', `Scanned ${result.scanned} collection mod${result.scanned === 1 ? '' : 's'} and updated ${result.imported} vault record${result.imported === 1 ? '' : 's'}.${errorText}`)
 	} catch (err) {
@@ -1634,9 +1635,7 @@ async function refreshModHubCategories() {
 	beginVaultBusy('Refreshing ModHub information...', null)
 	try {
 		const result = await window.vault_IPC.refreshModHub()
-		await updateVaultSummary(result.summary)
-		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await loadVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} ModHub page${result.errors.length === 1 ? '' : 's'} could not be read.`
 		const emptyText = result.scanned === 0 ? ' No ModHub IDs were found in the vault yet; scan collections into the vault first, then refresh ModHub information.' : ''
 		MA.byIdText('vaultStatus', `Checked ${result.scanned} ModHub-linked vault record${result.scanned === 1 ? '' : 's'} and refreshed ${result.refreshed} ModHub record${result.refreshed === 1 ? '' : 's'}.${errorText}${emptyText}`)
@@ -1675,9 +1674,7 @@ async function deleteSelectedUnusedVaultFiles() {
 	try {
 		const result = await window.vault_IPC.cleanupUnused({ hashes : selectedHashes })
 		if ( typeof result.summary !== 'undefined' ) {
-			await updateVaultSummary(result.summary)
-			refreshFilterOptions()
-			await renderVault(filterEntries())
+			await loadVault()
 		}
 		if ( result.error ) {
 			MA.byIdText('vaultStatus', `Vault cleanup failed: ${result.error}`)
@@ -1759,7 +1756,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultGameVersionFilter').addEventListener('change', () => {
 		vaultGameVersionUserSelected = true
-		renderVault(filterEntries())
+		loadVaultPreservingView()
 	})
 	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderVault(filterEntries()) })
