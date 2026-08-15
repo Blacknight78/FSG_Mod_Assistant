@@ -271,6 +271,7 @@ const pageAPI = {
 	'setup' : {
 		functions : {
 			addFolder : ( folder, version ) => { ipcRenderer.send('folders:addDirect', folder, version) },
+			scanGames : () => ipcRenderer.invoke('wizard:scanGames'),
 			update    : () => ipcRenderer.invoke('wizard:update'),
 		},
 		validAsync : new Set(['mods:list']),

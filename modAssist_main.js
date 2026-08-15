@@ -782,6 +782,73 @@ ipcMain.handle('wizard:update', () => ({
 	folders : [...serveIPC.modFolders],
 	wizard  : funcLib.wizard.getSettings(),
 }))
+function setupScanExistingPath(value) {
+	return typeof value === 'string' && value.trim() !== '' && fs.existsSync(value)
+}
+
+function setupScanApplyPath(version, settingKey, detectedPath) {
+	const fullKey = `${settingKey}_${version}`
+	const currentPath = serveIPC.storeSet.get(fullKey, '')
+	if ( typeof detectedPath !== 'string' || detectedPath === '' ) {
+		return { changed : false, currentPath, detectedPath : null }
+	}
+	if ( setupScanExistingPath(currentPath) ) {
+		return { changed : false, currentPath, detectedPath }
+	}
+	funcLib.prefs.verSet(settingKey, detectedPath, version)
+	return { changed : true, currentPath : detectedPath, detectedPath }
+}
+
+function setupScanConfigureVersion(version, scan) {
+	const gamePath = scan.games[version]?.[0]?.[1] ?? null
+	const settingsPath = scan.settings[version]?.[0] ?? null
+	const gameResult = setupScanApplyPath(version, 'game_path', gamePath)
+	const settingsResult = setupScanApplyPath(version, 'game_settings', settingsPath)
+	const configured = setupScanExistingPath(gameResult.currentPath) || setupScanExistingPath(settingsResult.currentPath)
+	if ( configured ) { funcLib.prefs.verSet('game_enabled', true, version) }
+
+	return {
+		enabled      : configured,
+		gameChanged  : gameResult.changed,
+		gameFound    : setupScanExistingPath(gameResult.currentPath),
+		gamePath     : gameResult.currentPath,
+		settingsChanged : settingsResult.changed,
+		settingsFound : setupScanExistingPath(settingsResult.currentPath),
+		settingsPath  : settingsResult.currentPath,
+		version,
+	}
+}
+
+function setupScanActiveGame(results) {
+	const currentVersion = serveIPC.storeSet.get('game_version')
+	const currentSettings = serveIPC.storeSet.get(`game_settings_${currentVersion}`, '')
+	if ( setupScanExistingPath(currentSettings) ) { return false }
+
+	const newestConfigured = results
+		.filter((result) => result.enabled)
+		.toSorted((left, right) => right.version - left.version)[0]
+	if ( typeof newestConfigured === 'undefined' ) { return false }
+
+	funcLib.prefs.changeGameVersion(newestConfigured.version)
+	return true
+}
+
+ipcMain.handle('wizard:scanGames', () => {
+	const scan = funcLib.wizard.getSettings()
+	const versions = funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10))
+	const results = versions.map((version) => setupScanConfigureVersion(version, scan))
+	const activeChanged = setupScanActiveGame(results)
+	funcLib.gameSet.read()
+	refreshClientModList()
+	serveIPC.windowLib.sendToValidWindow('main', 'settings:invalidate')
+	serveIPC.windowLib.sendToValidWindow('setup', 'settings:invalidate')
+	return {
+		activeChanged,
+		results,
+		updated : results.filter((result) => result.gameChanged || result.settingsChanged || result.enabled).length,
+		wizard  : funcLib.wizard.getSettings(),
+	}
+})
 ipcMain.on('dispatch:wizard', () => { openWizard() })
 function openWizard() {
 	serveIPC.windowLib.createNamedWindow('setup')
