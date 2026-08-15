@@ -107,6 +107,33 @@ function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
 }
 
+function normalizeGameVersion(value) {
+	if ( typeof value === 'number' && Number.isFinite(value) ) { return Math.trunc(value).toString() }
+	if ( typeof value !== 'string' ) { return '' }
+	const trimmed = value.trim()
+	if ( trimmed === '' ) { return '' }
+	const match = trimmed.match(/(?:FS|Farming Simulator)?\s*(\d{2,4})/iu)
+	if ( match === null ) { return '' }
+	const year = Number.parseInt(match[1], 10)
+	if ( !Number.isInteger(year) ) { return '' }
+	return year >= 2000 ? (year - 2000).toString() : year.toString()
+}
+
+function gameVersionLabel(value) {
+	return value === 'unknown' ? 'Unknown game' : `FS${value}`
+}
+
+function gameVersionsForEntry(entry) {
+	const versions = uniqueValues((entry.gameVersions ?? [])
+		.map((value) => normalizeGameVersion(value))
+		.filter((value) => value !== ''))
+	return versions.length === 0 ? ['unknown'] : versions
+}
+
+function gameVersionLabels(values) {
+	return uniqueValues((values ?? []).map((value) => gameVersionLabel(value)))
+}
+
 function canonicalVaultModName(value) {
 	const raw = String(value ?? '').trim()
 	const withoutPath = raw.split(/[\\/]/u).at(-1) ?? ''
@@ -257,6 +284,12 @@ function compareVaultGroups(left, right, sortMode) {
 		default :
 			return left.modName.localeCompare(right.modName)
 	}
+}
+
+function compareGameVersions(left, right) {
+	if ( left === 'unknown' ) { return 1 }
+	if ( right === 'unknown' ) { return -1 }
+	return Number.parseInt(right, 10) - Number.parseInt(left, 10)
 }
 
 function badgeTooltip(value, type) {
@@ -657,6 +690,8 @@ function groupEntries(entries) {
 		const authors = uniqueValues(group.entries.flatMap((entry) => entry.authors ?? []))
 		const brands = uniqueValues(group.entries.flatMap((entry) => entry.itemBrands ?? []))
 		const equipmentSpecs = mergeEquipmentSpecsFromEntries(group.entries)
+		const gameVersions = uniqueValues(group.entries.flatMap((entry) => gameVersionsForEntry(entry)))
+		const gameLabels = gameVersionLabels(gameVersions)
 		const modHubCategories = uniqueValues(group.entries.flatMap((entry) => entry.modHubCategories ?? []))
 		const modHubReleasedDates = uniqueValues(group.entries.flatMap((entry) => entry.modHubReleasedDates ?? []))
 		const modTypes = uniqueValues(group.entries.flatMap((entry) => entry.modTypes ?? []))
@@ -674,6 +709,8 @@ function groupEntries(entries) {
 			versions.join(' '),
 			authors.join(' '),
 			collections.join(' '),
+			gameLabels.join(' '),
+			gameVersions.join(' '),
 			categories.join(' '),
 			brands.join(' '),
 			equipmentSpecText(equipmentSpecs),
@@ -697,6 +734,8 @@ function groupEntries(entries) {
 			createdTime : newestTime(group.entries, 'createdAt'),
 			entries : sortedEntries,
 			equipmentSpecs,
+			gameLabels,
+			gameVersions,
 			hasNote,
 			hasRollback,
 			hasUpdate,
@@ -724,6 +763,7 @@ function filterEntries() {
 	const categoryFilter = MA.byId('vaultCategoryFilter').value
 	const modHubCategoryFilter = MA.byId('vaultModHubCategoryFilter').value
 	const collectionFilter = MA.byId('vaultCollectionFilter').value
+	const gameVersionFilter = MA.byId('vaultGameVersionFilter').value
 	const noteFilter = MA.byId('vaultNoteFilter').value
 	const rollbackFilter = MA.byId('vaultRollbackFilter').value
 	const brandFilter = MA.byId('vaultBrandFilter').value
@@ -747,6 +787,7 @@ function filterEntries() {
 		rangeMatches(group.equipmentSpecs, priceFilter, 'priceMin', 'priceMax') &&
 		(modHubCategoryFilter === '' || group.modHubCategories.includes(modHubCategoryFilter)) &&
 		(collectionFilter === '' || group.collections.includes(collectionFilter)) &&
+		(gameVersionFilter === '' || group.gameVersions.includes(gameVersionFilter)) &&
 		(vaultSourceFilter === '' || group.sourceTypes.includes(vaultSourceFilter)) &&
 		(noteFilter === '' || (noteFilter === 'with' && group.hasNote) || (noteFilter === 'without' && !group.hasNote)) &&
 		(rollbackFilter === '' || (rollbackFilter === 'with' && group.hasRollback) || (rollbackFilter === 'without' && !group.hasRollback)) &&
@@ -787,7 +828,7 @@ async function renderFileRows(entries, groupIndex) {
 			equipmentSpecLine : equipmentSpecHTML(entry.equipmentSpecs ?? {}),
 			fileName         : DATA.escapeSpecial(entry.fileName ?? ''),
 			filePath         : DATA.escapeSpecial(entry.filePath ?? ''),
-			gameVersions     : DATA.escapeSpecial((entry.gameVersions ?? []).join(', ') || 'unknown'),
+			gameVersions     : DATA.escapeSpecial(gameVersionLabels(gameVersionsForEntry(entry)).join(', ')),
 			hash             : DATA.escapeSpecial(entry.hash ?? ''),
 			missingBadge     : entry.fileExists ? '' : '<span class="badge text-bg-danger ms-1" data-bs-placement="top" data-bs-toggle="tooltip" title="The vault record exists, but the ZIP file could not be found on disk.">missing file</span>',
 			modHubCategories : DATA.escapeSpecial((entry.modHubCategories ?? []).join(', ') || 'none'),
@@ -872,6 +913,23 @@ function fillSelect(selectID, values, firstLabel) {
 	}
 }
 
+function fillGameVersionSelect() {
+	const select = MA.byId('vaultGameVersionFilter')
+	const currentValue = select.value
+	const values = uniqueValues(vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)))
+		.toSorted(compareGameVersions)
+	select.innerHTML = '<option value="">All games</option>'
+	for ( const value of values ) {
+		const option = document.createElement('option')
+		option.value = value
+		option.textContent = gameVersionLabel(value)
+		select.appendChild(option)
+	}
+	if ( values.includes(currentValue) ) {
+		select.value = currentValue
+	}
+}
+
 function refreshFilterOptions() {
 	fillSelect('vaultTypeFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.modTypes ?? [])), 'All mod types')
 	fillSelect('vaultAuthorFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.authors ?? [])), 'All authors')
@@ -879,6 +937,7 @@ function refreshFilterOptions() {
 	fillSelect('vaultCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.itemCategories ?? [])), 'All internal categories')
 	fillSelect('vaultModHubCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.modHubCategories ?? [])), 'All ModHub categories')
 	fillSelect('vaultCollectionFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.collections ?? [])), 'All collections')
+	fillGameVersionSelect()
 	fillSelect('vaultStoreItemTypeFilter', friendlyStoreItemTypes(vaultEntries.flatMap((entry) => entry.storeItemTypes ?? [])), 'All store-item types')
 }
 
@@ -989,9 +1048,10 @@ async function renderVault(groups) {
 		return
 	}
 
+	const shownFileCount = groups.reduce((sum, group) => sum + group.entries.length, 0)
 	MA.byIdText(
 		'vaultStatus',
-		`${groups.length} mod${groups.length === 1 ? '' : 's'} shown, containing ${vaultEntries.length} stored ZIP file${vaultEntries.length === 1 ? '' : 's'}.`
+		`${groups.length} mod${groups.length === 1 ? '' : 's'} shown, containing ${shownFileCount} stored ZIP file${shownFileCount === 1 ? '' : 's'}.`
 	)
 
 	const nodes = await Promise.all(groups.map(async (group, groupIndex) => {
@@ -1001,6 +1061,9 @@ async function renderVault(groups) {
 		const versionText = group.versions.length === 0 ?
 			'No version metadata recorded' :
 			`${group.versions.length} version label${group.versions.length === 1 ? '' : 's'} recorded`
+		const gameText = group.gameLabels.length === 0 ?
+			'Game: unknown' :
+			`Game: ${group.gameLabels.join(', ')}`
 		const lastUpdatedText = group.updatedTime === 0 ?
 			'Last Vault updated: not recorded' :
 			`Last Vault updated: ${formatTimestamp(group.updatedTime)}`
@@ -1011,6 +1074,7 @@ async function renderVault(groups) {
 		const node = DATA.templateEngine('vault_line', {
 			fileCount      : DATA.escapeSpecial(`${group.entries.length} stored ZIP file${group.entries.length === 1 ? '' : 's'}`),
 			fileRows       : '',
+			gameSummary    : DATA.escapeSpecial(gameText),
 			lastUpdated    : DATA.escapeSpecial(lastUpdatedText),
 			modHubReleased : DATA.escapeSpecial(modHubReleasedText),
 			modIcon        : modIconHTML(group.modIcon),
@@ -1662,6 +1726,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultGameVersionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultHorsepowerFilter').addEventListener('change', () => { renderVault(filterEntries()) })
@@ -1682,6 +1747,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultCategoryFilter').value = ''
 		MA.byId('vaultModHubCategoryFilter').value = ''
 		MA.byId('vaultCollectionFilter').value = ''
+		MA.byId('vaultGameVersionFilter').value = ''
 		MA.byId('vaultNoteFilter').value = ''
 		MA.byId('vaultRollbackFilter').value = ''
 		MA.byId('vaultHorsepowerFilter').value = ''
