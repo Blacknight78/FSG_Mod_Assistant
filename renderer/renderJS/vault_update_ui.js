@@ -40,6 +40,13 @@ function modHubReleasedLabel(value) {
 	return released === '' ? 'not recorded' : released
 }
 
+function sourceBadgeLabel(candidate) {
+	if ( candidate.sourceType === 'modhub' ) { return 'ModHub update' }
+	if ( candidate.sourceType === 'github' && candidate.downloadSource === 'repositoryFile' ) { return 'GitHub repository ZIP' }
+	if ( candidate.sourceType === 'github' ) { return 'GitHub release' }
+	return `${sourceLabel(candidate.sourceType)} source`
+}
+
 function selectedCandidates() {
 	return candidates.filter((candidate) => selectedKeys.has(candidate.key))
 }
@@ -175,6 +182,11 @@ function cardFor(candidate) {
 	addBadge(versionBadges, `Vault ${candidate.localVersion}`, 'text-bg-secondary me-2')
 	addBadge(versionBadges, `${sourceLabel(candidate.sourceType)} ${candidate.remoteVersion}`, 'text-bg-warning')
 	actionColumn.append(versionBadges)
+
+	const sourceBadges = document.createElement('div')
+	sourceBadges.className = 'mb-2'
+	addBadge(sourceBadges, sourceBadgeLabel(candidate), 'text-bg-info')
+	actionColumn.append(sourceBadges)
 
 	if ( candidate.sourceType === 'modhub' ) {
 		const released = document.createElement('div')
@@ -316,6 +328,7 @@ async function loadCandidates(force = false) {
 			if ( compareVersions(remote.version, localVersion) <= 0 ) { continue }
 			candidates.push({
 				assetName     : remote.assetName ?? group.fileName,
+				downloadSource : remote.downloadSource ?? null,
 				downloadURL   : remote.hasDownload ? remote.downloadURL : null,
 				fileName      : group.fileName,
 				key           : group.key,

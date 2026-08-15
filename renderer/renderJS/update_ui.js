@@ -68,6 +68,20 @@ function modHubReleasedText(result) {
 	return `<div class="small text-body-secondary mb-2">ModHub released: ${DATA.escapeSpecial(released)}</div>`
 }
 
+function sourceBadgeText(entry, result) {
+	if ( result.source === 'modhub' ) {
+		return '<span class="badge text-bg-info">ModHub update</span>'
+	}
+	if ( entry.sourceType === 'github' ) {
+		const label = result.downloadSource === 'repositoryFile' ? 'GitHub repository ZIP' : 'GitHub release'
+		return `<span class="badge text-bg-info">${label}</span>`
+	}
+	if ( isManualSourceType(entry.sourceType) ) {
+		return `<span class="badge text-bg-secondary">${sourceTypeLabel(entry.sourceType)} manual source</span>`
+	}
+	return `<span class="badge text-bg-secondary">${sourceTypeLabel(entry.sourceType)} source</span>`
+}
+
 function manualSourceMessage(sourceType) {
 	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
 }
@@ -386,6 +400,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 				realName      : entry.title,
 				remoteVersion : DATA.escapeSpecial(result.version),
 				shortName     : DATA.escapeSpecial(entry.modName),
+				sourceBadge   : sourceBadgeText(entry, result),
 				sourceName    : DATA.escapeSpecial(entry.sourceLabel),
 				statusText    : statusText(result),
 			}),
