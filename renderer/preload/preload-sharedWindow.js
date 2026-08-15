@@ -142,6 +142,7 @@ const pageAPI = {
 			getGitHub         : (url) => ipcRenderer.invoke('settings:site:githubLatest', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			minimizeToTray    : () => { ipcRenderer.send('main:minimizeToTray') },
+			performance       : (message) => { ipcRenderer.send('debug:log', 'info', 'performance', message) },
 			startFarmSim      : () => { ipcRenderer.send('dispatch:game') },
 			updateApplication : () => { ipcRenderer.send('main:runUpdateInstall') },
 			updateState       : () => ipcRenderer.invoke('state:all'),

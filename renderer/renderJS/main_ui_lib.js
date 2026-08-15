@@ -135,13 +135,31 @@ class StateManager {
 	emptySort(text) {
 		return text || 'ZZZZ'
 	}
+
+	#logPerformance(label, startedAt, extraDetail = '') {
+		const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+		window.main_IPC.performance(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+	}
+
 	// MARK: process data
 	async updateFromData(data) {
+		const updateStartedAt = performance.now()
+		const updateStats = {
+			addCollectionsMS    : 0,
+			addModsMS           : 0,
+			collectionsRendered : 0,
+			modsRendered        : 0,
+			processCollectionMS : 0,
+		}
 		window.data = data
+		const trackingStartedAt = performance.now()
 		this.#updateTracking(data)
+		const trackingMS = performance.now() - trackingStartedAt
 	
+		const collectionLoopStartedAt = performance.now()
 		for ( const [CIndex, CKey] of Object.entries([...data.set_Collections]) ) {
 			if ( !data.collectionNotes[CKey].notes_holding && data.collectionNotes[CKey].notes_version !== this.flag.currentVersion ) { continue }
+			updateStats.collectionsRendered++
 
 			this.orderMap.keys.push(CKey)
 			this.orderMap.keyToNum[CKey]   = parseInt(CIndex)
@@ -156,8 +174,10 @@ class StateManager {
 				tag    : data.collectionNotes[CKey].notes_tagline,
 			})
 
+			const addCollectionStartedAt = performance.now()
 			// eslint-disable-next-line no-await-in-loop
 			const thisCol = await this.#addCollection(CKey, data.modList[CKey], data.collectionNotes[CKey], data.collectionToStatus[CKey])
+			updateStats.addCollectionsMS += performance.now() - addCollectionStartedAt
 			this.collections[CKey] = thisCol
 
 			if ( !this.flag.folderEdit ) {
@@ -166,8 +186,11 @@ class StateManager {
 				for ( const [MKey, thisMod] of Object.entries(data.modList[CKey].mods) ) {
 					const thisModName = thisMod.fileDetail.shortName
 
+					const addModStartedAt = performance.now()
 					// eslint-disable-next-line no-await-in-loop
 					const thisModRec  = await this.#addMod(thisMod, this.getSaveBadges(CKey, thisMod), data.collectionNotes[CKey].notes_holding)
+					updateStats.addModsMS += performance.now() - addModStartedAt
+					updateStats.modsRendered++
 
 					for ( const tag of thisModRec.filters ) { this.searchTagList.add(tag) }
 
@@ -201,17 +224,23 @@ class StateManager {
 					}
 					this.verList[thisModName] = thisMod.modDesc.version
 				}
+				const processCollectionStartedAt = performance.now()
 				this.#processCollection_std(CKey)
+				updateStats.processCollectionMS += performance.now() - processCollectionStartedAt
 			}
 		}
+		const collectionLoopMS = performance.now() - collectionLoopStartedAt
 		this.mapCollectionDropdown.set(999, `--${data.opts.l10n.unknown}--`)
 
+		const editLoopStartedAt = performance.now()
 		if ( this.flag.folderEdit ) {
 			for ( const CKey of Object.keys(this.collections) ) {
 				this.#processCollection_edit(CKey)
 			}
 		}
+		const editLoopMS = performance.now() - editLoopStartedAt
 
+		const finalUiStartedAt = performance.now()
 		this.updateVerPick(data)
 		this.updateUI()
 		this.fixSorts()
@@ -220,10 +249,22 @@ class StateManager {
 		}
 		this.prefs.forceUpdate()
 		this.doDisplay()
+		const finalUiMS = performance.now() - finalUiStartedAt
 
 		if ( this.track.newFolder !== null ) {
 			this.colScroll(this.track.newFolder)
 		}
+		this.#logPerformance('Main renderer updateFromData', updateStartedAt, [
+			`collections=${updateStats.collectionsRendered.toString()}`,
+			`mods=${updateStats.modsRendered.toString()}`,
+			`tracking=${trackingMS.toFixed(1)} ms`,
+			`collectionLoop=${collectionLoopMS.toFixed(1)} ms`,
+			`addCollections=${updateStats.addCollectionsMS.toFixed(1)} ms`,
+			`addMods=${updateStats.addModsMS.toFixed(1)} ms`,
+			`processCollections=${updateStats.processCollectionMS.toFixed(1)} ms`,
+			`editLoop=${editLoopMS.toFixed(1)} ms`,
+			`finalUI=${finalUiMS.toFixed(1)} ms`,
+		].join(' '))
 	}
 
 	updateVerPick(data) {
@@ -385,8 +426,10 @@ class StateManager {
 
 	// MARK: update display
 	doDisplay() {
+		const displayStartedAt = performance.now()
 		const scrollFrag = document.createDocumentFragment()
 		const docFrag    = document.createDocumentFragment()
+		let displayedMods = 0
 
 		if ( this.flag.folderEdit ) {
 			const editNode = document.createElement('tr')
@@ -427,6 +470,7 @@ class StateManager {
 					this.#applyModUpdateBadge(modRec)
 					thisCol.modNodePoint.appendChild(modRec.node)
 					scrollFrag.appendChild(modRec.scroll)
+					displayedMods++
 				}
 			}
 
@@ -438,6 +482,7 @@ class StateManager {
 		MA.byId('scroll-bar-fake').appendChild(scrollFrag)
 		this.doSideBar()
 		this.refreshSelected()
+		this.#logPerformance('Main renderer doDisplay', displayStartedAt, `collections=${this.orderMap.keys.length.toString()} displayedMods=${displayedMods.toString()} folderEdit=${this.flag.folderEdit.toString()}`)
 	}
 
 	doVersionChanger(version, options, modCollect) {

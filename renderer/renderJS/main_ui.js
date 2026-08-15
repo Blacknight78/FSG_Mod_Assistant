@@ -8,6 +8,13 @@
 
 /* global MA, StateManager */
 
+const rendererStartupStartedAt = performance.now()
+
+function logRendererPerformance(label, startedAt, extraDetail = '') {
+	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+	window.main_IPC.performance(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+}
+
 // MARK: async events
 window.operations.receive('select:invert', () => {
 	if ( ! window.state.files.flags.isRunning ) { window.state.select.invert() }
@@ -42,7 +49,12 @@ window.main_IPC.receive('select:withText', (list, text) => {
 })
 
 window.main_IPC.receive('mods:list', (modCollect) => {
-	window.state.updateFromData(modCollect)
+	const startedAt = performance.now()
+	window.state.updateFromData(modCollect).then(() => {
+		logRendererPerformance('Main renderer mods:list', startedAt)
+	}).catch((err) => {
+		window.main_IPC.performance(`Main renderer mods:list failed ${err.message}`)
+	})
 })
 window.main_IPC.receive('mods:site', (mod) => {
 	window.state.action.openModInfo(mod)
@@ -125,17 +137,25 @@ function popUIHandlers() {
 
 // MARK: On Load
 window.addEventListener('DOMContentLoaded', () => {
+	logRendererPerformance('Main renderer DOMContentLoaded', rendererStartupStartedAt)
+	const stateStartedAt = performance.now()
 	window.state = new StateManager()
+	logRendererPerformance('Main renderer StateManager construction', stateStartedAt)
 
+	const handlersStartedAt = performance.now()
 	topBarHandlers()
 	sideBarHandlers()
 	topUIHandlers()
 	popUIHandlers()
+	logRendererPerformance('Main renderer event binding', handlersStartedAt)
 
 	window.addEventListener('hidden.bs.collapse', () => { window.state.select.none() })
 	window.addEventListener('shown.bs.collapse',  () => { window.state.select.none() })
 
 	setInterval(() => { window.state.updateState() }, 5000)
+	requestAnimationFrame(() => {
+		logRendererPerformance('Main renderer first animation frame', rendererStartupStartedAt)
+	})
 })
 
 
