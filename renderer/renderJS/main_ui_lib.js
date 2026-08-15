@@ -762,6 +762,32 @@ class StateManager {
 			showSuffix ? (forceMB ? 'MB' : units[u]) : null
 		].filter((x) => x !== null).join(' ')
 	}
+	#renderModRow({
+		authorCat,
+		brandTitle,
+		fileDate,
+		fileSize,
+		fileTime,
+		folderIcon,
+		iconImage,
+		shortName,
+		version,
+	}) {
+		return [
+			'<td style="width: 4.6rem; height: 4.6rem; white-space: nowrap">',
+			iconImage,
+			folderIcon,
+			'</td>',
+			'<td><div class="d-flex flex-row"><div>',
+			`<span class="mod-short-name">${shortName}</span><br>`,
+			`<small class="ps-2">${brandTitle}</small><br>`,
+			`<small class="text-body-tertiary ps-2">${authorCat}</small>`,
+			'</div><div class="issue_badges fs-5 flex-grow-1 text-end"></div></div></td>',
+			'<td class="text-end" style="width: 100px; line-height: 1.25;">',
+			`${version}<br><em class="ex-small px-0">${fileDate}<br>${fileTime}</em><br><em class="small px-0">${fileSize}</em>`,
+			'</td>'
+		].join('')
+	}
 	// MARK: addMod
 	/* eslint-disable-next-line complexity */
 	#addMod(thisMod, overBadges = null, isHolding = false) {
@@ -832,17 +858,17 @@ class StateManager {
 			fixCat.length !== 0 ? `<em>${this.#addExtraInfo(fixCat)}</em>` : null,
 		]
 
-		mod.node.appendChild(DATA.templateEngine('item_mod', {
-			author_cat : authorCat.filter((x) => x !== null).join(' '),
-			brand_title : brandTitle.filter((x) => x !== null).join(' '),
+		mod.node.innerHTML = this.#renderModRow({
+			authorCat  : authorCat.filter((x) => x !== null).join(' '),
+			brandTitle : brandTitle.filter((x) => x !== null).join(' '),
 			fileDate   : thisMod.fileDetail.fileDate.slice(0, 10),
 			fileSize   : this.#bytesToHR(thisMod.fileDetail.fileSize),
 			fileTime   : thisMod.fileDetail.fileDate.slice(11, 16),
 			folderIcon : thisMod.badgeArray.includes('folder') ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
 			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImage)}">`,
-			shortname  : thisMod.fileDetail.shortName,
+			shortName  : thisMod.fileDetail.shortName,
 			version    : DATA.escapeSpecial(thisMod.modDesc.version),
-		}))
+		})
 
 		const badgeContain = mod.node.querySelector('.issue_badges')
 
