@@ -9,7 +9,9 @@
 let vaultEntries = []
 let vaultCollections = []
 let vaultCleanup = { count : 0, entries : [], totalSize : 0 }
+let vaultActiveGameVersion = ''
 let vaultGameVersions = []
+let vaultGameVersionUserSelected = false
 let vaultNotes = {}
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
@@ -149,6 +151,19 @@ function gameVersionsForEntry(entry) {
 
 function gameVersionLabels(values) {
 	return uniqueValues((values ?? []).map((value) => gameVersionLabel(value)))
+}
+
+function activeVaultGameVersion() {
+	return normalizeGameVersion(vaultActiveGameVersion)
+}
+
+function setVaultGameVersionFilterToActive() {
+	const select = MA.byId('vaultGameVersionFilter')
+	const activeVersion = activeVaultGameVersion()
+	if ( select === null || activeVersion === '' ) { return }
+	if ( [...select.options].some((option) => option.value === activeVersion) ) {
+		select.value = activeVersion
+	}
 }
 
 function canonicalVaultModName(value) {
@@ -933,6 +948,7 @@ function fillSelect(selectID, values, firstLabel) {
 function fillGameVersionSelect() {
 	const select = MA.byId('vaultGameVersionFilter')
 	const currentValue = select.value
+	const activeVersion = activeVaultGameVersion()
 	const values = uniqueValues([
 		...supportedVaultGameVersions(),
 		...vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)),
@@ -945,8 +961,10 @@ function fillGameVersionSelect() {
 		option.textContent = gameVersionLabel(value)
 		select.appendChild(option)
 	}
-	if ( values.includes(currentValue) ) {
+	if ( vaultGameVersionUserSelected && (currentValue === '' || values.includes(currentValue)) ) {
 		select.value = currentValue
+	} else if ( values.includes(activeVersion) ) {
+		select.value = activeVersion
 	}
 }
 
@@ -1021,6 +1039,7 @@ async function updateCleanupSelectionPreview() {
 async function updateVaultSummary(summary) {
 	vaultEntries = summary.entries
 	vaultCleanup = summary.cleanup ?? { count : 0, entries : [], totalSize : 0 }
+	vaultActiveGameVersion = summary.activeGameVersion ?? vaultActiveGameVersion
 	vaultGameVersions = summary.gameVersions ?? vaultGameVersions
 	vaultNotes = summary.notes ?? vaultNotes
 	vaultRetentionPolicy = summary.retentionPolicy ?? vaultRetentionPolicy
@@ -1747,7 +1766,10 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultGameVersionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultGameVersionFilter').addEventListener('change', () => {
+		vaultGameVersionUserSelected = true
+		renderVault(filterEntries())
+	})
 	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderVault(filterEntries()) })
 	MA.byId('vaultHorsepowerFilter').addEventListener('change', () => { renderVault(filterEntries()) })
@@ -1768,7 +1790,8 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultCategoryFilter').value = ''
 		MA.byId('vaultModHubCategoryFilter').value = ''
 		MA.byId('vaultCollectionFilter').value = ''
-		MA.byId('vaultGameVersionFilter').value = ''
+		vaultGameVersionUserSelected = false
+		setVaultGameVersionFilterToActive()
 		MA.byId('vaultNoteFilter').value = ''
 		MA.byId('vaultRollbackFilter').value = ''
 		MA.byId('vaultHorsepowerFilter').value = ''

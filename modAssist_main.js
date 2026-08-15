@@ -2178,7 +2178,7 @@ function setModLibraryRetentionCount({ count } = {}) {
 }
 
 function getModLibrarySummary() {
-	if ( modLibrarySummaryCache !== null ) { return modLibrarySummaryCache }
+	if ( modLibrarySummaryCache !== null ) { return modLibrarySummaryWithActiveGame(modLibrarySummaryCache) }
 
 	const startedAt = performance.now()
 	const entries = getModLibraryEntries()
@@ -2198,7 +2198,14 @@ function getModLibrarySummary() {
 		usedCount  : entries.filter((entry) => entry.isUsed).length,
 	}
 	serveIPC.log.info('performance', `Built Vault summary for ${entries.length} stored ZIPs in ${(performance.now() - startedAt).toFixed(1)} ms`)
-	return modLibrarySummaryCache
+	return modLibrarySummaryWithActiveGame(modLibrarySummaryCache)
+}
+
+function modLibrarySummaryWithActiveGame(summary) {
+	return {
+		...summary,
+		activeGameVersion : serveIPC.storeSet.get('game_version'),
+	}
 }
 
 async function getVaultCollections() {
