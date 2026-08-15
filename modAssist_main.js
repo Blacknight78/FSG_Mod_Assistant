@@ -2187,6 +2187,7 @@ function getModLibrarySummary() {
 		cleanup    : getModLibraryCleanupPreview(entries),
 		entries,
 		folder     : modLibraryFolder(),
+		gameVersions : funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10)),
 		notes      : getVaultNotes(),
 		retentionPolicy : {
 			maximum : MOD_LIBRARY_MAX_RETENTION_COUNT,

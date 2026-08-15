@@ -9,6 +9,7 @@
 let vaultEntries = []
 let vaultCollections = []
 let vaultCleanup = { count : 0, entries : [], totalSize : 0 }
+let vaultGameVersions = []
 let vaultNotes = {}
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
@@ -107,16 +108,32 @@ function normalValue(value) {
 	return (value ?? '').toString().toLowerCase()
 }
 
-function normalizeGameVersion(value) {
-	if ( typeof value === 'number' && Number.isFinite(value) ) { return Math.trunc(value).toString() }
-	if ( typeof value !== 'string' ) { return '' }
-	const trimmed = value.trim()
-	if ( trimmed === '' ) { return '' }
-	const match = trimmed.match(/(?:FS|Farming Simulator)?\s*(\d{2,4})/iu)
-	if ( match === null ) { return '' }
-	const year = Number.parseInt(match[1], 10)
-	if ( !Number.isInteger(year) ) { return '' }
-	return year >= 2000 ? (year - 2000).toString() : year.toString()
+function supportedVaultGameVersions() {
+	const configuredVersions = uniqueValues(vaultGameVersions
+		.map((value) => normalizeGameVersion(value, false))
+		.filter((value) => value !== ''))
+	return configuredVersions.length === 0 ? ['25', '22', '19', '17', '15', '13'] : configuredVersions
+}
+
+function isSupportedVaultGameVersion(value) {
+	return supportedVaultGameVersions().includes(value)
+}
+
+function normalizeGameVersion(value, requireSupported = true) {
+	let normalizedValue = ''
+	if ( typeof value === 'number' && Number.isFinite(value) ) {
+		normalizedValue = Math.trunc(value).toString()
+	} else if ( typeof value === 'string' ) {
+		const trimmed = value.trim()
+		if ( trimmed === '' ) { return '' }
+		const match = trimmed.match(/^(?:FS|Farming Simulator)?\s*(\d{2,4})$/iu)
+		if ( match === null ) { return '' }
+		const year = Number.parseInt(match[1], 10)
+		if ( !Number.isInteger(year) ) { return '' }
+		normalizedValue = year >= 2000 ? (year - 2000).toString() : year.toString()
+	}
+	if ( normalizedValue === '' ) { return '' }
+	return !requireSupported || isSupportedVaultGameVersion(normalizedValue) ? normalizedValue : ''
 }
 
 function gameVersionLabel(value) {
@@ -916,7 +933,10 @@ function fillSelect(selectID, values, firstLabel) {
 function fillGameVersionSelect() {
 	const select = MA.byId('vaultGameVersionFilter')
 	const currentValue = select.value
-	const values = uniqueValues(vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)))
+	const values = uniqueValues([
+		...supportedVaultGameVersions(),
+		...vaultEntries.flatMap((entry) => gameVersionsForEntry(entry)),
+	])
 		.toSorted(compareGameVersions)
 	select.innerHTML = '<option value="">All games</option>'
 	for ( const value of values ) {
@@ -1001,6 +1021,7 @@ async function updateCleanupSelectionPreview() {
 async function updateVaultSummary(summary) {
 	vaultEntries = summary.entries
 	vaultCleanup = summary.cleanup ?? { count : 0, entries : [], totalSize : 0 }
+	vaultGameVersions = summary.gameVersions ?? vaultGameVersions
 	vaultNotes = summary.notes ?? vaultNotes
 	vaultRetentionPolicy = summary.retentionPolicy ?? vaultRetentionPolicy
 	MA.byIdText('vaultCount', summary.totalCount.toString())
