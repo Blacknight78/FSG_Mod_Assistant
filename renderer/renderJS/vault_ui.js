@@ -157,15 +157,6 @@ function activeVaultGameVersion() {
 	return normalizeGameVersion(vaultActiveGameVersion)
 }
 
-function setVaultGameVersionFilterToActive() {
-	const select = MA.byId('vaultGameVersionFilter')
-	const activeVersion = activeVaultGameVersion()
-	if ( select === null || activeVersion === '' ) { return }
-	if ( [...select.options].some((option) => option.value === activeVersion) ) {
-		select.value = activeVersion
-	}
-}
-
 function canonicalVaultModName(value) {
 	const raw = String(value ?? '').trim()
 	const withoutPath = raw.split(/[\\/]/u).at(-1) ?? ''
@@ -1790,8 +1781,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultCategoryFilter').value = ''
 		MA.byId('vaultModHubCategoryFilter').value = ''
 		MA.byId('vaultCollectionFilter').value = ''
-		vaultGameVersionUserSelected = false
-		setVaultGameVersionFilterToActive()
 		MA.byId('vaultNoteFilter').value = ''
 		MA.byId('vaultRollbackFilter').value = ''
 		MA.byId('vaultHorsepowerFilter').value = ''
