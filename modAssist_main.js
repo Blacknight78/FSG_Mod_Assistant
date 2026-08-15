@@ -7,6 +7,7 @@
 // Main Program
 
 const superDebugCache = false
+const appStartupStartedAt = performance.now()
 
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, Tray, clipboard, net } = require('electron')
 
@@ -67,6 +68,11 @@ process.on('unhandledRejection', (err, origin) => { funcLib.general.handleUnhand
 
 if ( process.platform === 'win32' && app.isPackaged && gotTheLock && !isPortable ) { funcLib.general.initUpdater() }
 
+function logPerformanceDuration(label, startedAt, extraDetail = '') {
+	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+	serveIPC.log.info('performance', `${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+}
+
 funcLib.wizard.initMain()
 
 // const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
@@ -75,6 +81,7 @@ const { parseModFirstPass, parseModLastPass, parseSaveGame } = require('fs_mod_p
 
 const settingDefault = new (require('./lib/modAssist_window_lib.js')).defaultSettings()
 
+const storeLoadStartedAt = performance.now()
 serveIPC.isFirstRun = !fs.existsSync(path.join(app.getPath('userData'), 'config.json'))
 
 serveIPC.storeSet         = new Store({schema : settingDefault.defaults, migrations : settingDefault.migrateBase, clearInvalidConfig : true })
@@ -85,8 +92,11 @@ serveIPC.storeHistory     = new Store({name : 'collection_history', clearInvalid
 serveIPC.storeLibrary     = new Store({name : 'mod_library', clearInvalidConfig : true})
 
 serveIPC.windowLib.loadSettings()
+logPerformanceDuration('Store and settings load', storeLoadStartedAt)
 
+const modCacheCheckStartedAt = performance.now()
 funcLib.general.doModCacheCheck() // Check and upgrade Mod Cache & Mod Detail Cache
+logPerformanceDuration('Mod cache check', modCacheCheckStartedAt)
 
 serveIPC.modCollect = new modFileCollection( app.getPath('home'), modQueueRunner )
 
@@ -1677,6 +1687,7 @@ const MOD_LIBRARY_INDEX_SCHEMA = 1
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 let modLibraryIndexWarmupStarted = false
+let modFolderScanStartedAt = null
 
 function invalidateModLibrarySummary() {
 	modLibrarySummaryCache.clear()
@@ -2313,7 +2324,7 @@ function warmModLibraryIndexes() {
 		for ( const [gameKey, diskSummary] of diskSummaries ) {
 			modLibrarySummaryCache.set(gameKey, diskSummary)
 		}
-		serveIPC.log.info('performance', `Warmed Vault indexes from disk in ${(performance.now() - startedAt).toFixed(1)} ms`)
+		logPerformanceDuration('Vault index warm-up from disk', startedAt)
 	} catch (err) {
 		serveIPC.log.warning('performance', 'Unable to warm Vault indexes', err)
 	}
@@ -4643,6 +4654,7 @@ function refreshTransientStatus() {
 
 // MARK: refresh list
 function refreshClientModList(closeLoader = true) {
+	const startedAt = performance.now()
 	// DATA STRUCT - send mod list
 	const currentVersion = funcLib.prefs.ver()
 	const pollGame       = serveIPC.storeSet.get('poll_game', true)
@@ -4673,6 +4685,7 @@ function refreshClientModList(closeLoader = true) {
 		closeLoader
 	)
 	serveIPC.windowLib.sendToValidWindow('version', 'win:forceRefresh')
+	logPerformanceDuration('Client mod list refresh dispatch', startedAt, `closeLoader=${closeLoader.toString()}`)
 }
 
 function refreshUpdateList() {
@@ -4693,8 +4706,13 @@ ipcMain.handle('file:operation', async (_, operations) => funcLib.fileOperation.
 // MARK: run scan
 async function processModFolders(force = false) {
 	if ( serveIPC.isProcessing ) { return }
-	if ( !force && !serveIPC.isFoldersDirty ) { serveIPC.loadWindow.hide(500); return }
+	if ( !force && !serveIPC.isFoldersDirty ) {
+		serveIPC.log.info('performance', 'Mod folder scan skipped; folders are clean')
+		serveIPC.loadWindow.hide(500)
+		return
+	}
 
+	modFolderScanStartedAt = performance.now()
 	serveIPC.isProcessing = true
 	serveIPC.isPrefWrong  = false
 
@@ -4706,6 +4724,10 @@ async function processModFolders(force = false) {
 
 // MARK: run scan (post)
 modQueueRunner.on('process-mods-done', () => {
+	if ( modFolderScanStartedAt !== null ) {
+		logPerformanceDuration('Mod folder scan', modFolderScanStartedAt, `collections=${serveIPC.modCollect.collections.size.toString()} mods=${serveIPC.modCollect.totalModCount.toString()}`)
+		modFolderScanStartedAt = null
+	}
 	invalidateModLibrarySummary()
 	funcLib.general.toggleFolderDirty(false)
 	funcLib.gameSet.read()
@@ -4800,21 +4822,26 @@ modQueueRunner.on('process-mods-done', () => {
 // MARK: APP START
 app.whenReady().then(() => {
 	if ( gotTheLock ) {
+		logPerformanceDuration('Electron app ready', appStartupStartedAt)
 		if ( serveIPC.storeSet.has('force_lang') && serveIPC.storeSet.get('lock_lang', false) ) {
 			// If language is locked, switch to it.
 			serveIPC.l10n.currentLocale = serveIPC.storeSet.get('force_lang')
 		}
 
+		const shellSetupStartedAt = performance.now()
 		if (process.platform === 'win32') {
 			app.setAppUserModelId('jtsage.fsmodassist')
 		}
-		
+
 		serveIPC.windowLib.tray = new Tray(serveIPC.icon.tray)
 		serveIPC.windowLib.tray.setToolTip('FSG Mod Assist')
 		serveIPC.windowLib.tray.on('click', () => { serveIPC.windowLib.win.main.show() })
 		serveIPC.windowLib.trayContextMenu()
+		logPerformanceDuration('Shell and tray setup', shellSetupStartedAt)
 
+		const modHubRefreshStartedAt = performance.now()
 		funcLib.modHub.refresh()
+		logPerformanceDuration('ModHub refresh request dispatch', modHubRefreshStartedAt)
 
 		// 6 hour timer on refresh
 		serveIPC.interval.modHub = setInterval(() => { funcLib.modHub.refresh() }, (216e5))
@@ -4836,13 +4863,19 @@ app.whenReady().then(() => {
 		})
 
 
+		const mainWindowCreateStartedAt = performance.now()
 		serveIPC.windowLib.createMainWindow(() => {
-			setTimeout(() => { warmModLibraryIndexes() }, 2500)
+			logPerformanceDuration('Main window startup callback', mainWindowCreateStartedAt)
+			setTimeout(() => {
+				serveIPC.log.info('performance', 'Starting delayed Vault index warm-up')
+				warmModLibraryIndexes()
+			}, 2500)
 
 			if ( serveIPC.storeSet.has('modFolders') ) {
 				serveIPC.modFolders   = new Set(serveIPC.storeSet.get('modFolders'))
 				funcLib.general.toggleFolderDirty()
 				setTimeout(() => {
+					serveIPC.log.info('performance', 'Starting delayed startup mod folder scan')
 					if ( serveIPC.isFirstRun ) { openWizard() }
 					processModFolders()
 				}, 1500)
