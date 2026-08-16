@@ -367,6 +367,24 @@ function renderCandidates(skipped) {
 	updateSelectionText()
 }
 
+function removeStoredCandidates(storedResults) {
+	const storedKeys = new Set()
+	for ( const result of storedResults ?? [] ) {
+		if ( !result?.ok ) { continue }
+		for ( const candidate of candidates ) {
+			const sameMod = canonicalVaultModName(candidate.modName).toLocaleLowerCase() ===
+				canonicalVaultModName(result.modName).toLocaleLowerCase()
+			const sameVersion = compareVersions(candidate.remoteVersion, result.version) === 0
+			if ( sameMod && sameVersion ) { storedKeys.add(candidate.key) }
+		}
+	}
+
+	if ( storedKeys.size === 0 ) { return }
+	candidates = candidates.filter((candidate) => !storedKeys.has(candidate.key))
+	selectedKeys = new Set([...selectedKeys].filter((key) => !storedKeys.has(key)))
+	renderCandidates(0)
+}
+
 // eslint-disable-next-line complexity
 async function loadCandidates(force = false) {
 	setBusy(true, 'Loading Vault...')
@@ -478,11 +496,8 @@ async function downloadSelected() {
 		const manualMessage = manualCount > 0
 			? ` ${manualCount} selected update(s) require manual download and were not changed.`
 			: ''
-		setStatus(`Stored ${result.count} update(s) in the Vault.${manualMessage} Matching collection updates will reuse these cached ZIPs when available.`, 'success')
-		selectedKeys.clear()
-		// Re-read the Vault and its update state after storing files so completed
-		// downloads disappear from the update list immediately.
-		await loadCandidates(true)
+		removeStoredCandidates(result.results)
+		setStatus(`Stored ${result.count} update(s) in the Vault.${manualMessage} Matching collection updates will reuse these cached ZIPs when available. Use Refresh Vault update checks to rescan all sources.`, 'success')
 	} catch (err) {
 		setStatus(`Vault download failed: ${err.message}`, 'danger')
 	} finally {
