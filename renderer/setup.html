@@ -60,12 +60,28 @@
 				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_2_blurb"></i18n-text>
 				<div class="row gx-3 gy-2 mt-3">
 					<div class="col-md-8">
-						<div class="small text-body-secondary">Scan standard Steam, eShop, Epic, Xbox, Documents, and OneDrive locations for installed Farming Simulator games.</div>
+						<div class="small text-body-secondary">Scan standard Steam, eShop, Epic, Xbox, Documents, and OneDrive locations, then review each detected Farming Simulator version below.</div>
 					</div>
 					<div class="col-md-4 d-flex align-items-start">
-						<button class="btn btn-sm btn-info w-100" id="scanGameInstallations" type="button">Scan installed games</button>
+						<button class="btn btn-sm btn-info w-100" id="scanGameInstallations" type="button">Rescan installed games</button>
 					</div>
 					<div class="col-12 small" id="scanGameInstallationsStatus" role="status"></div>
+				</div>
+
+				<div class="row gx-3 gy-3 mt-3">
+					<div class="col-12">
+						<div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
+							<div>
+								<div class="fw-bold">Game setup</div>
+								<div class="small text-body-secondary" id="gameManagementSummary">Checking configured Farming Simulator games...</div>
+							</div>
+							<div class="small text-info" id="gameManagementActive">Active game: --</div>
+						</div>
+					</div>
+					<div class="col-12">
+						<div class="list-group" id="gameManagementList"></div>
+					</div>
+					<div class="col-12 small" id="gameManagementStatus" role="status"></div>
 				</div>
 
 				<div class="col-12 inset-block mt-5"><div>  <!-- step 2 -->
@@ -189,6 +205,41 @@
 				<i18n-text class="inset-block-header" data-key="wizard_step_5"></i18n-text>
 				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_5_blurb"></i18n-text>
 				<a class="btn btn-primary btn-sm w-75 mx-auto d-block btn-thumb-up" href="https://fsgmodding.github.io/FSG_Mod_Assistant/" target="_blank"><i18n-text data-key="help_button__title">Docs</i18n-text></a>
+			</div></div>
+
+			<div class="col-12 inset-block"><div>
+				<span class="inset-block-header">Performance</span>
+				<span class="inset-block-blurb-section">Review recent startup, scan, render, and Vault timing from the app log.</span>
+				<div class="row gx-3 gy-3 mt-1">
+					<div class="col-sm-6 col-xl">
+						<div class="small text-body-secondary">Main window visible</div>
+						<div class="fs-5" id="performanceMainVisible">--</div>
+					</div>
+					<div class="col-sm-6 col-xl">
+						<div class="small text-body-secondary">Folder scan</div>
+						<div class="fs-5" id="performanceFolderScan">--</div>
+					</div>
+					<div class="col-sm-6 col-xl">
+						<div class="small text-body-secondary">Renderer refresh</div>
+						<div class="fs-5" id="performanceRendererUpdate">--</div>
+					</div>
+					<div class="col-sm-6 col-xl">
+						<div class="small text-body-secondary">Vault index</div>
+						<div class="fs-5" id="performanceVaultIndex">--</div>
+					</div>
+					<div class="col-sm-6 col-xl">
+						<div class="small text-body-secondary">ModHub refresh</div>
+						<div class="fs-5" id="performanceModHubRefresh">--</div>
+					</div>
+					<div class="col-12 small text-body-secondary user-select-text" id="performanceLogPath">Log file: --</div>
+					<div class="col-md-6">
+						<button class="btn btn-sm btn-outline-info w-100" id="performanceRefresh" type="button">Refresh performance summary</button>
+					</div>
+					<div class="col-md-6">
+						<button class="btn btn-sm btn-outline-secondary w-100" id="performanceOpenLog" type="button">Open performance log</button>
+					</div>
+					<div class="col-12 small" id="performanceStatus" role="status"></div>
+				</div>
 			</div></div>
 		</div>
 

@@ -128,6 +128,7 @@ function popUIHandlers() {
 	MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.main_IPC.cancelDownload() })
 	MA.byIdEventIfExists('mismatchLaunchIgnore', () => { window.state.action.launchGame_IGNORE() })
 	MA.byIdEventIfExists('mismatchLaunchFix',    () => { window.state.action.launchGame_FIX() })
+	MA.byIdEventIfExists('collectionReadinessContinue', () => { window.state.action.launchGame_CONTINUE() })
 
 	MA.byIdEventIfExists('mod_info_input',  () => { window.main_IPC.contextInput() }, 'contextmenu')
 	MA.byIdEventIfExists('mod_info_button', () => { window.state.action.setModInfo() })

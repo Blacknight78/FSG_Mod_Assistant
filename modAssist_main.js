@@ -755,6 +755,56 @@ ipcMain.on('settings:clearMalware', () => {
 	serveIPC.storeSet.set('suppress_malware', [])
 	processModFolders(true)
 })
+function performanceLogPath() {
+	return path.join(app.getPath('userData'), 'assist.log')
+}
+
+function latestPerformanceValue(lines, pattern) {
+	for ( const line of lines.toReversed() ) {
+		const match = line.match(pattern)
+		if ( match !== null ) {
+			return {
+				detail : line.slice(line.indexOf('performance >>') + 15).trim(),
+				ms     : Number.parseFloat(match[1]),
+			}
+		}
+	}
+	return null
+}
+
+function performanceLogSummary() {
+	const logPath = performanceLogPath()
+	if ( !fs.existsSync(logPath) ) {
+		return {
+			logPath,
+			metrics : {},
+			ok      : false,
+			recent  : [],
+			status  : 'Performance log has not been created yet.',
+		}
+	}
+
+	const lines = fs.readFileSync(logPath, 'utf8')
+		.split(/\r?\n/u)
+		.filter((line) => line.includes('performance >>'))
+	const recent = lines.slice(-10).map((line) => line.slice(line.indexOf('performance >>') + 15).trim())
+	return {
+		logPath,
+		metrics : {
+			mainVisible : latestPerformanceValue(lines, /Main window visible in ([\d.]+) ms/u),
+			modFolderScan : latestPerformanceValue(lines, /Mod folder scan took ([\d.]+) ms/u),
+			modHubRefresh : latestPerformanceValue(lines, /ModHub refresh completed in ([\d.]+) ms/u),
+			rendererUpdate : latestPerformanceValue(lines, /Main renderer updateFromData took ([\d.]+) ms/u),
+			vaultIndex : latestPerformanceValue(lines, /Built Vault index .* in ([\d.]+) ms/u),
+		},
+		ok     : true,
+		recent,
+		status : lines.length === 0 ? 'No performance entries were found in the log.' : `Read ${lines.length} performance log entr${lines.length === 1 ? 'y' : 'ies'}.`,
+	}
+}
+
+ipcMain.handle('settings:performanceSummary', () => performanceLogSummary())
+ipcMain.handle('settings:openPerformanceLog', () => shell.openPath(performanceLogPath()))
 ipcMain.on('cache:clear', () => {
 	serveIPC.storeCache.clearAll()
 	serveIPC.windowLib.forceFocus('main')
@@ -786,10 +836,17 @@ ipcMain.on('cache:clean', () => {
 ipcMain.on('settings:prefFile',    (_, version) => { funcLib.prefs.changeFilePath(version, false) })
 ipcMain.on('settings:gamePath',    (_, version) => { funcLib.prefs.changeFilePath(version, true) })
 ipcMain.handle('settings:clear',   (_, version) => funcLib.prefs.clearVersion(version))
+ipcMain.handle('settings:openSetupPath', (_, targetPath) => {
+	if ( typeof targetPath !== 'string' || targetPath.trim() === '' || !fs.existsSync(targetPath) ) {
+		return 'Path does not exist.'
+	}
+	return shell.openPath(targetPath)
+})
 
 // MARK: setup wizard
 ipcMain.handle('wizard:update', () => ({
 	folders : [...serveIPC.modFolders],
+	gameManagement : setupGameManagementSummary(),
 	wizard  : funcLib.wizard.getSettings(),
 }))
 function setupScanExistingPath(value) {
@@ -841,6 +898,41 @@ function setupScanActiveGame(results) {
 
 	funcLib.prefs.changeGameVersion(newestConfigured.version)
 	return true
+}
+
+function setupGameManagementSummary() {
+	const scan = funcLib.wizard.getSettings()
+	const activeVersion = Number.parseInt(serveIPC.storeSet.get('game_version'), 10)
+	return [25, 22, 19, 17, 15, 13].map((version) => {
+		const gamePath = serveIPC.storeSet.get(`game_path_${version}`, '')
+		const settingsPath = serveIPC.storeSet.get(`game_settings_${version}`, '')
+		const modInfo = scan.mods.find((item) => item.ver === version)
+		const detectedModFolders = [
+			modInfo?.baseModFolder,
+			...(modInfo?.hasCollections ?? []),
+		].filter((item) => typeof item === 'string' && item !== '')
+		const detectedGames = (scan.games[version] ?? []).map(([source, detectedPath]) => ({
+			isConfigured : detectedPath === gamePath,
+			path         : detectedPath,
+			source,
+		}))
+		const configuredModFolder = detectedModFolders.find((folder) => serveIPC.modFolders.has(folder)) ?? ''
+
+		return {
+			active       : activeVersion === version,
+			configuredModFolder,
+			detectedGames,
+			detectedModFolders,
+			detectedSettings : scan.settings[version] ?? [],
+			enabled      : serveIPC.storeSet.get(`game_enabled_${version}`) === true,
+			gameFound    : setupScanExistingPath(gamePath),
+			gamePath,
+			settingsFound : setupScanExistingPath(settingsPath),
+			settingsPath,
+			trackedModFolders : detectedModFolders.filter((folder) => serveIPC.modFolders.has(folder)),
+			version,
+		}
+	})
 }
 
 ipcMain.handle('wizard:scanGames', () => {
@@ -4833,9 +4925,8 @@ modQueueRunner.on('process-mods-done', () => {
 	funcLib.gameSet.gameXML(17)
 	funcLib.gameSet.gameXML(15)
 	funcLib.gameSet.gameXML(13)
-	refreshClientModList()
-
 	serveIPC.isProcessing = false
+	refreshClientModList()
 	scheduleModLibraryIndexesAfterScan(2500)
 
 	if ( serveIPC.modCollect.isDangerMods ) {

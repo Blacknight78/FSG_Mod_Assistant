@@ -307,6 +307,68 @@
 
 		<div class="mx-2 mb-3 card">
 			<div class="card-body">
+				<div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-2">
+					<div>
+						<div class="fw-bold">Vault health</div>
+						<div class="small text-body-secondary" id="vaultHealthSummary">Checking vault health...</div>
+					</div>
+					<div class="small text-info" id="vaultHealthActiveFilter">Showing all Vault records.</div>
+				</div>
+				<div class="row g-2" id="vaultHealthDashboard">
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-secondary w-100 text-start" data-health-filter="" type="button">
+							<span class="d-block small text-body-secondary">Total groups</span>
+							<span class="fs-5" id="vaultHealthGroups">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-danger w-100 text-start" data-health-filter="missing-file" type="button">
+							<span class="d-block small text-body-secondary">Missing files</span>
+							<span class="fs-5" id="vaultHealthMissingFiles">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-warning w-100 text-start" data-health-filter="missing-game" type="button">
+							<span class="d-block small text-body-secondary">No game tag</span>
+							<span class="fs-5" id="vaultHealthMissingGame">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-warning w-100 text-start" data-health-filter="no-source" type="button">
+							<span class="d-block small text-body-secondary">No known source</span>
+							<span class="fs-5" id="vaultHealthNoSource">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-info w-100 text-start" data-health-filter="update-available" type="button">
+							<span class="d-block small text-body-secondary">Updates available</span>
+							<span class="fs-5" id="vaultHealthUpdates">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-danger w-100 text-start" data-health-filter="cleanup-candidate" type="button">
+							<span class="d-block small text-body-secondary">Cleanup candidates</span>
+							<span class="fs-5" id="vaultHealthCleanup">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-success w-100 text-start" data-health-filter="kept" type="button">
+							<span class="d-block small text-body-secondary">Kept ZIPs</span>
+							<span class="fs-5" id="vaultHealthKept">0</span>
+						</button>
+					</div>
+					<div class="col-sm-6 col-xl-3">
+						<button class="btn btn-sm btn-outline-primary w-100 text-start" data-health-filter="multi-version" type="button">
+							<span class="d-block small text-body-secondary">Multi-version mods</span>
+							<span class="fs-5" id="vaultHealthMultiVersion">0</span>
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="mx-2 mb-3 card">
+			<div class="card-body">
 				<div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
 					<div>
 						<div class="fw-bold">Vault cleanup</div>

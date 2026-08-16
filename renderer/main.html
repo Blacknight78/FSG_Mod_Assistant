@@ -439,6 +439,29 @@
 		</div>
 	</div>
 
+	<!-- MARK: collection readiness modal -->
+	<div class="modal" id="collection_readiness_modal" tabindex="-1">
+		<div class="modal-dialog modal-dialog-centered modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h5 modal-title">Collection readiness check</div>
+						<div class="small text-body-secondary">Selected collection: <span id="collectionReadinessCollection"></span></div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#collection_readiness_modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<div class="alert alert-warning py-2" id="collectionReadinessSummary" role="status"></div>
+					<div class="list-group" id="collectionReadinessIssues"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#collection_readiness_modal">Cancel launch</button>
+					<button type="button" class="btn btn-warning" id="collectionReadinessContinue">Continue launch</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
 	<!-- MARK: source site -->
 	<div class="modal" id="open_mod_info_modal" tabindex="-1">
 		<div class="modal-dialog modal-dialog-centered">

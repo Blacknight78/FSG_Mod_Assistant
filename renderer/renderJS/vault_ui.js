@@ -15,6 +15,7 @@ let vaultGameVersionUserSelected = false
 let vaultNotes = {}
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
+let vaultHealthFilter = ''
 let vaultSelectedHashes = new Set()
 let vaultGroupRows = new Map()
 let vaultBusyDepth = 0
@@ -479,6 +480,65 @@ function sourceTypesForEntries(entries) {
 	return [...sourceTypes]
 }
 
+function hasKnownVaultSource(entry) {
+	return (
+		typeof entry.sourceURL === 'string' && entry.sourceURL.trim() !== '' ||
+		typeof entry.modHubURL === 'string' && entry.modHubURL.trim() !== '' ||
+		(entry.modHubIDs ?? []).length !== 0 ||
+		(entry.sources ?? []).some((source) => typeof source === 'string' && source.trim() !== '' && source !== 'Manual import' && source !== 'Vault import')
+	)
+}
+
+function groupHasHealthIssue(group, filter) {
+	switch ( filter ) {
+		case '':
+			return true
+		case 'missing-file':
+			return group.entries.some((entry) => entry.fileExists !== true)
+		case 'missing-game':
+			return group.entries.some((entry) => (entry.gameVersions ?? []).length === 0)
+		case 'no-source':
+			return group.entries.some((entry) => !hasKnownVaultSource(entry))
+		case 'update-available':
+			return group.hasUpdate
+		case 'cleanup-candidate':
+			return group.entries.some((entry) => entry.cleanupEligible === true)
+		case 'kept':
+			return group.entries.some((entry) => entry.keepPinned === true)
+		case 'multi-version':
+			return group.entries.length > 1
+		default:
+			return true
+	}
+}
+
+function healthFilterLabel(filter) {
+	switch ( filter ) {
+		case 'missing-file':
+			return 'Missing files'
+		case 'missing-game':
+			return 'No game tag'
+		case 'no-source':
+			return 'No known source'
+		case 'update-available':
+			return 'Updates available'
+		case 'cleanup-candidate':
+			return 'Cleanup candidates'
+		case 'kept':
+			return 'Kept ZIPs'
+		case 'multi-version':
+			return 'Multi-version mods'
+		default:
+			return 'All Vault records'
+	}
+}
+
+function setHealthFilter(filter) {
+	vaultHealthFilter = filter
+	updateHealthFilterButtons()
+	renderVault(filterEntries())
+}
+
 function fragmentToHTML(fragment) {
 	const wrapper = document.createElement('div')
 	wrapper.appendChild(fragment)
@@ -784,6 +844,48 @@ function groupEntries(entries) {
 	})
 }
 
+function updateHealthFilterButtons() {
+	for ( const button of MA.byId('vaultHealthDashboard').querySelectorAll('button[data-health-filter]') ) {
+		const isActive = button.dataset.healthFilter === vaultHealthFilter
+		button.classList.toggle('active', isActive)
+		button.setAttribute('aria-pressed', isActive.toString())
+	}
+	MA.byIdText(
+		'vaultHealthActiveFilter',
+		vaultHealthFilter === '' ? 'Showing all Vault records.' : `Health filter: ${healthFilterLabel(vaultHealthFilter)}.`
+	)
+}
+
+function updateHealthDashboard() {
+	const groups = groupEntries(vaultEntries)
+	const stats = {
+		cleanupCandidateEntries : vaultEntries.filter((entry) => entry.cleanupEligible === true).length,
+		keptEntries            : vaultEntries.filter((entry) => entry.keepPinned === true).length,
+		missingFileEntries     : vaultEntries.filter((entry) => entry.fileExists !== true).length,
+		missingGameEntries     : vaultEntries.filter((entry) => (entry.gameVersions ?? []).length === 0).length,
+		multiVersionGroups     : groups.filter((group) => group.entries.length > 1).length,
+		noSourceEntries        : vaultEntries.filter((entry) => !hasKnownVaultSource(entry)).length,
+		updateGroups           : groups.filter((group) => group.hasUpdate).length,
+	}
+	const issueCount = stats.missingFileEntries + stats.missingGameEntries + stats.noSourceEntries
+
+	MA.byIdText('vaultHealthGroups', groups.length.toString())
+	MA.byIdText('vaultHealthMissingFiles', stats.missingFileEntries.toString())
+	MA.byIdText('vaultHealthMissingGame', stats.missingGameEntries.toString())
+	MA.byIdText('vaultHealthNoSource', stats.noSourceEntries.toString())
+	MA.byIdText('vaultHealthUpdates', stats.updateGroups.toString())
+	MA.byIdText('vaultHealthCleanup', stats.cleanupCandidateEntries.toString())
+	MA.byIdText('vaultHealthKept', stats.keptEntries.toString())
+	MA.byIdText('vaultHealthMultiVersion', stats.multiVersionGroups.toString())
+	MA.byIdText(
+		'vaultHealthSummary',
+		issueCount === 0 ?
+			`No health issues found across ${groups.length} grouped mod${groups.length === 1 ? '' : 's'}.` :
+			`${issueCount} health item${issueCount === 1 ? ' needs' : 's need'} review across ${groups.length} grouped mod${groups.length === 1 ? '' : 's'}.`
+	)
+	updateHealthFilterButtons()
+}
+
 function filterEntries() {
 	const textFilter = normalValue(MA.byId('vaultTextFilter').value)
 	const authorFilter = MA.byId('vaultAuthorFilter').value
@@ -817,6 +919,7 @@ function filterEntries() {
 		(collectionFilter === '' || group.collections.includes(collectionFilter)) &&
 		(gameVersionFilter === '' || group.gameVersions.includes(gameVersionFilter)) &&
 		(vaultSourceFilter === '' || group.sourceTypes.includes(vaultSourceFilter)) &&
+		groupHasHealthIssue(group, vaultHealthFilter) &&
 		(noteFilter === '' || (noteFilter === 'with' && group.hasNote) || (noteFilter === 'without' && !group.hasNote)) &&
 		(rollbackFilter === '' || (rollbackFilter === 'with' && group.hasRollback) || (rollbackFilter === 'without' && !group.hasRollback)) &&
 		(updateFilter === '' || (updateFilter === 'available' && group.hasUpdate) || (updateFilter === 'none' && !group.hasUpdate)) &&
@@ -1044,6 +1147,7 @@ async function updateVaultSummary(summary) {
 	MA.byIdText('vaultSize', await DATA.bytesToHR(summary.totalSize))
 	MA.byIdText('vaultFolder', summary.folder)
 	MA.byId('vaultRetentionCount').value = vaultRetentionPolicy.versionCount.toString()
+	updateHealthDashboard()
 	await renderCleanupPanel()
 	refreshBulkCopyTarget()
 	pruneVaultSelection()
@@ -1770,6 +1874,10 @@ window.addEventListener('DOMContentLoaded', () => {
 		const sourceButton = event.target.closest('button[data-source]')
 		if ( sourceButton !== null ) { setSourceFilter(sourceButton.dataset.source) }
 	})
+	MA.byId('vaultHealthDashboard').addEventListener('click', (event) => {
+		const healthButton = event.target.closest('button[data-health-filter]')
+		if ( healthButton !== null ) { setHealthFilter(healthButton.dataset.healthFilter) }
+	})
 	MA.byId('vaultClearFilters').addEventListener('click', () => {
 		MA.byId('vaultTextFilter').value = ''
 		MA.byId('vaultAuthorFilter').value = ''
@@ -1786,6 +1894,8 @@ window.addEventListener('DOMContentLoaded', () => {
 		MA.byId('vaultUpdateFilter').value = ''
 		MA.byId('vaultUpdatedFilter').value = ''
 		MA.byId('vaultSortFilter').value = 'name-asc'
+		vaultHealthFilter = ''
+		updateHealthFilterButtons()
 		setSourceFilter('')
 	})
 	MA.byId('vaultImportCollections').addEventListener('click', importCollections)

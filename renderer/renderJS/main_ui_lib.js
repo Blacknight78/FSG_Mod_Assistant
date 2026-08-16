@@ -36,6 +36,7 @@ class StateManager {
 		lastPayload    : null,
 		newFolder      : null,
 		openCollection : null,
+		pendingLaunchCollection : null,
 		scrollPosition : 0,
 		searchString   : '',
 		searchType     : 'find_all',
@@ -56,8 +57,9 @@ class StateManager {
 	loader = null
 
 	modal = {
-		mismatch : null,
-		modInfo  : null,
+		mismatch  : null,
+		modInfo   : null,
+		readiness : null,
 	}
 
 	searchTagList = new Set()
@@ -73,6 +75,7 @@ class StateManager {
 		this.prefs    = new PrefLib()
 		this.modal.mismatch = new ModalOverlay('#open_game_modal')
 		this.modal.modInfo  = new ModalOverlay('#open_mod_info_modal')
+		this.modal.readiness = new ModalOverlay('#collection_readiness_modal')
 
 		window.main_IPC.receive('status:all', () => this.updateState() )
 		window.main_IPC.receive('files:deleteTrigger', () => {
@@ -124,6 +127,150 @@ class StateManager {
 		this.mapCollectionFiles    = new Map()
 		this.mapCollectionDropdown = new Map()
 		this.mapCollectionDropdown.set(0, `--${data.opts.l10n.disable}--`)
+	}
+
+	#collectionName(collectionKey) {
+		return this.mapCollectionDropdown.get(collectionKey) ?? collectionKey ?? '--'
+	}
+
+	#readinessShortList(items, limit = 8) {
+		const safeItems = items.filter((item) => typeof item === 'string' && item !== '')
+		const visible = safeItems.slice(0, limit)
+		const hiddenCount = safeItems.length - visible.length
+		return hiddenCount > 0 ? [...visible, `and ${hiddenCount} more`] : visible
+	}
+
+	#addReadinessIssue(issues, key, label, detail, severity = 'warning', examples = []) {
+		if ( examples.length === 0 ) { return }
+		issues.push({
+			detail,
+			examples : this.#readinessShortList([...new Set(examples)]),
+			key,
+			label,
+			severity,
+			total : examples.length,
+		})
+	}
+
+	#collectionReadinessMods(collectionKey) {
+		const collection = this.track.lastPayload?.modList?.[collectionKey]
+		if ( typeof collection?.mods !== 'object' ) { return [] }
+		return Object.values(collection.mods)
+	}
+
+	#missingDependenciesForMod(collection, modRecord) {
+		if ( !Array.isArray(modRecord.modDesc?.depend) || modRecord.modDesc.depend.length === 0 ) { return [] }
+		return modRecord.modDesc.depend.filter((dependency) => !collection.dependSet.has(dependency))
+	}
+
+	#collectionReadinessDuplicateVersions(mods) {
+		const versionsByMod = new Map()
+		for ( const modRecord of mods ) {
+			const shortName = modRecord.fileDetail?.shortName
+			if ( typeof shortName !== 'string' || shortName === '' ) { continue }
+			if ( !versionsByMod.has(shortName) ) { versionsByMod.set(shortName, new Set()) }
+			versionsByMod.get(shortName).add(modRecord.modDesc?.version ?? '--')
+		}
+		return [...versionsByMod.entries()]
+			.filter(([, versions]) => versions.size > 1)
+			.map(([shortName, versions]) => `${shortName} (${[...versions].join(', ')})`)
+	}
+
+	#collectionReadinessUpdateExamples(collectionKey, mods) {
+		return mods
+			.filter((modRecord) => {
+				const modRec = this.mods?.[collectionKey]?.[modRecord.uuid]
+				return modRecord.badgeArray?.includes('update') || modRec?.updateCheck?.hasGitHubUpdate === true
+			})
+			.map((modRecord) => modRecord.fileDetail.shortName)
+	}
+
+	#collectionReadinessMetadataExamples(mods) {
+		const problemBadges = new Set(['broken', 'fs0', 'malware', 'notmod', 'problem'])
+		return mods
+			.filter((modRecord) => {
+				const badges = modRecord.badgeArray ?? []
+				const hasProblemBadge = badges.some((badge) => problemBadges.has(badge))
+				const missingCoreMetadata = typeof modRecord.modDesc?.version !== 'string' ||
+					modRecord.modDesc.version.trim() === '' ||
+					Number.isNaN(Number.parseInt(modRecord.modDesc?.descVersion, 10))
+				return modRecord.canNotUse === true || hasProblemBadge || missingCoreMetadata
+			})
+			.map((modRecord) => modRecord.fileDetail.shortName)
+	}
+
+	#collectionReadinessIssues(collectionKey) {
+		const collection = this.track.lastPayload?.modList?.[collectionKey]
+		if ( typeof collection?.mods !== 'object' ) {
+			return [{
+				detail   : 'The selected collection is not currently loaded.',
+				examples : [],
+				key      : 'missing-collection',
+				label    : 'Collection not loaded',
+				severity : 'danger',
+				total    : 1,
+			}]
+		}
+
+		const mods = this.#collectionReadinessMods(collectionKey)
+		const issues = []
+		const missingDependencies = []
+		for ( const modRecord of mods ) {
+			for ( const dependency of this.#missingDependenciesForMod(collection, modRecord) ) {
+				missingDependencies.push(`${modRecord.fileDetail.shortName} needs ${dependency}`)
+			}
+		}
+
+		this.#addReadinessIssue(issues, 'missing-dependencies', 'Missing dependencies', 'Required mods are not present in this collection.', 'danger', missingDependencies)
+		this.#addReadinessIssue(issues, 'duplicate-versions', 'Duplicate versions', 'The same mod appears with more than one version.', 'warning', this.#collectionReadinessDuplicateVersions(mods))
+		this.#addReadinessIssue(issues, 'fs-mismatch', 'FS version mismatch', `Mods do not match the active FS${this.flag.currentVersion} game version.`, 'danger', mods
+			.filter((modRecord) => modRecord.gameVersion !== this.flag.currentVersion)
+			.map((modRecord) => `${modRecord.fileDetail.shortName} is FS${modRecord.gameVersion || 'unknown'}`))
+		this.#addReadinessIssue(issues, 'updates', 'Update available', 'One or more mods has a newer ModHub or saved GitHub version.', 'info', this.#collectionReadinessUpdateExamples(collectionKey, mods))
+		this.#addReadinessIssue(issues, 'metadata', 'Suspicious or broken metadata', 'These mods have broken, unreadable, unsupported, or incomplete metadata.', 'warning', this.#collectionReadinessMetadataExamples(mods))
+
+		return issues
+	}
+
+	#renderReadinessIssues(collectionKey, issues) {
+		const list = MA.byId('collectionReadinessIssues')
+		list.innerHTML = ''
+		MA.byIdText('collectionReadinessCollection', this.#collectionName(collectionKey))
+		MA.byIdText('collectionReadinessSummary', `${issues.reduce((sum, issue) => sum + issue.total, 0)} warning item${issues.length === 1 ? '' : 's'} found before launch.`)
+
+		for ( const issue of issues ) {
+			const node = document.createElement('div')
+			node.className = `list-group-item border-${issue.severity}`
+			const examples = issue.examples.length === 0 ?
+				'' :
+				`<ul class="mb-0 mt-1 small">${issue.examples.map((item) => `<li>${DATA.escapeSpecial(item)}</li>`).join('')}</ul>`
+			node.innerHTML = [
+				'<div class="d-flex justify-content-between gap-2">',
+				`<div class="fw-bold">${DATA.escapeSpecial(issue.label)}</div>`,
+				`<span class="badge text-bg-${issue.severity}">${issue.total}</span>`,
+				'</div>',
+				`<div class="small text-body-secondary">${DATA.escapeSpecial(issue.detail)}</div>`,
+				examples,
+			].join('')
+			list.appendChild(node)
+		}
+	}
+
+	#dispatchGameLaunch() {
+		LEDLib.spinLED()
+		window.main_IPC.dispatch('game')
+	}
+
+	#launchWithReadiness(collectionKey) {
+		const issues = this.#collectionReadinessIssues(collectionKey)
+		if ( issues.length === 0 ) {
+			this.#dispatchGameLaunch()
+			return
+		}
+		this.track.pendingLaunchCollection = collectionKey
+		this.#renderReadinessIssues(collectionKey, issues)
+		LEDLib.fastBlinkLED()
+		this.modal.readiness.show()
 	}
 	doL10N(item, lowerCase = false) {
 		let returnText = item?.[this.track.currentLocale]
@@ -1404,8 +1551,7 @@ class StateManager {
 			const currentList = MA.byIdValue('collectionSelect')
 			if ( currentList === window.state.flag.activeCollect ) {
 				// Selected is active, no confirm
-				LEDLib.spinLED()
-				window.main_IPC.dispatch('game')
+				window.state.#launchWithReadiness(window.state.flag.activeCollect)
 			} else {
 				// Different, ask confirmation
 				MA.byIdHTML('no_match_game_list', window.state.mapCollectionDropdown.get(window.state.flag.activeCollect))
@@ -1414,17 +1560,22 @@ class StateManager {
 				window.state.modal.mismatch.show()
 			}
 		},
+		launchGame_CONTINUE : () => {
+			window.state.modal.readiness.hide()
+			window.state.track.pendingLaunchCollection = null
+			window.state.#dispatchGameLaunch()
+		},
 		launchGame_FIX : () => {
+			const launchCollection = MA.byIdValue('collectionSelect').replace('collection--', '')
 			window.state.modal.mismatch.hide()
 			window.state.action.collectActive().then(() => {
-				window.main_IPC.dispatch('game')
+				window.state.#launchWithReadiness(launchCollection)
 			})
 		},
 		launchGame_IGNORE : () => {
 			window.state.modal.mismatch.hide()
-			LEDLib.spinLED()
 			MA.byIdValue('collectionSelect', window.state.flag.activeCollect)
-			window.main_IPC.dispatch('game')
+			window.state.#launchWithReadiness(window.state.flag.activeCollect)
 		},
 		openModInfo : (mod) => {
 			window.settings.site(mod.fileDetail.shortName, false).then((value) => {

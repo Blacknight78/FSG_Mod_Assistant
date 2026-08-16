@@ -272,6 +272,9 @@ const pageAPI = {
 	'setup' : {
 		functions : {
 			addFolder : ( folder, version ) => { ipcRenderer.send('folders:addDirect', folder, version) },
+			openSetupPath : (targetPath) => ipcRenderer.invoke('settings:openSetupPath', targetPath),
+			openPerformanceLog : () => ipcRenderer.invoke('settings:openPerformanceLog'),
+			performanceSummary : () => ipcRenderer.invoke('settings:performanceSummary'),
 			scanGames : () => ipcRenderer.invoke('wizard:scanGames'),
 			update    : () => ipcRenderer.invoke('wizard:update'),
 		},
