@@ -4665,9 +4665,11 @@ ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 		const backupFolder = path.join(app.getPath('userData'), 'update-backups')
 		await fsPromise.mkdir(backupFolder, { recursive : true })
 
+		const results = []
 		const updateCount = await downloads.reduce(async (previousCount, download) => {
 			const count = await previousCount
 			const updateResult = await downloadAndApplyUpdate(download)
+			const sourceName = updateResult.usedCache ? `${updateSourceTypeLabel(download.sourceType)} cache` : updateSourceTypeLabel(download.sourceType)
 			addCollectionHistoryEntry({
 				action           : 'update_applied',
 				backupHash       : updateResult.backupHash,
@@ -4682,17 +4684,30 @@ ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 				modName          : download.modName,
 				previousVersion  : updateResult.previousVersion ?? null,
 				replacedExisting : updateResult.backupPath !== null,
-				source           : updateResult.usedCache ? `${updateSourceTypeLabel(download.sourceType)} cache` : updateSourceTypeLabel(download.sourceType),
+				source           : sourceName,
 				sourceURL        : download.sourceURL,
 				stagedPath       : null,
 				targetPath       : updateResult.targetPath,
+			})
+			results.push({
+				backupPath       : updateResult.backupPath,
+				collectionName   : updateResult.collectionName,
+				currentVersion   : updateResult.integrityVersion ?? download.version ?? null,
+				fileName         : download.fileName,
+				modName          : download.modName,
+				ok               : true,
+				previousVersion  : updateResult.previousVersion ?? null,
+				replacedExisting : updateResult.backupPath !== null,
+				source           : sourceName,
+				targetPath       : updateResult.targetPath,
+				usedCache        : updateResult.usedCache,
 			})
 			return count + 1
 		}, Promise.resolve(0))
 
 		funcLib.general.toggleFolderDirty()
 		await processModFoldersAndWait()
-		return { count : updateCount, ok : true }
+		return { count : updateCount, ok : true, results }
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
