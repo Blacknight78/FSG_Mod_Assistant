@@ -321,7 +321,7 @@ ipcMain.handle('i18n:get', async (_, key, version = 25) => {
 		case 'app_name':
 			return serveIPC.l10n.getTextOverride(key, version, { prefix : '<i class="fsico-ma-large"></i>' })
 		case 'app_version' :
-			return serveIPC.l10n.getTextOverride(key, version, { newText : !app.isPackaged ? app.getVersion().toString() : '' })
+			return serveIPC.l10n.getTextOverride(key, version, { newText : app.getVersion().toString() })
 		case 'game_icon' :
 			return serveIPC.l10n.getTextOverride(key, version, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
 		case 'game_icon_lg' :
