@@ -96,11 +96,13 @@ function sideBarHandlers() {
 	MA.byIdEventIfExists('moveButton_move',   () => { window.state.startFile('move') })
 	MA.byIdEventIfExists('moveButton_copy',   () => { window.state.startFile('copy') })
 	MA.byIdEventIfExists('moveButton_delete', () => { window.state.startFile('delete') })
+	MA.byIdEventIfExists('moveButton_disable', () => { window.state.action.disableSelectedMods() })
 	MA.byIdEventIfExists('moveButton_zip',    () => { window.state.startFile('zip') })
 
 	MA.byIdEventIfExists('moveButton_open', () => { window.state.startFile('openMods') })
 	MA.byIdEventIfExists('moveButton_hub',  () => { window.state.startFile('openHub') })
 	MA.byIdEventIfExists('moveButton_site', () => { window.state.startFile('openExt') })
+	MA.byIdEventIfExists('moveButton_disabled', () => { window.state.action.openDisabledMods() })
 }
 // MARK: top UI event
 function topUIHandlers() {
@@ -130,6 +132,8 @@ function popUIHandlers() {
 	MA.byIdEventIfExists('mismatchLaunchIgnore', () => { window.state.action.launchGame_IGNORE() })
 	MA.byIdEventIfExists('mismatchLaunchFix',    () => { window.state.action.launchGame_FIX() })
 	MA.byIdEventIfExists('collectionReadinessContinue', () => { window.state.action.launchGame_CONTINUE() })
+	MA.byIdEventIfExists('collectionReadinessSelectMissingDependencies', () => { window.state.action.selectMissingDependencyMods() })
+	MA.byIdEventIfExists('disabledModsRestoreSelected', () => { window.state.action.restoreSelectedDisabledMods() })
 
 	MA.byIdEventIfExists('mod_info_input',  () => { window.main_IPC.contextInput() }, 'contextmenu')
 	MA.byIdEventIfExists('mod_info_button', () => { window.state.action.setModInfo() })

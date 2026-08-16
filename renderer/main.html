@@ -383,11 +383,13 @@
 				<i18n-text id="moveButton_move" type="button" class="btn btn-success disabled" data-key="move_to_list"></i18n-text>
 				<i18n-text id="moveButton_copy" type="button" class="btn btn-success disabled" data-key="copy_to_list"></i18n-text>
 				<i18n-text id="moveButton_delete" type="button" class="btn btn-danger disabled" data-key="remove_from_list"></i18n-text>
+				<button id="moveButton_disable" type="button" class="btn btn-outline-warning disabled">Disable selected</button>
 				<i18n-text id="moveButton_zip" type="button" class="btn btn-primary disabled" data-key="make_zip"></i18n-text>
 
 				<i18n-text id="moveButton_open" type="button" class="btn btn-secondary disabled" data-key="open_from_list"></i18n-text>
 				<i18n-text id="moveButton_hub" type="button" class="btn btn-secondary disabled" data-key="open_hub"></i18n-text>
 				<i18n-text id="moveButton_site" type="button" class="btn btn-secondary disabled" data-key="context_open_website"></i18n-text>
+				<button id="moveButton_disabled" type="button" class="btn btn-outline-info disabled">Disabled Mods</button>
 				
 				<i18n-text id="moveButton_fav" type="button" class="btn btn-warning" data-key="copy_fav_to"></i18n-text>
 				<i18n-text id="moveButton_ver" type="button" class="btn btn-success" data-key="version_check"></i18n-text>
@@ -480,8 +482,32 @@
 					<div class="list-group" id="collectionReadinessIssues"></div>
 				</div>
 				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-warning d-none me-auto" id="collectionReadinessSelectMissingDependencies">Select dependency warnings</button>
 					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#collection_readiness_modal">Cancel launch</button>
 					<button type="button" class="btn btn-warning" id="collectionReadinessContinue">Continue launch</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- MARK: disabled mods modal -->
+	<div class="modal" id="disabled_mods_modal" tabindex="-1">
+		<div class="modal-dialog modal-dialog-centered modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h5 modal-title">Disabled mods</div>
+						<div class="small text-body-secondary">Selected collection: <span id="disabledModsCollection"></span></div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#disabled_mods_modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<div class="alert alert-secondary py-2" id="disabledModsStatus">Loading disabled mods...</div>
+					<div class="list-group" id="disabledModsList"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#disabled_mods_modal">Close</button>
+					<button type="button" class="btn btn-success" id="disabledModsRestoreSelected">Restore selected</button>
 				</div>
 			</div>
 		</div>

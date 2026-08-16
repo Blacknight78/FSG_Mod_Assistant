@@ -127,6 +127,9 @@ ipcMain.on('files:openExplore',  (_, modID)    => {
 // MARK: file manage
 ipcMain.handle('files:list',      (_, mode, mods) => getCopyMoveDelete(mode, mods))
 ipcMain.handle('files:list:favs', ()              => getCopyMoveDelete('copyFavs', ...serveIPC.modCollect.getFavoriteCollectionFiles()))
+ipcMain.handle('files:disableSelected', async (_, payload) => disableSelectedCollectionMods(payload))
+ipcMain.handle('files:disabledList', async (_, payload) => listDisabledCollectionMods(payload))
+ipcMain.handle('files:restoreDisabled', async (_, payload) => restoreDisabledCollectionMods(payload))
 ipcMain.handle('files:drop', async (_, files) => {
 	if ( files.length === 1 && files[0].endsWith('.csv') ) {
 		new csvFileChecker(files[0]).getInfo().then((results) => {
@@ -4166,6 +4169,172 @@ function disabledCollectionZipPath(collectionPath, fileName) {
 	const parsed = path.parse(safeName)
 	const stamp = new Date().toISOString().replace(/[:.]/gu, '-')
 	return path.join(disabledFolder, `${parsed.name}-${stamp}${parsed.ext || '.zip'}`)
+}
+
+function restoredCollectionZipPath(collectionPath, fileName) {
+	const safeName = safeDownloadFileName(fileName)
+	const firstCandidate = path.join(collectionPath, safeName)
+	if ( !fs.existsSync(firstCandidate) ) { return firstCandidate }
+
+	const parsed = path.parse(safeName)
+	const stamp = new Date().toISOString().replace(/[:.]/gu, '-')
+	return path.join(collectionPath, `${parsed.name}-restored-${stamp}${parsed.ext || '.zip'}`)
+}
+
+async function collectionByKey(collectionKey) {
+	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === collectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('The selected collection is no longer available.') }
+	return collection
+}
+
+function disableCollectionModRecord(collection) {
+	const collectionRoot = path.resolve(collection.path)
+	// eslint-disable-next-line complexity
+	return async (modRecord) => {
+		const fileName = safeDownloadFileName(path.basename(modRecord?.fileDetail?.fullPath ?? ''))
+		const modName = modRecord?.fileDetail?.shortName ?? path.basename(fileName, path.extname(fileName))
+		const sourcePath = path.resolve(modRecord?.fileDetail?.fullPath ?? '')
+
+		try {
+			if ( modRecord?.fileDetail?.isFolder === true ) { throw new Error('Folder mods cannot be disabled this way.') }
+			if ( path.extname(sourcePath).toLowerCase() !== '.zip' ) { throw new Error('Selected file is not a ZIP mod.') }
+			if ( !pathIsInsideFolder(sourcePath, collectionRoot) ) { throw new Error('Selected ZIP is outside the collection folder.') }
+			if ( path.basename(path.dirname(sourcePath)).toLowerCase() === '_disabled' ) { throw new Error('Selected ZIP is already disabled.') }
+			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected ZIP is no longer in the collection folder.') }
+
+			await fsPromise.mkdir(path.join(collection.path, '_disabled'), { recursive : true })
+			const targetPath = disabledCollectionZipPath(collection.path, fileName)
+			await fsPromise.rename(sourcePath, targetPath)
+			addCollectionHistoryEntry({
+				action         : 'collection_mod_disabled',
+				collectionName : collection.name,
+				currentVersion : modRecord?.modDesc?.version ?? null,
+				fileName,
+				modName,
+				source         : 'Main collection list',
+				sourceURL      : serveIPC.storeSites.get(modName, null),
+				stagedPath     : sourcePath,
+				targetPath,
+			})
+
+			return { fileName, modName, ok : true, targetPath }
+		} catch (err) {
+			return { error : err.message, fileName, modName, ok : false, targetPath : sourcePath }
+		}
+	}
+}
+
+async function disableSelectedCollectionMods({ modIDs = [] } = {}) {
+	if ( !Array.isArray(modIDs) || modIDs.length === 0 ) { throw new Error('No mods were selected.') }
+
+	const recordsByCollection = new Map()
+	for ( const modID of modIDs ) {
+		const [collectionKey] = String(modID).split('--')
+		if ( typeof collectionKey !== 'string' || collectionKey === '' ) { continue }
+		if ( !recordsByCollection.has(collectionKey) ) { recordsByCollection.set(collectionKey, []) }
+		const modRecord = serveIPC.modCollect.modColUUIDToRecord(modID)
+		if ( modRecord !== null ) { recordsByCollection.get(collectionKey).push(modRecord) }
+	}
+
+	const results = []
+	for ( const [collectionKey, records] of recordsByCollection ) {
+		// eslint-disable-next-line no-await-in-loop
+		const collection = await collectionByKey(collectionKey)
+		const disableRecord = disableCollectionModRecord(collection)
+		for ( const modRecord of records ) {
+			// eslint-disable-next-line no-await-in-loop
+			results.push(await disableRecord(modRecord))
+		}
+	}
+
+	if ( results.some((result) => result.ok) ) {
+		funcLib.general.toggleFolderDirty()
+		await processModFoldersAndWait()
+		invalidateModLibrarySummary()
+	}
+
+	return {
+		disabled : results.filter((result) => result.ok).length,
+		failed   : results.filter((result) => !result.ok).length,
+		ok       : true,
+		results,
+	}
+}
+
+async function listDisabledCollectionMods({ collectionKey } = {}) {
+	const collection = await collectionByKey(collectionKey)
+	const disabledFolder = path.join(collection.path, '_disabled')
+	if ( !fs.existsSync(disabledFolder) ) {
+		return { collectionName : collection.name, entries : [], ok : true }
+	}
+
+	const entries = (await fsPromise.readdir(disabledFolder, { withFileTypes : true }))
+		.filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.zip')
+		.map((entry) => {
+			const fullPath = path.join(disabledFolder, entry.name)
+			const stats = fs.statSync(fullPath)
+			return {
+				fileName  : entry.name,
+				fullPath,
+				modName   : path.basename(entry.name, path.extname(entry.name)),
+				modified  : stats.mtime.toISOString(),
+				size      : stats.size,
+			}
+		})
+		.toSorted((left, right) => left.fileName.localeCompare(right.fileName))
+
+	return { collectionName : collection.name, entries, ok : true }
+}
+
+async function restoreDisabledCollectionMods({ collectionKey, fileNames = [] } = {}) {
+	if ( !Array.isArray(fileNames) || fileNames.length === 0 ) { throw new Error('No disabled mods were selected.') }
+	const collection = await collectionByKey(collectionKey)
+	const collectionRoot = path.resolve(collection.path)
+	const disabledFolder = path.join(collection.path, '_disabled')
+	const disabledRoot = path.resolve(disabledFolder)
+
+	const results = []
+	for ( const rawFileName of fileNames ) {
+		const fileName = safeDownloadFileName(rawFileName)
+		const sourcePath = path.resolve(path.join(disabledFolder, fileName))
+		const modName = path.basename(fileName, path.extname(fileName))
+		try {
+			if ( path.extname(sourcePath).toLowerCase() !== '.zip' ) { throw new Error('Selected file is not a ZIP mod.') }
+			if ( !pathIsInsideFolder(sourcePath, disabledRoot) ) { throw new Error('Selected ZIP is outside the disabled folder.') }
+			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected disabled ZIP no longer exists.') }
+			const targetPath = restoredCollectionZipPath(collection.path, fileName)
+			if ( !pathIsInsideFolder(targetPath, collectionRoot) ) { throw new Error('Restore target is outside the collection folder.') }
+			// eslint-disable-next-line no-await-in-loop
+			await fsPromise.rename(sourcePath, targetPath)
+			addCollectionHistoryEntry({
+				action         : 'collection_mod_restored',
+				collectionName : collection.name,
+				fileName,
+				modName,
+				source         : 'Disabled mods',
+				stagedPath     : sourcePath,
+				targetPath,
+			})
+			results.push({ fileName, modName, ok : true, targetPath })
+		} catch (err) {
+			results.push({ error : err.message, fileName, modName, ok : false, targetPath : sourcePath })
+		}
+	}
+
+	if ( results.some((result) => result.ok) ) {
+		funcLib.general.toggleFolderDirty()
+		await processModFoldersAndWait()
+		invalidateModLibrarySummary()
+	}
+
+	return {
+		failed   : results.filter((result) => !result.ok).length,
+		ok       : true,
+		restored : results.filter((result) => result.ok).length,
+		results,
+	}
 }
 
 // eslint-disable-next-line complexity

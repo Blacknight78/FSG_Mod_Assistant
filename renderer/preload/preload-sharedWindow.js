@@ -164,6 +164,8 @@ const pageAPI = {
 			},
 	
 			files : {
+				disableSelected : (modIDs)      => ipcRenderer.invoke('files:disableSelected', { modIDs }),
+				disabledList    : (collectionKey) => ipcRenderer.invoke('files:disabledList', { collectionKey }),
 				drop        : (files)      => ipcRenderer.invoke('files:drop', Object.values(files).map((x) => webUtils.getPathForFile(x)) ),
 				exportZIP   : (MKey_s)     => { ipcRenderer.send('file:exportZIP', MKey_s) },
 				list        : (mode, mods) => ipcRenderer.invoke('files:list', mode, mods),
@@ -172,6 +174,7 @@ const pageAPI = {
 				openExtSite : (MKey_s)     => { ipcRenderer.send('files:openExtSite', MKey_s) },
 				openModHub  : (MKey_s)     => { ipcRenderer.send('files:openModHub', MKey_s) },
 				process     : ( object )   => ipcRenderer.invoke('file:operation', object),
+				restoreDisabled : (collectionKey, fileNames) => ipcRenderer.invoke('files:restoreDisabled', { collectionKey, fileNames }),
 			},
 	
 			folder : {
