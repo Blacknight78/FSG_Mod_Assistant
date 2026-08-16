@@ -703,6 +703,7 @@ ipcMain.handle('gamelog:open', () => {
 })
 ipcMain.handle('gamelog:get',     () => funcLib.gameSet.streamGameLog())
 ipcMain.handle('gamelog:getFile', () => funcLib.prefs.gameLogFile())
+ipcMain.handle('gamelog:scanCollection', async (_, payload) => scanGameLogCollectionIssues(payload))
 ipcMain.on('gamelog:folder',   () => shell.showItemInFolder(funcLib.prefs.gameLogFile()) )
 ipcMain.on('dispatch:gamelog', () => { serveIPC.windowLib.createNamedWindow('gamelog') })
 ipcMain.on('dispatch:history', () => { serveIPC.windowLib.createNamedWindow('history') })
@@ -4223,6 +4224,143 @@ function disableCollectionModRecord(collection) {
 		} catch (err) {
 			return { error : err.message, fileName, modName, ok : false, targetPath : sourcePath }
 		}
+	}
+}
+
+function gameLogIssueSeverity(line) {
+	if ( /lua call stack|error:|error \(|\berror\b|exception|failed|could not|can't|cannot/iu.test(line) ) { return 'danger' }
+	if ( /warning:|warning \(|conflict|duplicate|missing|requires|invalid|unsupported|not found/iu.test(line) ) { return 'warning' }
+	return null
+}
+
+function gameLogNormalizeNeedle(value) {
+	return String(value ?? '')
+		.toLowerCase()
+		.replace(/\\/gu, '/')
+		.replace(/\.zip\b/gu, '')
+		.trim()
+}
+
+function gameLogModNeedles(modRecord) {
+	const shortName = modRecord?.fileDetail?.shortName ?? ''
+	const fileName = path.basename(modRecord?.fileDetail?.fullPath ?? '')
+	return [...new Set([
+		gameLogNormalizeNeedle(shortName),
+		gameLogNormalizeNeedle(fileName),
+		gameLogNormalizeNeedle(path.basename(fileName, path.extname(fileName))),
+	].filter((value) => value.length >= 4))]
+}
+
+function gameLogLineMatchesMod(normalizedLine, modEntry) {
+	return modEntry.needles.some((needle) => normalizedLine.includes(needle))
+}
+
+function gameLogCandidateEntry(candidates, modEntry) {
+	if ( !candidates.has(modEntry.modID) ) {
+		candidates.set(modEntry.modID, {
+			fileName   : modEntry.fileName,
+			lines      : [],
+			modID      : modEntry.modID,
+			modName    : modEntry.modName,
+			score      : 0,
+			severity   : 'warning',
+		})
+	}
+	return candidates.get(modEntry.modID)
+}
+
+function gameLogAddCandidate(candidates, modEntry, lineNumber, line, severity, confidence) {
+	const candidate = gameLogCandidateEntry(candidates, modEntry)
+	const confidenceScore = confidence === 'direct' ? 4 : 1
+	const severityScore = severity === 'danger' ? 3 : 1
+	candidate.score += confidenceScore + severityScore
+	if ( severity === 'danger' ) { candidate.severity = 'danger' }
+	if ( candidate.lines.length < 5 ) {
+		candidate.lines.push({
+			confidence,
+			line       : line.trim().slice(0, 300),
+			lineNumber,
+			severity,
+		})
+	}
+}
+
+function gameLogLoadedModEntry(line, modEntries) {
+	const normalizedLine = gameLogNormalizeNeedle(line)
+	if ( !/available mod:|load mod:|loading mod/iu.test(line) ) { return null }
+	return modEntries.find((modEntry) => gameLogLineMatchesMod(normalizedLine, modEntry)) ?? null
+}
+
+function gameLogCollectionModEntries(collectionKey) {
+	const collection = serveIPC.modCollect.getModCollection(collectionKey)
+	if ( typeof collection?.mods !== 'object' ) { return [] }
+	return Object.values(collection.mods)
+		.filter((modRecord) => {
+			const fileDetail = modRecord?.fileDetail ?? {}
+			if ( fileDetail.isFolder === true || fileDetail.isSaveGame === true ) { return false }
+			return typeof fileDetail.fullPath === 'string' && fileDetail.fullPath.toLowerCase().endsWith('.zip')
+		})
+		.map((modRecord) => ({
+			fileName : path.basename(modRecord.fileDetail.fullPath),
+			modID   : modRecord.colUUID,
+			modName : modRecord.fileDetail.shortName,
+			needles : gameLogModNeedles(modRecord),
+		}))
+		.filter((entry) => entry.needles.length !== 0)
+}
+
+async function scanGameLogCollectionIssues({ collectionKey } = {}) {
+	const collection = await collectionByKey(collectionKey)
+	const logPath = funcLib.prefs.gameLogFile()
+	if ( logPath === null || !fs.existsSync(logPath) ) {
+		return {
+			candidates    : [],
+			collectionName : collection.name,
+			logPath,
+			ok            : false,
+			status        : 'The active game log could not be found.',
+		}
+	}
+
+	const logText = await funcLib.gameSet.streamGameLog()
+	const modEntries = gameLogCollectionModEntries(collection.key)
+	const candidates = new Map()
+	const lines = String(logText ?? '').split(/\r?\n/u)
+	let lastLoadedMod = null
+	let lastLoadedLine = 0
+
+	for ( const [index, line] of lines.entries() ) {
+		const loadedMod = gameLogLoadedModEntry(line, modEntries)
+		if ( loadedMod !== null ) {
+			lastLoadedMod = loadedMod
+			lastLoadedLine = index + 1
+		}
+
+		const severity = gameLogIssueSeverity(line)
+		if ( severity === null ) { continue }
+
+		const normalizedLine = gameLogNormalizeNeedle(line)
+		const directMatches = modEntries.filter((modEntry) => gameLogLineMatchesMod(normalizedLine, modEntry))
+		for ( const modEntry of directMatches ) {
+			gameLogAddCandidate(candidates, modEntry, index + 1, line, severity, 'direct')
+		}
+
+		if ( directMatches.length === 0 && lastLoadedMod !== null && index + 1 - lastLoadedLine <= 20 ) {
+			gameLogAddCandidate(candidates, lastLoadedMod, index + 1, line, severity, 'nearby')
+		}
+	}
+
+	const sortedCandidates = [...candidates.values()]
+		.toSorted((left, right) => right.score - left.score || left.modName.localeCompare(right.modName))
+
+	return {
+		candidates : sortedCandidates,
+		collectionName : collection.name,
+		logPath,
+		ok     : true,
+		status : sortedCandidates.length === 0 ?
+			'No loaded collection mods were matched to warning, error, or Lua lines in the active game log.' :
+			`Matched ${sortedCandidates.length} loaded collection mod(s) to warning, error, or Lua lines.`,
 	}
 }
 

@@ -103,6 +103,7 @@ function sideBarHandlers() {
 	MA.byIdEventIfExists('moveButton_hub',  () => { window.state.startFile('openHub') })
 	MA.byIdEventIfExists('moveButton_site', () => { window.state.startFile('openExt') })
 	MA.byIdEventIfExists('moveButton_disabled', () => { window.state.action.openDisabledMods() })
+	MA.byIdEventIfExists('moveButton_logIssues', () => { window.state.action.openGameLogIssues() })
 }
 // MARK: top UI event
 function topUIHandlers() {
@@ -133,6 +134,8 @@ function popUIHandlers() {
 	MA.byIdEventIfExists('mismatchLaunchFix',    () => { window.state.action.launchGame_FIX() })
 	MA.byIdEventIfExists('collectionReadinessContinue', () => { window.state.action.launchGame_CONTINUE() })
 	MA.byIdEventIfExists('collectionReadinessSelectMissingDependencies', () => { window.state.action.selectMissingDependencyMods() })
+	MA.byIdEventIfExists('gameLogIssuesDisable', () => { window.state.action.disableGameLogIssueMods() })
+	MA.byIdEventIfExists('gameLogIssuesSelect', () => { window.state.action.selectGameLogIssueMods() })
 	MA.byIdEventIfExists('disabledModsRestoreSelected', () => { window.state.action.restoreSelectedDisabledMods() })
 
 	MA.byIdEventIfExists('mod_info_input',  () => { window.main_IPC.contextInput() }, 'contextmenu')

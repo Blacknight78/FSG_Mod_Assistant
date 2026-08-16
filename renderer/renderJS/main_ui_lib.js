@@ -58,6 +58,7 @@ class StateManager {
 
 	modal = {
 		disabled  : null,
+		gameLogIssues : null,
 		mismatch  : null,
 		modInfo   : null,
 		readiness : null,
@@ -65,6 +66,10 @@ class StateManager {
 	disabledMods = {
 		collectionKey : null,
 		entries       : [],
+	}
+	gameLogIssues = {
+		candidates    : [],
+		collectionKey : null,
 	}
 
 	searchTagList = new Set()
@@ -79,6 +84,7 @@ class StateManager {
 		this.files    = new FileLib()
 		this.prefs    = new PrefLib()
 		this.modal.disabled = new ModalOverlay('#disabled_mods_modal')
+		this.modal.gameLogIssues = new ModalOverlay('#game_log_issues_modal')
 		this.modal.mismatch = new ModalOverlay('#open_game_modal')
 		this.modal.modInfo  = new ModalOverlay('#open_mod_info_modal')
 		this.modal.readiness = new ModalOverlay('#collection_readiness_modal')
@@ -295,6 +301,76 @@ class StateManager {
 		if ( this.track.openCollection !== null ) { return this.track.openCollection }
 		const selected = MA.byIdValue('collectionSelect')?.replace('collection--', '') ?? ''
 		return selected !== '' && selected !== '0' && selected !== '999' ? selected : null
+	}
+
+	#selectedGameLogIssueModIDs() {
+		return [...document.querySelectorAll('.game-log-issue-select:checked')].map((checkbox) => checkbox.value)
+	}
+
+	#selectModIDsInCollection(collectionKey, modIDs) {
+		if ( collectionKey === null || modIDs.length === 0 ) { return }
+		if ( this.track.openCollection !== collectionKey ) {
+			this.colToggle(collectionKey, true)
+		}
+		this.track.selected = new Set(modIDs)
+		this.forceSelectOnly(true)
+		this.doDisplay()
+		this.colScroll(collectionKey)
+	}
+
+	#renderGameLogIssues(result) {
+		this.gameLogIssues.candidates = result.candidates ?? []
+		MA.byIdText('gameLogIssuesCollection', result.collectionName ?? this.#collectionName(this.gameLogIssues.collectionKey))
+		MA.byIdText('gameLogIssuesPath', result.logPath ?? '--')
+		MA.byIdText('gameLogIssuesStatus', result.status ?? 'Game log scan completed.')
+
+		const list = MA.byId('gameLogIssuesList')
+		list.innerHTML = ''
+		for ( const candidate of this.gameLogIssues.candidates ) {
+			const node = document.createElement('label')
+			node.className = `list-group-item border-${candidate.severity === 'danger' ? 'danger' : 'warning'}`
+			const reasons = (candidate.lines ?? []).map((entry) => [
+				'<li>',
+				`<span class="badge text-bg-${entry.severity === 'danger' ? 'danger' : 'warning'} me-2">${DATA.escapeSpecial(entry.confidence)}</span>`,
+				`<span class="text-body-secondary">Line ${DATA.escapeSpecial(entry.lineNumber)}:</span> `,
+				DATA.escapeSpecial(entry.line),
+				'</li>',
+			].join('')).join('')
+			node.innerHTML = [
+				'<div class="d-flex gap-3 align-items-start">',
+				`<input class="form-check-input game-log-issue-select mt-1" type="checkbox" value="${DATA.escapeSpecial(candidate.modID)}">`,
+				'<div class="flex-grow-1">',
+				'<div class="d-flex justify-content-between gap-2">',
+				`<div class="fw-bold">${DATA.escapeSpecial(candidate.modName)}</div>`,
+				`<span class="badge text-bg-${candidate.severity === 'danger' ? 'danger' : 'warning'}">score ${DATA.escapeSpecial(candidate.score)}</span>`,
+				'</div>',
+				`<div class="small text-body-secondary">${DATA.escapeSpecial(candidate.fileName)}</div>`,
+				`<ul class="mb-0 mt-2 small">${reasons}</ul>`,
+				'</div>',
+				'</div>',
+			].join('')
+			list.append(node)
+		}
+		MA.byId('gameLogIssuesSelect').disabled = this.gameLogIssues.candidates.length === 0
+		MA.byId('gameLogIssuesDisable').disabled = this.gameLogIssues.candidates.length === 0
+	}
+
+	async #openGameLogIssues(collectionKey) {
+		if ( collectionKey === null ) { return }
+		this.gameLogIssues.collectionKey = collectionKey
+		MA.byIdText('gameLogIssuesCollection', this.#collectionName(collectionKey))
+		MA.byIdText('gameLogIssuesPath', '--')
+		MA.byIdText('gameLogIssuesStatus', 'Scanning game log...')
+		MA.byIdHTML('gameLogIssuesList', '')
+		MA.byId('gameLogIssuesSelect').disabled = true
+		MA.byId('gameLogIssuesDisable').disabled = true
+		this.modal.gameLogIssues.show()
+		try {
+			const result = await window.main_IPC.gameLog.scanCollection(collectionKey)
+			this.#renderGameLogIssues(result)
+		} catch (err) {
+			MA.byIdText('gameLogIssuesStatus', `Game log scan failed: ${err.message}`)
+		}
 	}
 
 	#renderDisabledMods(result) {
@@ -660,6 +736,7 @@ class StateManager {
 		MA.byId('moveButton_disable').clsDisable(this.track.selected.size === 0)
 		MA.byId('moveButton_zip').clsDisable(this.track.selected.size === 0)
 		MA.byId('moveButton_disabled').clsDisable(this.track.openCollection === null)
+		MA.byId('moveButton_logIssues').clsDisable(this.track.openCollection === null)
 
 		MA.byId('moveButton_open').clsEnable(this.track.selected.size === 1 || this.track.altClick !== null)
 
@@ -1629,6 +1706,22 @@ class StateManager {
 			MA.byIdValue('collectionSelect', 0)
 			return window.main_IPC.folder.active(null)
 		},
+		disableGameLogIssueMods : async () => {
+			const modIDs = this.#selectedGameLogIssueModIDs()
+			if ( modIDs.length === 0 ) { return }
+			MA.byId('gameLogIssuesDisable').disabled = true
+			try {
+				const result = await window.main_IPC.files.disableSelected(modIDs)
+				MA.alert(`Disabled ${result.disabled} log issue mod(s); ${result.failed} could not be disabled.`)
+				this.modal.gameLogIssues.hide()
+				this.track.selected.clear()
+				this.forceSelectOnly(false)
+				window.main_IPC.folder.reload()
+			} catch (err) {
+				MA.alert(`Disable failed: ${err.message}`)
+				MA.byId('gameLogIssuesDisable').disabled = false
+			}
+		},
 		disableSelectedMods : async () => {
 			const modIDs = [...this.track.selected]
 			if ( modIDs.length === 0 ) { return }
@@ -1677,6 +1770,9 @@ class StateManager {
 		openDisabledMods : async () => {
 			await this.#openDisabledMods(this.#selectedCollectionKey())
 		},
+		openGameLogIssues : async () => {
+			await this.#openGameLogIssues(this.#selectedCollectionKey())
+		},
 		openModInfo : (mod) => {
 			window.settings.site(mod.fileDetail.shortName, false).then((value) => {
 				MA.byIdHTML('mod_info_mod_name', mod.fileDetail.shortName)
@@ -1699,20 +1795,21 @@ class StateManager {
 				MA.byId('disabledModsRestoreSelected').disabled = false
 			}
 		},
+		selectGameLogIssueMods : () => {
+			const selected = this.#selectedGameLogIssueModIDs()
+			const modIDs = selected.length === 0 ?
+				this.gameLogIssues.candidates.map((candidate) => candidate.modID) :
+				selected
+			this.modal.gameLogIssues.hide()
+			this.#selectModIDsInCollection(this.gameLogIssues.collectionKey, modIDs)
+		},
 		selectMissingDependencyMods : () => {
 			const collectionKey = this.track.pendingLaunchCollection
 			if ( collectionKey === null ) { return }
 			const modIDs = this.#collectionReadinessMissingDependencyItems(collectionKey, this.#collectionReadinessMods(collectionKey))
 				.map((item) => item.modID)
-			if ( modIDs.length === 0 ) { return }
 			this.modal.readiness.hide()
-			if ( this.track.openCollection !== collectionKey ) {
-				this.colToggle(collectionKey, true)
-			}
-			this.track.selected = new Set(modIDs)
-			this.forceSelectOnly(true)
-			this.doDisplay()
-			this.colScroll(collectionKey)
+			this.#selectModIDsInCollection(collectionKey, modIDs)
 		},
 		setModInfo : () => {
 			window.settings.site(

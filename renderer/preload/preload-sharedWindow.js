@@ -162,7 +162,11 @@ const pageAPI = {
 			drag : {
 				out : (modID)  => { ipcRenderer.send('main:dragOut', modID ) },
 			},
-	
+
+			gameLog : {
+				scanCollection : (collectionKey) => ipcRenderer.invoke('gamelog:scanCollection', { collectionKey }),
+			},
+
 			files : {
 				disableSelected : (modIDs)      => ipcRenderer.invoke('files:disableSelected', { modIDs }),
 				disabledList    : (collectionKey) => ipcRenderer.invoke('files:disabledList', { collectionKey }),

@@ -390,6 +390,7 @@
 				<i18n-text id="moveButton_hub" type="button" class="btn btn-secondary disabled" data-key="open_hub"></i18n-text>
 				<i18n-text id="moveButton_site" type="button" class="btn btn-secondary disabled" data-key="context_open_website"></i18n-text>
 				<button id="moveButton_disabled" type="button" class="btn btn-outline-info disabled">Disabled Mods</button>
+				<button id="moveButton_logIssues" type="button" class="btn btn-outline-warning disabled">Log Issues</button>
 				
 				<i18n-text id="moveButton_fav" type="button" class="btn btn-warning" data-key="copy_fav_to"></i18n-text>
 				<i18n-text id="moveButton_ver" type="button" class="btn btn-success" data-key="version_check"></i18n-text>
@@ -485,6 +486,31 @@
 					<button type="button" class="btn btn-outline-warning d-none me-auto" id="collectionReadinessSelectMissingDependencies">Select dependency warnings</button>
 					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#collection_readiness_modal">Cancel launch</button>
 					<button type="button" class="btn btn-warning" id="collectionReadinessContinue">Continue launch</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- MARK: game log issues modal -->
+	<div class="modal" id="game_log_issues_modal" tabindex="-1">
+		<div class="modal-dialog modal-dialog-centered modal-xl">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h5 modal-title">Game log issues</div>
+						<div class="small text-body-secondary">Selected collection: <span id="gameLogIssuesCollection"></span></div>
+						<div class="small text-body-secondary">Log: <span id="gameLogIssuesPath"></span></div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#game_log_issues_modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<div class="alert alert-secondary py-2" id="gameLogIssuesStatus">Scanning game log...</div>
+					<div class="list-group" id="gameLogIssuesList"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#game_log_issues_modal">Close</button>
+					<button type="button" class="btn btn-outline-info" id="gameLogIssuesSelect">Select in collection</button>
+					<button type="button" class="btn btn-warning" id="gameLogIssuesDisable">Disable selected</button>
 				</div>
 			</div>
 		</div>
