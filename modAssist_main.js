@@ -1261,9 +1261,12 @@ function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null, ca
 		null
 	const modHubID = nameMatch?.id ?? storedID
 	const localVersion = newestKnownVersion(record?.versions)
-	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)?.version
+	const cachedMetadata = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)
+	const officialPageVersion = cachedMetadata?.version
 	const catalogueVersion = modHubID === null ? null : serveIPC.modCollect.modHubVersionModHubId(modHubID)
-	const latestVersion = typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion
+	const latestVersion = modHubPageUnavailable(cachedMetadata) ?
+		null :
+		(typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion)
 	const comparison = compareModVersions(localVersion, latestVersion)
 	let status = 'unmatched'
 
@@ -1578,6 +1581,10 @@ function getCachedModHubMetadata(modHubID, cachedModHubMetadata = null) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
 	if ( cachedModHubMetadata !== null ) { return cachedModHubMetadata[modHubID] ?? null }
 	return serveIPC.storeLibrary.get(`modHub.${modHubID}`, null)
+}
+
+function modHubPageUnavailable(metadata) {
+	return metadata?.ok === false && Object.prototype.hasOwnProperty.call(metadata, 'checkedAt')
 }
 
 function modHubCacheFresh(record) {
@@ -1897,15 +1904,23 @@ function getVaultDetailRecord(hash) {
 	parsedRecord.has_cats = detailRecord?.itemCategories ?? []
 	parsedRecord.includeDetail = 2
 	parsedRecord.isVaultRecord = true
-	parsedRecord.modHub = {
-		...currentModHub,
-		id      : currentModHub.id ?? (typeof storedModHubID === 'undefined' ? null : Number.parseInt(storedModHubID, 10)),
-		version : currentModHub.version ?? record.modHubLatestVersion ?? record.modHubVersions?.[0] ?? null,
-	}
+	parsedRecord.modHub = vaultDetailModHub(record, currentModHub, storedModHubID)
 
 	const result = [parsedRecord, detailRecord]
 	vaultDetailCache.set(hash, result)
 	return result
+}
+
+function vaultDetailModHub(record, currentModHub, storedModHubID) {
+	const modHubID = currentModHub.id ?? (typeof storedModHubID === 'undefined' ? null : Number.parseInt(storedModHubID, 10))
+	const cachedModHubMetadata = getCachedModHubMetadata(modHubID)
+	return {
+		...currentModHub,
+		id      : modHubID,
+		version : modHubPageUnavailable(cachedModHubMetadata) ?
+			null :
+			(cachedModHubMetadata?.version ?? currentModHub.version ?? record.modHubLatestVersion ?? record.modHubVersions?.[0] ?? null),
+	}
 }
 
 function mergeEquipmentSpecs(existingSpecs = {}, incomingSpecs = {}) {
@@ -2919,7 +2934,7 @@ async function refreshVaultModHubMetadata(progressCallback = null) {
 			if ( typeof metadata?.released === 'string' && metadata.released !== '' ) { releasedDates.push(metadata.released) }
 			if ( typeof metadata?.version === 'string' && metadata.version !== '' ) { versions.push(metadata.version) }
 			const catalogueVersion = serveIPC.modCollect.modHubVersionModHubId(modHubID)
-			if ( typeof catalogueVersion === 'string' && catalogueVersion !== '' ) { versions.push(catalogueVersion) }
+			if ( !modHubPageUnavailable(metadata) && typeof catalogueVersion === 'string' && catalogueVersion !== '' ) { versions.push(catalogueVersion) }
 		}
 		records[hash] = {
 			...record,
@@ -4807,6 +4822,11 @@ ipcMain.on('select:withText', (_, id, txt) => {
 })
 ipcMain.on('dispatch:game', ()         => { funcLib.gameLauncher() })
 ipcMain.on('dispatch:help', ()         => { shell.openExternal('https://fsgmodding.github.io/FSG_Mod_Assistant/') })
+ipcMain.on('main:openReleasePage', () => {
+	const appVersion = app.getVersion().toString()
+	const releaseTag = appVersion.startsWith('v') ? appVersion : `v${appVersion}`
+	shell.openExternal(`https://github.com/Blacknight78/FSG_Mod_Assistant/releases/tag/${releaseTag}`)
+})
 ipcMain.on('win:clipboard', (_, value) => clipboard.writeText(value, 'selection') )
 ipcMain.on('win:openURL',   (_, url)   => { shell.openExternal(url) })
 ipcMain.on('win:close',     (e)        => { BrowserWindow.fromWebContents(e.sender).close() })

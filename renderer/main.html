@@ -122,6 +122,28 @@
 
 		.btn-check:checked+.btn.btn-selected-mods { background-color: #229b69; }
 
+		.mastHead > .ver {
+			font-size: calc(0.6rem + .6vw);
+			vertical-align: super;
+		}
+		.app-version-link {
+			-webkit-app-region : no-drag;
+			appearance         : none;
+			background         : transparent;
+			border             : 0;
+			color              : inherit;
+			cursor             : pointer;
+			font               : inherit;
+			padding            : 0 .1rem;
+			text-decoration    : none;
+		}
+		.app-version-link:hover,
+		.app-version-link:focus-visible {
+			color           : var(--bs-info-text-emphasis);
+			outline         : none;
+			text-decoration : underline;
+		}
+
 		@media screen and (max-width: 1019px) {
 			body[data-i18n="es"] .ex-small_es { font-size: .75em; }
 		}
@@ -266,7 +288,10 @@
 			<div class="row w-100 mb-1">
 				<div class="col-12 mt-2" style="-webkit-app-region: drag;">
 					<h2 class="ps-2 mastHead">
-						<i18n-text data-key="app_name"></i18n-text> <i18n-text class="ver" data-key="app_version"></i18n-text>
+						<i18n-text data-key="app_name"></i18n-text>
+						<button type="button" id="appVersionLink" class="ver app-version-link" title="Open this release on GitHub">
+							<i18n-text data-key="app_version"></i18n-text>
+						</button>
 					</h2>
 				</div>
 				<div class="m-0 p-0 btn-group-win_ui d-flex justify-content-end" style="position:absolute; -webkit-app-region: no-drag;">

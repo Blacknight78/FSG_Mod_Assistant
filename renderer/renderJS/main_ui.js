@@ -85,6 +85,7 @@ function topBarHandlers() {
 	MA.byIdEventIfExists('topBar-savetrack',   () => { window.main_IPC.dispatch('savetrack') })
 	MA.byIdEventIfExists('topBar-tray',        () => { window.main_IPC.minimizeToTray() })
 	MA.byIdEventIfExists('topBar-update',      () => { window.main_IPC.updateApplication() })
+	MA.byIdEventIfExists('appVersionLink',     () => { window.main_IPC.openReleasePage() })
 }
 //MARK: side bar event
 function sideBarHandlers() {
