@@ -149,22 +149,33 @@ function setStatus(message, kind = 'secondary') {
 	status.className = `alert alert-${kind} mb-3`
 }
 
-function getSource(record) {
-	const modHubID = Number(record.modHubIDs?.[0])
-	if ( Number.isInteger(modHubID) && modHubID > 0 ) {
-		return {
-			modHubID,
-			sourceType : 'modhub',
-			sourceURL  : record.modHubURL ?? `https://www.farming-simulator.com/mod.php?mod_id=${modHubID}&title=fs2025`,
+function getSources(record) {
+	const sources = []
+	const seen = new Set()
+	const addSource = (source) => {
+		const sourceKey = `${source.sourceType}:${source.modHubID ?? source.sourceURL}`
+		if ( seen.has(sourceKey) ) { return }
+		seen.add(sourceKey)
+		sources.push(source)
+	}
+
+	for ( const rawModHubID of record.modHubIDs ?? [] ) {
+		const modHubID = Number(rawModHubID)
+		if ( Number.isInteger(modHubID) && modHubID > 0 ) {
+			addSource({
+				modHubID,
+				sourceType : 'modhub',
+				sourceURL  : record.modHubURL ?? `https://www.farming-simulator.com/mod.php?mod_id=${modHubID}&title=fs2025`,
+			})
 		}
 	}
 
 	const sourceURL = record.sourceURL ?? ''
 	if ( /^https:\/\/github\.com\//iu.test(sourceURL) ) {
-		return { modHubID : null, sourceType : 'github', sourceURL }
+		addSource({ modHubID : null, sourceType : 'github', sourceURL })
 	}
 
-	return null
+	return sources
 }
 
 function makeGroupKey(modName, source) {
@@ -375,25 +386,27 @@ async function loadCandidates(force = false) {
 			: (Array.isArray(vault.records) ? vault.records : [])
 
 		for ( const record of vaultEntries ) {
-			const source = getSource(record)
-			if ( source === null ) { skipped++; continue }
+			const sources = getSources(record)
+			if ( sources.length === 0 ) { skipped++; continue }
 			const modName = vaultRecordModName(record)
-			const key = makeGroupKey(modName, source)
-			const existing = groups.get(key) ?? {
-				fileName      : record.fileName,
-				key,
-				localVersions : [],
-				modHubID      : source.modHubID,
-				modIcon       : typeof record.modIcon === 'string' && record.modIcon !== '' ? record.modIcon : null,
-				modName,
-				sourceType    : source.sourceType,
-				sourceURL     : source.sourceURL,
+			for ( const source of sources ) {
+				const key = makeGroupKey(modName, source)
+				const existing = groups.get(key) ?? {
+					fileName      : record.fileName,
+					key,
+					localVersions : [],
+					modHubID      : source.modHubID,
+					modIcon       : typeof record.modIcon === 'string' && record.modIcon !== '' ? record.modIcon : null,
+					modName,
+					sourceType    : source.sourceType,
+					sourceURL     : source.sourceURL,
+				}
+				existing.localVersions.push(...(record.versions ?? []))
+				if ( existing.modIcon === null && typeof record.modIcon === 'string' && record.modIcon !== '' ) {
+					existing.modIcon = record.modIcon
+				}
+				groups.set(key, existing)
 			}
-			existing.localVersions.push(...(record.versions ?? []))
-			if ( existing.modIcon === null && typeof record.modIcon === 'string' && record.modIcon !== '' ) {
-				existing.modIcon = record.modIcon
-			}
-			groups.set(key, existing)
 		}
 
 		const sourceGroups = [...groups.values()]
