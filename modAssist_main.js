@@ -1897,15 +1897,29 @@ function getVaultDetailRecord(hash) {
 		throw new Error('The stored Vault ZIP could not be found.')
 	}
 
-	const parsedRecord = JSON.parse(parseModLastPass(record.filePath))
+	const parsedRecord = parseVaultDetailMod(record, hash)
 	const detailRecord = parsedRecord.includeDetail
+	const canonicalModName = vaultDetailModName(record, parsedRecord)
+	const currentCollection = vaultDetailCollectionKey(record, canonicalModName)
+	parsedRecord.fileDetail.shortName = canonicalModName
+	parsedRecord.fileDetail.fullPath = record.filePath
 	const currentModHub = serveIPC.modCollect.modHubFullRecord(parsedRecord)
 	const storedModHubID = record.modHubIDs?.[0]
 	parsedRecord.colUUID = `vault--${hash}`
-	parsedRecord.currentCollection = 'vault'
+	parsedRecord.currentCollection = currentCollection
 	parsedRecord.gameVersion = record.gameVersions?.[0] ?? funcLib.prefs.ver()
 	parsedRecord.has_brands = detailRecord?.itemBrands ?? []
 	parsedRecord.has_cats = detailRecord?.itemCategories ?? []
+	parsedRecord.detailContext = {
+		displayCollectionKey  : currentCollection,
+		displayCollectionName : vaultDetailCollectionName(currentCollection, record),
+		isVaultRecord         : true,
+		sourceLookupName      : canonicalModName,
+		sourceURL             : vaultDetailSourceURL(record, canonicalModName),
+		vaultFileName         : record.fileName ?? path.basename(record.filePath),
+		vaultHash             : hash,
+		vaultPath             : record.filePath,
+	}
 	parsedRecord.includeDetail = 2
 	parsedRecord.isVaultRecord = true
 	parsedRecord.modHub = vaultDetailModHub(record, currentModHub, storedModHubID)
@@ -1913,6 +1927,61 @@ function getVaultDetailRecord(hash) {
 	const result = [parsedRecord, detailRecord]
 	vaultDetailCache.set(hash, result)
 	return result
+}
+
+function parseVaultDetailMod(record, hash) {
+	const fileName = safeDownloadFileName(record.fileName ?? path.basename(record.filePath))
+	const tempDir = path.join(app.getPath('temp'), `fsgma-vault-detail-${process.pid}-${hash}`)
+	const tempPath = path.join(tempDir, fileName)
+
+	try {
+		fs.rmSync(tempDir, { force : true, recursive : true })
+		fs.mkdirSync(tempDir, { recursive : true })
+		fs.linkSync(record.filePath, tempPath)
+		return JSON.parse(parseModLastPass(tempPath))
+	} catch (err) {
+		serveIPC.log.warning('mod-vault', `Could not parse ${fileName} with its Vault filename; falling back to stored path`, err.message)
+		return JSON.parse(parseModLastPass(record.filePath))
+	} finally {
+		fs.rmSync(tempDir, { force : true, recursive : true })
+	}
+}
+
+function vaultDetailModName(record, parsedRecord) {
+	return normalizedVaultModNames([
+		...(record.modNames ?? []),
+		record.fileName,
+		parsedRecord?.fileDetail?.shortName,
+	]).at(0) ?? parsedRecord.fileDetail.shortName
+}
+
+function vaultDetailCollectionKey(record, modName) {
+	const recordCollectionNames = new Set(Array.isArray(record.collections) ? record.collections : [])
+	const collectionCandidates = [...serveIPC.modCollect.collections]
+		.map((collectionKey) => ({
+			key  : collectionKey,
+			name : serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey,
+		}))
+		.filter((collection) => recordCollectionNames.has(collection.name))
+
+	return collectionCandidates.find((collection) => getCollectionModRecord(collection.key, modName) !== null)?.key ??
+		collectionCandidates[0]?.key ??
+		'vault'
+}
+
+function vaultDetailCollectionName(collectionKey, record) {
+	if ( collectionKey !== 'vault' ) {
+		return serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey
+	}
+	return Array.isArray(record.collections) && record.collections.length !== 0 ? record.collections[0] : 'Mod Vault'
+}
+
+function vaultDetailSourceURL(record, modName) {
+	const currentSource = serveIPC.storeSites.get(modName, '').trim()
+	if ( currentSource !== '' ) { return currentSource }
+	const storedSource = typeof record.sourceURL === 'string' ? record.sourceURL.trim() : ''
+	if ( storedSource !== '' ) { return storedSource }
+	return ''
 }
 
 function vaultDetailModHub(record, currentModHub, storedModHubID) {

@@ -500,7 +500,7 @@ function groupHasHealthIssue(group, filter) {
 		case 'no-source':
 			return group.entries.some((entry) => !hasKnownVaultSource(entry))
 		case 'update-available':
-			return group.hasUpdate
+			return group.hasVaultUpdate
 		case 'cleanup-candidate':
 			return group.entries.some((entry) => entry.cleanupEligible === true)
 		case 'kept':
@@ -521,7 +521,7 @@ function healthFilterLabel(filter) {
 		case 'no-source':
 			return 'No known source'
 		case 'update-available':
-			return 'Updates available'
+			return 'Vault updates'
 		case 'cleanup-candidate':
 			return 'Cleanup candidates'
 		case 'kept':
@@ -533,10 +533,10 @@ function healthFilterLabel(filter) {
 	}
 }
 
-function setHealthFilter(filter) {
+function setHealthFilter(filter, shouldRender = true) {
 	vaultHealthFilter = filter
 	updateHealthFilterButtons()
-	renderVault(filterEntries())
+	if ( shouldRender ) { renderVault(filterEntries()) }
 }
 
 function fragmentToHTML(fragment) {
@@ -727,8 +727,10 @@ function updateVaultSelectionControls() {
 	const selectedCount = vaultSelectedHashes.size
 	const bulkTarget = MA.byId('vaultBulkCopyTarget')
 	const bulkButton = MA.byId('vaultBulkCopyButton')
+	const selectionBar = MA.byId('vaultSelectionBar')
 	MA.byIdText('vaultSelectedCount', `Selected Vault ZIPs: ${selectedCount}`)
 	bulkButton.disabled = selectedCount === 0 || bulkTarget.value === ''
+	selectionBar.classList.toggle('d-none', selectedCount === 0)
 }
 
 function refreshBulkCopyTarget() {
@@ -791,6 +793,8 @@ function groupEntries(entries) {
 		const hasNote = note.trim() !== ''
 		const hasRollback = group.entries.some((entry) => entry.isUsed === true || (entry.sources ?? []).some((source) => source === 'Rollback' || source === 'Rollback current'))
 		const hasUpdate = group.entries.some((entry) => entry.modHubStatus === 'update-available')
+		const hasCurrentModHubVersion = group.entries.some((entry) => entry.modHubStatus === 'current' || entry.modHubStatus === 'local-newer')
+		const hasVaultUpdate = hasUpdate && !hasCurrentModHubVersion
 		const searchText = normalValue([
 			group.modName,
 			note,
@@ -827,6 +831,7 @@ function groupEntries(entries) {
 			hasNote,
 			hasRollback,
 			hasUpdate,
+			hasVaultUpdate,
 			modHubCategories,
 			modHubReleasedDates,
 			modIcon,
@@ -865,9 +870,9 @@ function updateHealthDashboard() {
 		missingGameEntries     : vaultEntries.filter((entry) => (entry.gameVersions ?? []).length === 0).length,
 		multiVersionGroups     : groups.filter((group) => group.entries.length > 1).length,
 		noSourceEntries        : vaultEntries.filter((entry) => !hasKnownVaultSource(entry)).length,
-		updateGroups           : groups.filter((group) => group.hasUpdate).length,
+		updateGroups           : groups.filter((group) => group.hasVaultUpdate).length,
 	}
-	const issueCount = stats.missingFileEntries + stats.missingGameEntries + stats.noSourceEntries
+	const issueCount = stats.missingFileEntries + stats.missingGameEntries + stats.noSourceEntries + stats.updateGroups
 
 	MA.byIdText('vaultHealthGroups', groups.length.toString())
 	MA.byIdText('vaultHealthMissingFiles', stats.missingFileEntries.toString())
@@ -927,14 +932,61 @@ function filterEntries() {
 	).sort((left, right) => compareVaultGroups(left, right, sortMode))
 }
 
-function setSourceFilter(sourceType) {
+function setSourceFilter(sourceType, shouldRender = true) {
 	vaultSourceFilter = sourceType
 	for ( const button of MA.byId('vaultSourceFilter').querySelectorAll('button[data-source]') ) {
 		const isActive = button.dataset.source === sourceType
 		button.classList.toggle('active', isActive)
 		button.setAttribute('aria-pressed', isActive.toString())
 	}
+	if ( shouldRender ) { renderVault(filterEntries()) }
+}
+
+function clearQuickFilters(shouldRender = true) {
+	MA.byId('vaultTextFilter').value = ''
+	MA.byId('vaultCollectionFilter').value = ''
+	MA.byId('vaultNoteFilter').value = ''
+	MA.byId('vaultRollbackFilter').value = ''
+	MA.byId('vaultUpdateFilter').value = ''
+	MA.byId('vaultSortFilter').value = 'name-asc'
+	if ( shouldRender ) { renderVault(filterEntries()) }
+}
+
+function clearAdvancedFilters(shouldRender = true) {
+	MA.byId('vaultAuthorFilter').value = ''
+	MA.byId('vaultTypeFilter').value = ''
+	MA.byId('vaultBrandFilter').value = ''
+	MA.byId('vaultCategoryFilter').value = ''
+	MA.byId('vaultModHubCategoryFilter').value = ''
+	MA.byId('vaultHorsepowerFilter').value = ''
+	MA.byId('vaultPriceFilter').value = ''
+	MA.byId('vaultStoreItemTypeFilter').value = ''
+	MA.byId('vaultUpdatedFilter').value = ''
+	setSourceFilter('', false)
+	if ( shouldRender ) { renderVault(filterEntries()) }
+}
+
+function clearAllFilters() {
+	clearQuickFilters(false)
+	clearAdvancedFilters(false)
+	setHealthFilter('', false)
 	renderVault(filterEntries())
+}
+
+function bindCollapseToggle(panelID, buttonID, focusID = null) {
+	const panel = MA.byId(panelID)
+	const button = MA.byId(buttonID)
+	const setOpenState = (isOpen) => {
+		button.classList.toggle('active', isOpen)
+		button.setAttribute('aria-expanded', isOpen.toString())
+		button.setAttribute('aria-pressed', isOpen.toString())
+	}
+	panel.addEventListener('shown.bs.collapse', () => {
+		setOpenState(true)
+		if ( focusID !== null ) { MA.byId(focusID)?.focus() }
+	})
+	panel.addEventListener('hidden.bs.collapse', () => { setOpenState(false) })
+	setOpenState(panel.classList.contains('show'))
 }
 
 function versionLabel(entry) {
@@ -1817,6 +1869,10 @@ window.addEventListener('DOMContentLoaded', () => {
 	previewDialog.addEventListener('click', (event) => {
 		if ( event.target === previewDialog ) { previewDialog.close() }
 	})
+	bindCollapseToggle('vaultSearchPanel', 'vaultSearchToggle', 'vaultTextFilter')
+	bindCollapseToggle('vaultAdvancedFilters', 'vaultAdvancedToggle')
+	bindCollapseToggle('vaultHealthPanel', 'vaultHealthToggle')
+	bindCollapseToggle('vaultCleanupPanel', 'vaultCleanupToggle')
 	MA.byId('vaultList').addEventListener('contextmenu', openVaultDetail)
 	MA.byId('vaultList').addEventListener('show.bs.collapse', (event) => {
 		if ( event.target.classList.contains('vault-group-body') ) { ensureVaultGroupRows(event.target) }
@@ -1878,31 +1934,11 @@ window.addEventListener('DOMContentLoaded', () => {
 		const healthButton = event.target.closest('button[data-health-filter]')
 		if ( healthButton !== null ) { setHealthFilter(healthButton.dataset.healthFilter) }
 	})
-	MA.byId('vaultClearFilters').addEventListener('click', () => {
-		MA.byId('vaultTextFilter').value = ''
-		MA.byId('vaultAuthorFilter').value = ''
-		MA.byId('vaultTypeFilter').value = ''
-		MA.byId('vaultBrandFilter').value = ''
-		MA.byId('vaultCategoryFilter').value = ''
-		MA.byId('vaultModHubCategoryFilter').value = ''
-		MA.byId('vaultCollectionFilter').value = ''
-		MA.byId('vaultNoteFilter').value = ''
-		MA.byId('vaultRollbackFilter').value = ''
-		MA.byId('vaultHorsepowerFilter').value = ''
-		MA.byId('vaultPriceFilter').value = ''
-		MA.byId('vaultStoreItemTypeFilter').value = ''
-		MA.byId('vaultUpdateFilter').value = ''
-		MA.byId('vaultUpdatedFilter').value = ''
-		MA.byId('vaultSortFilter').value = 'name-asc'
-		vaultHealthFilter = ''
-		updateHealthFilterButtons()
-		setSourceFilter('')
-	})
+	MA.byId('vaultClearQuickFilters').addEventListener('click', () => { clearQuickFilters() })
+	MA.byId('vaultClearAdvancedFilters').addEventListener('click', () => { clearAdvancedFilters() })
+	MA.byId('vaultClearFilters').addEventListener('click', clearAllFilters)
 	MA.byId('vaultImportCollections').addEventListener('click', importCollections)
 	MA.byId('vaultRefreshModHub').addEventListener('click', refreshModHubCategories)
-	MA.byId('vaultShowCleanup').addEventListener('click', () => {
-		bootstrap.Collapse.getOrCreateInstance(MA.byId('vaultCleanupPanel')).toggle()
-	})
 	MA.byId('vaultCleanupList').addEventListener('change', (event) => {
 		if ( event.target.closest('.vault-cleanup-check') !== null ) { updateCleanupSelectionPreview() }
 	})
