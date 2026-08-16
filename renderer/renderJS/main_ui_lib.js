@@ -155,7 +155,11 @@ class StateManager {
 	#collectionReadinessMods(collectionKey) {
 		const collection = this.track.lastPayload?.modList?.[collectionKey]
 		if ( typeof collection?.mods !== 'object' ) { return [] }
-		return Object.values(collection.mods)
+		return Object.values(collection.mods).filter((modRecord) => {
+			const fileDetail = modRecord?.fileDetail ?? {}
+			if ( fileDetail.isFolder === true || fileDetail.isSaveGame === true ) { return false }
+			return typeof fileDetail.fullPath === 'string' && fileDetail.fullPath.toLowerCase().endsWith('.zip')
+		})
 	}
 
 	#missingDependenciesForMod(collection, modRecord) {
@@ -199,6 +203,14 @@ class StateManager {
 			.map((modRecord) => modRecord.fileDetail.shortName)
 	}
 
+	#collectionReadinessVersionMismatchExamples(mods) {
+		return mods
+			.filter((modRecord) => Number.isInteger(modRecord.gameVersion) &&
+				modRecord.gameVersion !== 0 &&
+				modRecord.gameVersion !== this.flag.currentVersion)
+			.map((modRecord) => `${modRecord.fileDetail.shortName} is FS${modRecord.gameVersion}`)
+	}
+
 	#collectionReadinessIssues(collectionKey) {
 		const collection = this.track.lastPayload?.modList?.[collectionKey]
 		if ( typeof collection?.mods !== 'object' ) {
@@ -223,9 +235,7 @@ class StateManager {
 
 		this.#addReadinessIssue(issues, 'missing-dependencies', 'Missing dependencies', 'Required mods are not present in this collection.', 'danger', missingDependencies)
 		this.#addReadinessIssue(issues, 'duplicate-versions', 'Duplicate versions', 'The same mod appears with more than one version.', 'warning', this.#collectionReadinessDuplicateVersions(mods))
-		this.#addReadinessIssue(issues, 'fs-mismatch', 'FS version mismatch', `Mods do not match the active FS${this.flag.currentVersion} game version.`, 'danger', mods
-			.filter((modRecord) => modRecord.gameVersion !== this.flag.currentVersion)
-			.map((modRecord) => `${modRecord.fileDetail.shortName} is FS${modRecord.gameVersion || 'unknown'}`))
+		this.#addReadinessIssue(issues, 'fs-mismatch', 'FS version mismatch', `Mods do not match the active FS${this.flag.currentVersion} game version.`, 'danger', this.#collectionReadinessVersionMismatchExamples(mods))
 		this.#addReadinessIssue(issues, 'updates', 'Update available', 'One or more mods has a newer ModHub or saved GitHub version.', 'info', this.#collectionReadinessUpdateExamples(collectionKey, mods))
 		this.#addReadinessIssue(issues, 'metadata', 'Suspicious or broken metadata', 'These mods have broken, unreadable, unsupported, or incomplete metadata.', 'warning', this.#collectionReadinessMetadataExamples(mods))
 
