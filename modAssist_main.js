@@ -73,6 +73,16 @@ function logPerformanceDuration(label, startedAt, extraDetail = '') {
 	serveIPC.log.info('performance', `${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
 }
 
+function addPerformanceStat(stats, key, elapsedMS) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats[key] = (stats[key] ?? 0) + elapsedMS
+}
+
+function incrementPerformanceStat(stats, key, count = 1) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats[key] = (stats[key] ?? 0) + count
+}
+
 funcLib.wizard.initMain()
 
 // const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
@@ -2017,12 +2027,17 @@ function safeEquipmentSpecs(value) {
 }
 
 // eslint-disable-next-line complexity
-async function registerModLibraryFile(filePath, metadata = {}) {
+async function registerModLibraryFile(filePath, metadata = {}, timingStats = null) {
+	const registerStartedAt = performance.now()
 	if ( typeof filePath !== 'string' || !fs.existsSync(filePath) ) {
 		throw new Error('Library source file was not found')
 	}
 
+	let stepStartedAt = performance.now()
 	const hash = await sha256File(filePath)
+	addPerformanceStat(timingStats, 'registerHashMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
 	const normalizedModName = normalizeVaultModName(metadata.modName)
 	const suppliedFileName = safeDownloadFileName(metadata.fileName ?? path.basename(filePath))
 	const normalizedFileName = normalizeVaultModName(suppliedFileName)
@@ -2030,14 +2045,29 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		? (normalizedFileName === '' ? suppliedFileName : safeDownloadFileName(`${normalizedFileName}.zip`))
 		: safeDownloadFileName(`${normalizedModName}.zip`)
 	const libraryPath = modLibraryFilePath(hash, fileName)
-	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'registerNameMS', performance.now() - stepStartedAt)
 
+	stepStartedAt = performance.now()
+	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'registerStatMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
 	await fsPromise.mkdir(path.dirname(libraryPath), { recursive : true })
+	addPerformanceStat(timingStats, 'registerMkdirMS', performance.now() - stepStartedAt)
+
 	if ( !fs.existsSync(libraryPath) ) {
+		stepStartedAt = performance.now()
 		await fsPromise.copyFile(filePath, libraryPath)
+		addPerformanceStat(timingStats, 'registerCopyMS', performance.now() - stepStartedAt)
+		incrementPerformanceStat(timingStats, 'registerCopies')
+	} else {
+		incrementPerformanceStat(timingStats, 'registerCopySkips')
 	}
 
+	stepStartedAt = performance.now()
 	const records = getStoredModLibraryRecords()
+	addPerformanceStat(timingStats, 'registerReadRecordsMS', performance.now() - stepStartedAt)
+
 	const existingRecord = records[hash] ?? {
 		collections : [],
 		createdAt   : new Date().toISOString(),
@@ -2050,6 +2080,7 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		versions    : [],
 	}
 
+	stepStartedAt = performance.now()
 	records[hash] = {
 		...existingRecord,
 		collections : uniqueCleanArray([...(existingRecord.collections ?? []), metadata.collectionName]),
@@ -2083,9 +2114,17 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		updatedAt   : new Date().toISOString(),
 		versions    : uniqueCleanArray([...(existingRecord.versions ?? []), metadata.version]),
 	}
+	addPerformanceStat(timingStats, 'registerMergeMS', performance.now() - stepStartedAt)
 
+	stepStartedAt = performance.now()
 	serveIPC.storeLibrary.set('records', records)
+	addPerformanceStat(timingStats, 'registerStoreMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
 	invalidateModLibrarySummary()
+	addPerformanceStat(timingStats, 'registerInvalidateMS', performance.now() - stepStartedAt)
+	addPerformanceStat(timingStats, 'registerTotalMS', performance.now() - registerStartedAt)
+	incrementPerformanceStat(timingStats, 'registerCalls')
 
 	return {
 		fileName,
@@ -2881,52 +2920,76 @@ async function copyVaultRecordToCollection({ collectionKey, hash, overwrite = fa
 	}
 }
 
+// eslint-disable-next-line complexity
 async function importCollectionsToVault(progressCallback = null) {
+	const importStartedAt = performance.now()
+	const stats = {
+		eligible : 0,
+		progressCalls : 0,
+	}
 	let scanned = 0
 	let imported = 0
 	let skipped = 0
 	const errors = []
+
+	let stepStartedAt = performance.now()
 	const records = getStoredModLibraryRecords()
 	const collectionMods = [...serveIPC.modCollect.collections].map((collectKey) => ({
 		collectKey,
 		mods : serveIPC.modCollect.getModListFromCollection(collectKey),
 	}))
 	const totalMods = collectionMods.reduce((sum, collection) => sum + collection.mods.length, 0)
+	addPerformanceStat(stats, 'collectionBuildMS', performance.now() - stepStartedAt)
+
 	const sendProgress = () => {
 		if ( typeof progressCallback !== 'function' ) { return }
+		const progressStartedAt = performance.now()
 		progressCallback({
 			current : scanned,
 			label   : totalMods === 0 ? 'No collection mods found' : `${scanned} / ${totalMods}`,
 			total   : totalMods,
 			value   : totalMods === 0 ? 100 : (scanned / totalMods) * 100,
 		})
+		addPerformanceStat(stats, 'progressMS', performance.now() - progressStartedAt)
+		incrementPerformanceStat(stats, 'progressCalls')
 	}
 
 	// Collection associations describe the current monitored set, not historical membership.
 	// Each successful scan below adds the live associations back to its stored ZIP records.
+	stepStartedAt = performance.now()
 	for ( const [hash, record] of Object.entries(records) ) {
 		records[hash] = { ...record, collections : [] }
 	}
 	serveIPC.storeLibrary.set('records', records)
 	invalidateModLibrarySummary()
+	addPerformanceStat(stats, 'associationResetMS', performance.now() - stepStartedAt)
 	sendProgress()
 
 	for ( const { collectKey, mods } of collectionMods ) {
 		for ( const modRecord of mods ) {
 			scanned++
 			try {
+				stepStartedAt = performance.now()
 				if (
 					typeof modRecord?.fileDetail?.fullPath !== 'string' ||
 					modRecord.fileDetail.isFolder ||
 					!modRecord.fileDetail.fullPath.toLowerCase().endsWith('.zip') ||
 					!fs.existsSync(modRecord.fileDetail.fullPath)
 				) {
+					addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
 					skipped++
 					continue
 				}
+				addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
+				incrementPerformanceStat(stats, 'eligible')
+
+				stepStartedAt = performance.now()
+				const metadata = collectionModVaultMetadata(modRecord, collectKey)
+				addPerformanceStat(stats, 'metadataMS', performance.now() - stepStartedAt)
+
 				// Keep large ZIP hashing sequential to avoid excessive disk and memory pressure.
 				// eslint-disable-next-line no-await-in-loop
-				await registerModLibraryFile(modRecord.fileDetail.fullPath, collectionModVaultMetadata(modRecord, collectKey))
+				await registerModLibraryFile(modRecord.fileDetail.fullPath, metadata, stats)
 				imported++
 			} catch (err) {
 				errors.push({
@@ -2939,13 +3002,44 @@ async function importCollectionsToVault(progressCallback = null) {
 		}
 	}
 
+	stepStartedAt = performance.now()
+	const summary = getModLibrarySummary()
+	addPerformanceStat(stats, 'summaryMS', performance.now() - stepStartedAt)
+
+	logPerformanceDuration('Vault collection import', importStartedAt, [
+		`collections=${collectionMods.length.toString()}`,
+		`mods=${totalMods.toString()}`,
+		`eligible=${stats.eligible.toString()}`,
+		`imported=${imported.toString()}`,
+		`skipped=${skipped.toString()}`,
+		`errors=${errors.length.toString()}`,
+	].join(' '))
+	serveIPC.log.info('performance', [
+		'Vault collection import internals',
+		`collectionBuild=${(stats.collectionBuildMS ?? 0).toFixed(1)} ms`,
+		`associationReset=${(stats.associationResetMS ?? 0).toFixed(1)} ms`,
+		`eligibility=${(stats.eligibilityMS ?? 0).toFixed(1)} ms`,
+		`metadata=${(stats.metadataMS ?? 0).toFixed(1)} ms`,
+		`registerTotal=${(stats.registerTotalMS ?? 0).toFixed(1)} ms`,
+		`registerHash=${(stats.registerHashMS ?? 0).toFixed(1)} ms`,
+		`registerCopy=${(stats.registerCopyMS ?? 0).toFixed(1)} ms`,
+		`registerStore=${(stats.registerStoreMS ?? 0).toFixed(1)} ms`,
+		`registerInvalidate=${(stats.registerInvalidateMS ?? 0).toFixed(1)} ms`,
+		`summary=${(stats.summaryMS ?? 0).toFixed(1)} ms`,
+		`progress=${(stats.progressMS ?? 0).toFixed(1)} ms`,
+		`progressCalls=${(stats.progressCalls ?? 0).toString()}`,
+		`registerCalls=${(stats.registerCalls ?? 0).toString()}`,
+		`copies=${(stats.registerCopies ?? 0).toString()}`,
+		`copySkips=${(stats.registerCopySkips ?? 0).toString()}`,
+	].join(' '))
+
 	return {
 		errors,
 		imported,
 		ok : errors.length === 0,
 		scanned,
 		skipped,
-		summary : getModLibrarySummary(),
+		summary,
 	}
 }
 
