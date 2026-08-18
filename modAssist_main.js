@@ -1829,6 +1829,20 @@ async function sourceFileHash(filePath, fileStat, timingStats = null, sourceHash
 	return hash
 }
 
+function cachedSourceHash(filePath, fileStat, sourceHashCache = null) {
+	const cacheKey = sourceHashCacheKey(filePath)
+	if ( cacheKey === '' || typeof sourceHashCache !== 'object' || sourceHashCache === null ) { return null }
+	const cachedEntry = sourceHashCache[cacheKey]
+	if (
+		typeof cachedEntry?.hash === 'string' &&
+		cachedEntry.size === fileStat.size &&
+		cachedEntry.mtimeMs === fileStat.mtimeMs
+	) {
+		return cachedEntry.hash
+	}
+	return null
+}
+
 function modLibraryFilePath(hash, fileName) {
 	const ext = path.extname(safeDownloadFileName(fileName)) || '.zip'
 	return path.join(app.getPath('userData'), 'mod-library', 'files', hash.slice(0, 2), `${hash}${ext}`)
@@ -2138,6 +2152,37 @@ function finalizeVaultRecordChangeStats(stats, records, originalRecords) {
 			trackChangedRecordFields(stats, hash, records[hash], originalRecords[hash])
 		}
 	}
+}
+
+async function tryIncrementalVaultCollectionImport(filePath, collectionName, records, sourceHashCache, timingStats = null) {
+	const startedAt = performance.now()
+	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'incrementalStatMS', performance.now() - startedAt)
+
+	const hash = cachedSourceHash(filePath, fileStat, sourceHashCache)
+	if ( hash === null ) {
+		incrementPerformanceStat(timingStats, 'incrementalMisses')
+		return false
+	}
+
+	const record = records[hash]
+	if ( typeof record !== 'object' || record === null ) {
+		incrementPerformanceStat(timingStats, 'incrementalFallbackMissingRecord')
+		return false
+	}
+	if ( typeof record.filePath !== 'string' || !fs.existsSync(record.filePath) ) {
+		incrementPerformanceStat(timingStats, 'incrementalFallbackMissingVaultFile')
+		return false
+	}
+
+	trackTouchedVaultRecord(timingStats, hash)
+	records[hash] = {
+		...record,
+		collections : uniqueCleanArray([...(record.collections ?? []), collectionName]),
+	}
+	incrementPerformanceStat(timingStats, 'incrementalHits')
+	addPerformanceStat(timingStats, 'incrementalTotalMS', performance.now() - startedAt)
+	return true
 }
 
 // eslint-disable-next-line complexity
@@ -3132,6 +3177,20 @@ async function importCollectionsToVault(progressCallback = null) {
 				addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
 				incrementPerformanceStat(stats, 'eligible')
 
+				const collectionName = collectionNames.get(collectKey) ?? collectKey
+				// eslint-disable-next-line no-await-in-loop
+				const incrementalHandled = await tryIncrementalVaultCollectionImport(
+					modRecord.fileDetail.fullPath,
+					collectionName,
+					records,
+					sourceHashCache,
+					stats
+				)
+				if ( incrementalHandled ) {
+					imported++
+					continue
+				}
+
 				stepStartedAt = performance.now()
 				// eslint-disable-next-line no-await-in-loop
 				const [, includeDetail] = await serveIPC.modCollect.detailMod(modRecord.colUUID)
@@ -3210,6 +3269,8 @@ async function importCollectionsToVault(progressCallback = null) {
 		`eligibility=${(stats.eligibilityMS ?? 0).toFixed(1)} ms`,
 		`detailLookup=${(stats.detailLookupMS ?? 0).toFixed(1)} ms`,
 		`metadata=${(stats.metadataMS ?? 0).toFixed(1)} ms`,
+		`incremental=${(stats.incrementalTotalMS ?? 0).toFixed(1)} ms`,
+		`incrementalStat=${(stats.incrementalStatMS ?? 0).toFixed(1)} ms`,
 		`registerTotal=${(stats.registerTotalMS ?? 0).toFixed(1)} ms`,
 		`registerHash=${(stats.registerHashMS ?? 0).toFixed(1)} ms`,
 		`registerHashLookup=${(stats.registerHashLookupMS ?? 0).toFixed(1)} ms`,
@@ -3230,6 +3291,10 @@ async function importCollectionsToVault(progressCallback = null) {
 		`finalStoreSkips=${(stats.finalStoreSkips ?? 0).toString()}`,
 		`finalInvalidateSkips=${(stats.finalInvalidateSkips ?? 0).toString()}`,
 		`finalHashCacheStoreSkips=${(stats.finalHashCacheStoreSkips ?? 0).toString()}`,
+		`incrementalHits=${(stats.incrementalHits ?? 0).toString()}`,
+		`incrementalMisses=${(stats.incrementalMisses ?? 0).toString()}`,
+		`incrementalFallbackMissingRecord=${(stats.incrementalFallbackMissingRecord ?? 0).toString()}`,
+		`incrementalFallbackMissingVaultFile=${(stats.incrementalFallbackMissingVaultFile ?? 0).toString()}`,
 		`hashCacheHits=${(stats.registerHashCacheHits ?? 0).toString()}`,
 		`hashCacheMisses=${(stats.registerHashCacheMisses ?? 0).toString()}`,
 		`hashCacheUpdates=${(stats.registerHashCacheUpdates ?? 0).toString()}`,
