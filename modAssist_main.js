@@ -1790,6 +1790,45 @@ async function sha256File(filePath) {
 	})
 }
 
+function sourceHashCacheKey(filePath) {
+	if ( typeof filePath !== 'string' ) { return '' }
+	const resolvedPath = path.resolve(filePath)
+	return process.platform === 'win32' ? resolvedPath.toLocaleLowerCase() : resolvedPath
+}
+
+async function sourceFileHash(filePath, fileStat, timingStats = null, sourceHashCache = null) {
+	const cacheKey = sourceHashCacheKey(filePath)
+	const cachedEntry = cacheKey === '' || typeof sourceHashCache !== 'object' || sourceHashCache === null
+		? null
+		: sourceHashCache[cacheKey]
+
+	if (
+		typeof cachedEntry?.hash === 'string' &&
+		cachedEntry.size === fileStat.size &&
+		cachedEntry.mtimeMs === fileStat.mtimeMs
+	) {
+		incrementPerformanceStat(timingStats, 'registerHashCacheHits')
+		return cachedEntry.hash
+	}
+
+	const hashStartedAt = performance.now()
+	const hash = await sha256File(filePath)
+	addPerformanceStat(timingStats, 'registerHashMS', performance.now() - hashStartedAt)
+	incrementPerformanceStat(timingStats, 'registerHashCacheMisses')
+
+	if ( cacheKey !== '' && typeof sourceHashCache === 'object' && sourceHashCache !== null ) {
+		sourceHashCache[cacheKey] = {
+			hash,
+			lastSeenAt : new Date().toISOString(),
+			mtimeMs : fileStat.mtimeMs,
+			size    : fileStat.size,
+		}
+		incrementPerformanceStat(timingStats, 'registerHashCacheUpdates')
+	}
+
+	return hash
+}
+
 function modLibraryFilePath(hash, fileName) {
 	const ext = path.extname(safeDownloadFileName(fileName)) || '.zip'
 	return path.join(app.getPath('userData'), 'mod-library', 'files', hash.slice(0, 2), `${hash}${ext}`)
@@ -2042,8 +2081,12 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 	}
 
 	let stepStartedAt = performance.now()
-	const hash = await sha256File(filePath)
-	addPerformanceStat(timingStats, 'registerHashMS', performance.now() - stepStartedAt)
+	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'registerStatMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
+	const hash = await sourceFileHash(filePath, fileStat, timingStats, options.sourceHashCache)
+	addPerformanceStat(timingStats, 'registerHashLookupMS', performance.now() - stepStartedAt)
 
 	stepStartedAt = performance.now()
 	const normalizedModName = normalizeVaultModName(metadata.modName)
@@ -2054,10 +2097,6 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 		: safeDownloadFileName(`${normalizedModName}.zip`)
 	const libraryPath = modLibraryFilePath(hash, fileName)
 	addPerformanceStat(timingStats, 'registerNameMS', performance.now() - stepStartedAt)
-
-	stepStartedAt = performance.now()
-	const fileStat = await fsPromise.stat(filePath)
-	addPerformanceStat(timingStats, 'registerStatMS', performance.now() - stepStartedAt)
 
 	stepStartedAt = performance.now()
 	await fsPromise.mkdir(path.dirname(libraryPath), { recursive : true })
@@ -2963,6 +3002,7 @@ async function importCollectionsToVault(progressCallback = null) {
 		collectionNames,
 		sourceSites : serveIPC.storeSites.store,
 	}
+	const sourceHashCache = serveIPC.storeLibrary.get('sourceHashCache', {})
 	const totalMods = collectionMods.reduce((sum, collection) => sum + collection.mods.length, 0)
 	addPerformanceStat(stats, 'collectionBuildMS', performance.now() - stepStartedAt)
 
@@ -3024,6 +3064,7 @@ async function importCollectionsToVault(progressCallback = null) {
 					deferInvalidate : true,
 					deferStore      : true,
 					records,
+					sourceHashCache,
 				})
 				imported++
 			} catch (err) {
@@ -3040,6 +3081,10 @@ async function importCollectionsToVault(progressCallback = null) {
 	stepStartedAt = performance.now()
 	serveIPC.storeLibrary.set('records', records)
 	addPerformanceStat(stats, 'finalStoreMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
+	serveIPC.storeLibrary.set('sourceHashCache', sourceHashCache)
+	addPerformanceStat(stats, 'finalHashCacheStoreMS', performance.now() - stepStartedAt)
 
 	stepStartedAt = performance.now()
 	invalidateModLibrarySummary()
@@ -3066,10 +3111,12 @@ async function importCollectionsToVault(progressCallback = null) {
 		`metadata=${(stats.metadataMS ?? 0).toFixed(1)} ms`,
 		`registerTotal=${(stats.registerTotalMS ?? 0).toFixed(1)} ms`,
 		`registerHash=${(stats.registerHashMS ?? 0).toFixed(1)} ms`,
+		`registerHashLookup=${(stats.registerHashLookupMS ?? 0).toFixed(1)} ms`,
 		`registerCopy=${(stats.registerCopyMS ?? 0).toFixed(1)} ms`,
 		`registerStore=${(stats.registerStoreMS ?? 0).toFixed(1)} ms`,
 		`registerInvalidate=${(stats.registerInvalidateMS ?? 0).toFixed(1)} ms`,
 		`finalStore=${(stats.finalStoreMS ?? 0).toFixed(1)} ms`,
+		`finalHashCacheStore=${(stats.finalHashCacheStoreMS ?? 0).toFixed(1)} ms`,
 		`finalInvalidate=${(stats.finalInvalidateMS ?? 0).toFixed(1)} ms`,
 		`summary=${(stats.summaryMS ?? 0).toFixed(1)} ms`,
 		`progress=${(stats.progressMS ?? 0).toFixed(1)} ms`,
@@ -3077,6 +3124,9 @@ async function importCollectionsToVault(progressCallback = null) {
 		`registerCalls=${(stats.registerCalls ?? 0).toString()}`,
 		`storeDefers=${(stats.registerStoreDefers ?? 0).toString()}`,
 		`invalidateDefers=${(stats.registerInvalidateDefers ?? 0).toString()}`,
+		`hashCacheHits=${(stats.registerHashCacheHits ?? 0).toString()}`,
+		`hashCacheMisses=${(stats.registerHashCacheMisses ?? 0).toString()}`,
+		`hashCacheUpdates=${(stats.registerHashCacheUpdates ?? 0).toString()}`,
 		`copies=${(stats.registerCopies ?? 0).toString()}`,
 		`copySkips=${(stats.registerCopySkips ?? 0).toString()}`,
 	].join(' '))
