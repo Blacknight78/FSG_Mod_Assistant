@@ -2071,6 +2071,17 @@ function safeEquipmentSpecs(value) {
 	return mergeEquipmentSpecs({}, value)
 }
 
+function recordsMatchWithoutUpdatedAt(firstRecord, secondRecord) {
+	if ( typeof firstRecord !== 'object' || firstRecord === null || typeof secondRecord !== 'object' || secondRecord === null ) {
+		return false
+	}
+	const firstClean = { ...firstRecord }
+	const secondClean = { ...secondRecord }
+	delete firstClean.updatedAt
+	delete secondClean.updatedAt
+	return JSON.stringify(firstClean) === JSON.stringify(secondClean)
+}
+
 // eslint-disable-next-line complexity
 async function registerModLibraryFile(filePath, metadata = {}, timingStats = null, options = {}) {
 	const registerStartedAt = performance.now()
@@ -2115,6 +2126,9 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 	const records = typeof options.records === 'object' && options.records !== null ? options.records : getStoredModLibraryRecords()
 	addPerformanceStat(timingStats, 'registerReadRecordsMS', performance.now() - stepStartedAt)
 
+	const originalRecord = typeof options.originalRecords === 'object' && options.originalRecords !== null
+		? options.originalRecords[hash]
+		: undefined
 	const existingRecord = records[hash] ?? {
 		collections : [],
 		createdAt   : new Date().toISOString(),
@@ -2128,7 +2142,7 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 	}
 
 	stepStartedAt = performance.now()
-	records[hash] = {
+	const nextRecord = {
 		...existingRecord,
 		collections : uniqueCleanArray([...(existingRecord.collections ?? []), metadata.collectionName]),
 		equipmentSpecs : mergeEquipmentSpecs(existingRecord.equipmentSpecs ?? {}, metadata.equipmentSpecs ?? {}),
@@ -2158,8 +2172,19 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 		storeItems  : Math.max(existingRecord.storeItems ?? 0, metadata.storeItems ?? 0),
 		storeItemTypes : uniqueCleanArray([...(existingRecord.storeItemTypes ?? []), ...(metadata.storeItemTypes ?? [])]
 			.map((value) => cleanStoreItemTypeLabel(value))),
-		updatedAt   : new Date().toISOString(),
+		updatedAt   : existingRecord.updatedAt ?? new Date().toISOString(),
 		versions    : uniqueCleanArray([...(existingRecord.versions ?? []), metadata.version]),
+	}
+
+	if ( typeof originalRecord === 'object' && originalRecord !== null && recordsMatchWithoutUpdatedAt(nextRecord, originalRecord) ) {
+		records[hash] = originalRecord
+		incrementPerformanceStat(timingStats, 'registerRecordSkips')
+	} else {
+		records[hash] = {
+			...nextRecord,
+			updatedAt : new Date().toISOString(),
+		}
+		incrementPerformanceStat(timingStats, 'registerRecordChanges')
 	}
 	addPerformanceStat(timingStats, 'registerMergeMS', performance.now() - stepStartedAt)
 
@@ -2988,7 +3013,8 @@ async function importCollectionsToVault(progressCallback = null) {
 	const errors = []
 
 	let stepStartedAt = performance.now()
-	const records = getStoredModLibraryRecords()
+	const originalRecords = getStoredModLibraryRecords()
+	const records = Object.fromEntries(Object.entries(originalRecords).map(([hash, record]) => [hash, { ...record }]))
 	const collectionMods = [...serveIPC.modCollect.collections].map((collectKey) => ({
 		collectKey,
 		mods : serveIPC.modCollect.getModListFromCollection(collectKey),
@@ -3063,6 +3089,7 @@ async function importCollectionsToVault(progressCallback = null) {
 				await registerModLibraryFile(modRecord.fileDetail.fullPath, metadata, stats, {
 					deferInvalidate : true,
 					deferStore      : true,
+					originalRecords,
 					records,
 					sourceHashCache,
 				})
@@ -3078,13 +3105,21 @@ async function importCollectionsToVault(progressCallback = null) {
 		}
 	}
 
-	stepStartedAt = performance.now()
-	serveIPC.storeLibrary.set('records', records)
-	addPerformanceStat(stats, 'finalStoreMS', performance.now() - stepStartedAt)
+	if ( (stats.registerRecordChanges ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('records', records)
+		addPerformanceStat(stats, 'finalStoreMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalStoreSkips')
+	}
 
-	stepStartedAt = performance.now()
-	serveIPC.storeLibrary.set('sourceHashCache', sourceHashCache)
-	addPerformanceStat(stats, 'finalHashCacheStoreMS', performance.now() - stepStartedAt)
+	if ( (stats.registerHashCacheUpdates ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('sourceHashCache', sourceHashCache)
+		addPerformanceStat(stats, 'finalHashCacheStoreMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalHashCacheStoreSkips')
+	}
 
 	stepStartedAt = performance.now()
 	invalidateModLibrarySummary()
@@ -3122,8 +3157,12 @@ async function importCollectionsToVault(progressCallback = null) {
 		`progress=${(stats.progressMS ?? 0).toFixed(1)} ms`,
 		`progressCalls=${(stats.progressCalls ?? 0).toString()}`,
 		`registerCalls=${(stats.registerCalls ?? 0).toString()}`,
+		`recordChanges=${(stats.registerRecordChanges ?? 0).toString()}`,
+		`recordSkips=${(stats.registerRecordSkips ?? 0).toString()}`,
 		`storeDefers=${(stats.registerStoreDefers ?? 0).toString()}`,
 		`invalidateDefers=${(stats.registerInvalidateDefers ?? 0).toString()}`,
+		`finalStoreSkips=${(stats.finalStoreSkips ?? 0).toString()}`,
+		`finalHashCacheStoreSkips=${(stats.finalHashCacheStoreSkips ?? 0).toString()}`,
 		`hashCacheHits=${(stats.registerHashCacheHits ?? 0).toString()}`,
 		`hashCacheMisses=${(stats.registerHashCacheMisses ?? 0).toString()}`,
 		`hashCacheUpdates=${(stats.registerHashCacheUpdates ?? 0).toString()}`,
