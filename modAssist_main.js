@@ -2082,6 +2082,27 @@ function recordsMatchWithoutUpdatedAt(firstRecord, secondRecord) {
 	return JSON.stringify(firstClean) === JSON.stringify(secondClean)
 }
 
+function changedRecordFieldsWithoutUpdatedAt(firstRecord, secondRecord) {
+	if ( typeof firstRecord !== 'object' || firstRecord === null || typeof secondRecord !== 'object' || secondRecord === null ) {
+		return ['record']
+	}
+	const fields = new Set([...Object.keys(firstRecord), ...Object.keys(secondRecord)])
+	fields.delete('updatedAt')
+	return [...fields].filter((field) => JSON.stringify(firstRecord[field]) !== JSON.stringify(secondRecord[field]))
+}
+
+function trackChangedRecordFields(stats, hash, nextRecord, originalRecord) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats.changedRecordFields ??= {}
+	for ( const field of changedRecordFieldsWithoutUpdatedAt(nextRecord, originalRecord) ) {
+		stats.changedRecordFields[field] = (stats.changedRecordFields[field] ?? 0) + 1
+	}
+	stats.changedRecordSamples ??= []
+	if ( stats.changedRecordSamples.length < 5 ) {
+		stats.changedRecordSamples.push(hash)
+	}
+}
+
 // eslint-disable-next-line complexity
 async function registerModLibraryFile(filePath, metadata = {}, timingStats = null, options = {}) {
 	const registerStartedAt = performance.now()
@@ -2180,6 +2201,7 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 		records[hash] = originalRecord
 		incrementPerformanceStat(timingStats, 'registerRecordSkips')
 	} else {
+		trackChangedRecordFields(timingStats, hash, nextRecord, originalRecord)
 		records[hash] = {
 			...nextRecord,
 			updatedAt : new Date().toISOString(),
@@ -3168,6 +3190,8 @@ async function importCollectionsToVault(progressCallback = null) {
 		`hashCacheUpdates=${(stats.registerHashCacheUpdates ?? 0).toString()}`,
 		`copies=${(stats.registerCopies ?? 0).toString()}`,
 		`copySkips=${(stats.registerCopySkips ?? 0).toString()}`,
+		`changedFields=${Object.entries(stats.changedRecordFields ?? {}).sort((first, second) => second[1] - first[1]).slice(0, 8).map(([field, count]) => `${field}:${count}`).join(',') || 'none'}`,
+		`changedSamples=${(stats.changedRecordSamples ?? []).join(',') || 'none'}`,
 	].join(' '))
 
 	return {
