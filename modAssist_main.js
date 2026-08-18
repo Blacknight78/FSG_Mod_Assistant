@@ -2071,14 +2071,21 @@ function safeEquipmentSpecs(value) {
 	return mergeEquipmentSpecs({}, value)
 }
 
+function normalizedRecordForVaultComparison(record) {
+	const cleanRecord = { ...record }
+	delete cleanRecord.updatedAt
+	if ( Array.isArray(cleanRecord.collections) ) {
+		cleanRecord.collections = uniqueCleanArray(cleanRecord.collections).toSorted((first, second) => first.localeCompare(second))
+	}
+	return cleanRecord
+}
+
 function recordsMatchWithoutUpdatedAt(firstRecord, secondRecord) {
 	if ( typeof firstRecord !== 'object' || firstRecord === null || typeof secondRecord !== 'object' || secondRecord === null ) {
 		return false
 	}
-	const firstClean = { ...firstRecord }
-	const secondClean = { ...secondRecord }
-	delete firstClean.updatedAt
-	delete secondClean.updatedAt
+	const firstClean = normalizedRecordForVaultComparison(firstRecord)
+	const secondClean = normalizedRecordForVaultComparison(secondRecord)
 	return JSON.stringify(firstClean) === JSON.stringify(secondClean)
 }
 
@@ -2088,7 +2095,13 @@ function changedRecordFieldsWithoutUpdatedAt(firstRecord, secondRecord) {
 	}
 	const fields = new Set([...Object.keys(firstRecord), ...Object.keys(secondRecord)])
 	fields.delete('updatedAt')
-	return [...fields].filter((field) => JSON.stringify(firstRecord[field]) !== JSON.stringify(secondRecord[field]))
+	return [...fields].filter((field) => {
+		if ( field === 'collections' ) {
+			return JSON.stringify(normalizedRecordForVaultComparison(firstRecord).collections ?? []) !==
+				JSON.stringify(normalizedRecordForVaultComparison(secondRecord).collections ?? [])
+		}
+		return JSON.stringify(firstRecord[field]) !== JSON.stringify(secondRecord[field])
+	})
 }
 
 function trackChangedRecordFields(stats, hash, nextRecord, originalRecord) {
