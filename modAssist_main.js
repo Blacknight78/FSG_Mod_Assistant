@@ -1522,18 +1522,24 @@ function equipmentSpecsFromIncludeDetail(includeDetail) {
 	}
 }
 
-function storeItemVaultMetadataForMod(modRecord) {
+function storeItemVaultMetadataForMod(modRecord, includeDetail = null) {
 	const storeItems = Number.parseInt(modRecord?.modDesc?.storeItems ?? 0, 10) || 0
 	if ( storeItems === 0 || typeof modRecord?.fileDetail?.fullPath !== 'string' ) {
 		return { equipmentSpecs : {}, itemBrands : [], itemCategories : [], storeItemPreviews : [], storeItemTypes : [] }
 	}
-
-	try {
-		const detailRecord = JSON.parse(parseModLastPass(modRecord.fileDetail.fullPath))
-		const includeDetail = detailRecord.includeDetail
+	if ( typeof includeDetail === 'object' && includeDetail !== null ) {
 		return {
 			...equipmentSpecsFromIncludeDetail(includeDetail),
 			storeItemPreviews : storeItemPreviewsFromIncludeDetail(includeDetail),
+		}
+	}
+
+	try {
+		const detailRecord = JSON.parse(parseModLastPass(modRecord.fileDetail.fullPath))
+		const parsedIncludeDetail = detailRecord.includeDetail
+		return {
+			...equipmentSpecsFromIncludeDetail(parsedIncludeDetail),
+			storeItemPreviews : storeItemPreviewsFromIncludeDetail(parsedIncludeDetail),
 		}
 	} catch (err) {
 		serveIPC.log.warning('mod-vault', `Could not read store item metadata for ${modRecord.fileDetail.shortName}`, err.message)
@@ -1557,12 +1563,12 @@ function detectVaultModTypes(modRecord) {
 }
 
 // eslint-disable-next-line complexity
-function collectionModVaultMetadata(modRecord, collectKey) {
-	const collectionName = serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey
-	const sourceURL = serveIPC.storeSites.get(modRecord.fileDetail.shortName, null)
+function collectionModVaultMetadata(modRecord, collectKey, context = {}) {
+	const collectionName = context.collectionNames?.get(collectKey) ?? serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey
+	const sourceURL = context.sourceSites?.[modRecord.fileDetail.shortName] ?? serveIPC.storeSites.get(modRecord.fileDetail.shortName, null)
 	const modHubRecord = modRecord.modHub ?? {}
-	const modHubMetadata = getCachedModHubMetadata(modHubRecord.id)
-	const storeItemMetadata = storeItemVaultMetadataForMod(modRecord)
+	const modHubMetadata = getCachedModHubMetadata(modHubRecord.id, context.cachedModHubMetadata ?? null)
+	const storeItemMetadata = storeItemVaultMetadataForMod(modRecord, context.includeDetail)
 
 	return {
 		author         : modRecord.modDesc?.author ?? null,
@@ -2027,8 +2033,10 @@ function safeEquipmentSpecs(value) {
 }
 
 // eslint-disable-next-line complexity
-async function registerModLibraryFile(filePath, metadata = {}, timingStats = null) {
+async function registerModLibraryFile(filePath, metadata = {}, timingStats = null, options = {}) {
 	const registerStartedAt = performance.now()
+	const deferStore = options.deferStore === true
+	const deferInvalidate = options.deferInvalidate === true
 	if ( typeof filePath !== 'string' || !fs.existsSync(filePath) ) {
 		throw new Error('Library source file was not found')
 	}
@@ -2065,7 +2073,7 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 	}
 
 	stepStartedAt = performance.now()
-	const records = getStoredModLibraryRecords()
+	const records = typeof options.records === 'object' && options.records !== null ? options.records : getStoredModLibraryRecords()
 	addPerformanceStat(timingStats, 'registerReadRecordsMS', performance.now() - stepStartedAt)
 
 	const existingRecord = records[hash] ?? {
@@ -2116,13 +2124,21 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 	}
 	addPerformanceStat(timingStats, 'registerMergeMS', performance.now() - stepStartedAt)
 
-	stepStartedAt = performance.now()
-	serveIPC.storeLibrary.set('records', records)
-	addPerformanceStat(timingStats, 'registerStoreMS', performance.now() - stepStartedAt)
+	if ( deferStore ) {
+		incrementPerformanceStat(timingStats, 'registerStoreDefers')
+	} else {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('records', records)
+		addPerformanceStat(timingStats, 'registerStoreMS', performance.now() - stepStartedAt)
+	}
 
-	stepStartedAt = performance.now()
-	invalidateModLibrarySummary()
-	addPerformanceStat(timingStats, 'registerInvalidateMS', performance.now() - stepStartedAt)
+	if ( deferInvalidate ) {
+		incrementPerformanceStat(timingStats, 'registerInvalidateDefers')
+	} else {
+		stepStartedAt = performance.now()
+		invalidateModLibrarySummary()
+		addPerformanceStat(timingStats, 'registerInvalidateMS', performance.now() - stepStartedAt)
+	}
 	addPerformanceStat(timingStats, 'registerTotalMS', performance.now() - registerStartedAt)
 	incrementPerformanceStat(timingStats, 'registerCalls')
 
@@ -2938,6 +2954,15 @@ async function importCollectionsToVault(progressCallback = null) {
 		collectKey,
 		mods : serveIPC.modCollect.getModListFromCollection(collectKey),
 	}))
+	const collectionNames = new Map(collectionMods.map(({ collectKey }) => [
+		collectKey,
+		serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey,
+	]))
+	const metadataContext = {
+		cachedModHubMetadata : serveIPC.storeLibrary.get('modHub', {}),
+		collectionNames,
+		sourceSites : serveIPC.storeSites.store,
+	}
 	const totalMods = collectionMods.reduce((sum, collection) => sum + collection.mods.length, 0)
 	addPerformanceStat(stats, 'collectionBuildMS', performance.now() - stepStartedAt)
 
@@ -2960,8 +2985,6 @@ async function importCollectionsToVault(progressCallback = null) {
 	for ( const [hash, record] of Object.entries(records) ) {
 		records[hash] = { ...record, collections : [] }
 	}
-	serveIPC.storeLibrary.set('records', records)
-	invalidateModLibrarySummary()
 	addPerformanceStat(stats, 'associationResetMS', performance.now() - stepStartedAt)
 	sendProgress()
 
@@ -2984,12 +3007,24 @@ async function importCollectionsToVault(progressCallback = null) {
 				incrementPerformanceStat(stats, 'eligible')
 
 				stepStartedAt = performance.now()
-				const metadata = collectionModVaultMetadata(modRecord, collectKey)
+				// eslint-disable-next-line no-await-in-loop
+				const [, includeDetail] = await serveIPC.modCollect.detailMod(modRecord.colUUID)
+				addPerformanceStat(stats, 'detailLookupMS', performance.now() - stepStartedAt)
+
+				stepStartedAt = performance.now()
+				const metadata = collectionModVaultMetadata(modRecord, collectKey, {
+					...metadataContext,
+					includeDetail,
+				})
 				addPerformanceStat(stats, 'metadataMS', performance.now() - stepStartedAt)
 
 				// Keep large ZIP hashing sequential to avoid excessive disk and memory pressure.
 				// eslint-disable-next-line no-await-in-loop
-				await registerModLibraryFile(modRecord.fileDetail.fullPath, metadata, stats)
+				await registerModLibraryFile(modRecord.fileDetail.fullPath, metadata, stats, {
+					deferInvalidate : true,
+					deferStore      : true,
+					records,
+				})
 				imported++
 			} catch (err) {
 				errors.push({
@@ -3001,6 +3036,14 @@ async function importCollectionsToVault(progressCallback = null) {
 			}
 		}
 	}
+
+	stepStartedAt = performance.now()
+	serveIPC.storeLibrary.set('records', records)
+	addPerformanceStat(stats, 'finalStoreMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
+	invalidateModLibrarySummary()
+	addPerformanceStat(stats, 'finalInvalidateMS', performance.now() - stepStartedAt)
 
 	stepStartedAt = performance.now()
 	const summary = getModLibrarySummary()
@@ -3019,16 +3062,21 @@ async function importCollectionsToVault(progressCallback = null) {
 		`collectionBuild=${(stats.collectionBuildMS ?? 0).toFixed(1)} ms`,
 		`associationReset=${(stats.associationResetMS ?? 0).toFixed(1)} ms`,
 		`eligibility=${(stats.eligibilityMS ?? 0).toFixed(1)} ms`,
+		`detailLookup=${(stats.detailLookupMS ?? 0).toFixed(1)} ms`,
 		`metadata=${(stats.metadataMS ?? 0).toFixed(1)} ms`,
 		`registerTotal=${(stats.registerTotalMS ?? 0).toFixed(1)} ms`,
 		`registerHash=${(stats.registerHashMS ?? 0).toFixed(1)} ms`,
 		`registerCopy=${(stats.registerCopyMS ?? 0).toFixed(1)} ms`,
 		`registerStore=${(stats.registerStoreMS ?? 0).toFixed(1)} ms`,
 		`registerInvalidate=${(stats.registerInvalidateMS ?? 0).toFixed(1)} ms`,
+		`finalStore=${(stats.finalStoreMS ?? 0).toFixed(1)} ms`,
+		`finalInvalidate=${(stats.finalInvalidateMS ?? 0).toFixed(1)} ms`,
 		`summary=${(stats.summaryMS ?? 0).toFixed(1)} ms`,
 		`progress=${(stats.progressMS ?? 0).toFixed(1)} ms`,
 		`progressCalls=${(stats.progressCalls ?? 0).toString()}`,
 		`registerCalls=${(stats.registerCalls ?? 0).toString()}`,
+		`storeDefers=${(stats.registerStoreDefers ?? 0).toString()}`,
+		`invalidateDefers=${(stats.registerInvalidateDefers ?? 0).toString()}`,
 		`copies=${(stats.registerCopies ?? 0).toString()}`,
 		`copySkips=${(stats.registerCopySkips ?? 0).toString()}`,
 	].join(' '))
