@@ -3183,9 +3183,13 @@ async function importCollectionsToVault(progressCallback = null) {
 		incrementPerformanceStat(stats, 'finalHashCacheStoreSkips')
 	}
 
-	stepStartedAt = performance.now()
-	invalidateModLibrarySummary()
-	addPerformanceStat(stats, 'finalInvalidateMS', performance.now() - stepStartedAt)
+	if ( (stats.registerRecordChanges ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		invalidateModLibrarySummary()
+		addPerformanceStat(stats, 'finalInvalidateMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalInvalidateSkips')
+	}
 
 	stepStartedAt = performance.now()
 	const summary = getModLibrarySummary()
@@ -3224,6 +3228,7 @@ async function importCollectionsToVault(progressCallback = null) {
 		`storeDefers=${(stats.registerStoreDefers ?? 0).toString()}`,
 		`invalidateDefers=${(stats.registerInvalidateDefers ?? 0).toString()}`,
 		`finalStoreSkips=${(stats.finalStoreSkips ?? 0).toString()}`,
+		`finalInvalidateSkips=${(stats.finalInvalidateSkips ?? 0).toString()}`,
 		`finalHashCacheStoreSkips=${(stats.finalHashCacheStoreSkips ?? 0).toString()}`,
 		`hashCacheHits=${(stats.registerHashCacheHits ?? 0).toString()}`,
 		`hashCacheMisses=${(stats.registerHashCacheMisses ?? 0).toString()}`,
