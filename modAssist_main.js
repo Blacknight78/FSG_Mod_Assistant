@@ -2116,6 +2116,30 @@ function trackChangedRecordFields(stats, hash, nextRecord, originalRecord) {
 	}
 }
 
+function trackTouchedVaultRecord(stats, hash) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats.touchedRecordHashes ??= new Set()
+	stats.touchedRecordHashes.add(hash)
+}
+
+function finalizeVaultRecordChangeStats(stats, records, originalRecords) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	const touchedHashes = stats.touchedRecordHashes instanceof Set ? stats.touchedRecordHashes : new Set(Object.keys(records))
+	stats.changedRecordFields = {}
+	stats.changedRecordSamples = []
+	stats.registerRecordChanges = 0
+	stats.registerRecordSkips = 0
+
+	for ( const hash of touchedHashes ) {
+		if ( recordsMatchWithoutUpdatedAt(records[hash], originalRecords[hash]) ) {
+			stats.registerRecordSkips++
+		} else {
+			stats.registerRecordChanges++
+			trackChangedRecordFields(stats, hash, records[hash], originalRecords[hash])
+		}
+	}
+}
+
 // eslint-disable-next-line complexity
 async function registerModLibraryFile(filePath, metadata = {}, timingStats = null, options = {}) {
 	const registerStartedAt = performance.now()
@@ -2131,6 +2155,7 @@ async function registerModLibraryFile(filePath, metadata = {}, timingStats = nul
 
 	stepStartedAt = performance.now()
 	const hash = await sourceFileHash(filePath, fileStat, timingStats, options.sourceHashCache)
+	trackTouchedVaultRecord(timingStats, hash)
 	addPerformanceStat(timingStats, 'registerHashLookupMS', performance.now() - stepStartedAt)
 
 	stepStartedAt = performance.now()
@@ -3139,6 +3164,8 @@ async function importCollectionsToVault(progressCallback = null) {
 			}
 		}
 	}
+
+	finalizeVaultRecordChangeStats(stats, records, originalRecords)
 
 	if ( (stats.registerRecordChanges ?? 0) > 0 ) {
 		stepStartedAt = performance.now()
