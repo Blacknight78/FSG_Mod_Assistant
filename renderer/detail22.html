@@ -69,6 +69,10 @@
 			border-radius: 0.5rem;
 			padding: 0.25rem;
 		}
+		.selectable-detail-title {
+			-webkit-app-region: no-drag;
+			user-select: text;
+		}
 
 		.joint-container .joint {
 			border: none;
@@ -103,7 +107,7 @@
 					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
 				</div>
 			</div>
-			<h3 class="text-center mb-1 w-100 mx-auto display-6" id="title" style="-webkit-app-region: drag;"></h3>
+			<h3 class="text-center mb-1 w-100 mx-auto display-6 selectable-detail-title" id="title"></h3>
 			<i class="text-center mt-1 w-100 mx-auto d-block small" id="mod_location"></i>
 			<i class="text-center mt-1 w-100 mx-auto d-block small" id="mod_collection"></i>
 			<i class="text-center mt-1 w-100 mx-auto d-block small" id="modhub_link"></i>

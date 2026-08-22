@@ -43,6 +43,21 @@
 		.collection-list {
 			list-style-type: none;
 		}
+		.progress-readable {
+			position: relative;
+		}
+		.progress-readable-label {
+			position: absolute;
+			inset: 0;
+			z-index: 2;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: #fff;
+			font-weight: 600;
+			text-shadow: 0 1px 2px #000;
+			pointer-events: none;
+		}
 	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
@@ -75,8 +90,9 @@
 			<i18n-text data-key="update_list_checking"></i18n-text>
 		</div>
 		<div class="mx-2 mb-3 d-none" id="updateBusyProgress" aria-hidden="true">
-			<div class="progress" role="progressbar" aria-label="Update window busy" aria-valuemin="0" aria-valuemax="100">
+			<div class="progress progress-readable" role="progressbar" aria-label="Update window busy" aria-valuemin="0" aria-valuemax="100">
 				<div class="progress-bar progress-bar-striped progress-bar-animated" id="updateBusyProgressBar" style="width: 100%"></div>
+				<div class="progress-readable-label" id="updateBusyProgressLabel"></div>
 			</div>
 		</div>
 		<div class="mx-2 mb-3 d-none" id="selectionControls">

@@ -16,6 +16,7 @@ class PrefLib {
 	currentDev = null
 	overlay    = null
 	folders    = null
+	gameManagement = []
 	wizard     = null
 
 	inputs = {
@@ -93,15 +94,22 @@ class PrefLib {
 			}
 		}
 
-		this.update.push(() => { this.#doFolders() })
+		this.update.push(
+			() => { this.#doFolders() },
+			() => { this.#renderGameManagement() }
+		)
 		MA.byId('scanGameInstallations')?.addEventListener('click', () => { this.#scanGameInstallations() })
+		MA.byId('performanceRefresh')?.addEventListener('click', () => { this.#loadPerformanceSummary() })
+		MA.byId('performanceOpenLog')?.addEventListener('click', () => { this.#openPerformanceLog() })
 
 		this.forceUpdate()
+		this.#loadPerformanceSummary()
 	}
 
 	forceUpdate() {
 		window.setup_IPC.update().then((results) => {
 			this.folders = results.folders
+			this.gameManagement = results.gameManagement ?? []
 			this.wizard  = results.wizard
 
 			for ( const update of this.update ) {
@@ -139,6 +147,7 @@ class PrefLib {
 		try {
 			const result = await window.setup_IPC.scanGames()
 			this.folders = result.folders ?? this.folders
+			await this.#refreshGameManagement()
 			this.wizard = result.wizard ?? this.wizard
 			for ( const update of this.update ) { update() }
 			status.className = result.results?.some((item) => item.enabled) ?
@@ -151,6 +160,167 @@ class PrefLib {
 		} finally {
 			button.disabled = false
 			button.textContent = originalText
+		}
+	}
+
+	#pathButton(label, targetPath, variant = 'outline-secondary') {
+		const button = document.createElement('button')
+		button.className = `btn btn-sm btn-${variant}`
+		button.textContent = label
+		button.type = 'button'
+		button.disabled = typeof targetPath !== 'string' || targetPath === ''
+		button.addEventListener('click', async () => {
+			const status = MA.byId('gameManagementStatus')
+			try {
+				const result = await window.setup_IPC.openSetupPath(targetPath)
+				status.className = result === '' ? 'col-12 small text-success' : 'col-12 small text-warning'
+				status.textContent = result === '' ? `Opened ${targetPath}` : `Could not open ${targetPath}: ${result}`
+			} catch (err) {
+				status.className = 'col-12 small text-danger'
+				status.textContent = `Could not open ${targetPath}: ${err.message}`
+			}
+		})
+		return button
+	}
+
+	#escapeHTML(value) {
+		return String(value ?? '')
+			.replaceAll('&', '&amp;')
+			.replaceAll('<', '&lt;')
+			.replaceAll('>', '&gt;')
+			.replaceAll('"', '&quot;')
+			.replaceAll('\'', '&#39;')
+	}
+
+	#gamePathLine(label, targetPath, found) {
+		const pathText = targetPath === '' ? 'not configured' : targetPath
+		const stateText = found ? 'found' : 'missing'
+		return `<div><span class="text-body-secondary">${this.#escapeHTML(label)}:</span> <span class="user-select-text">${this.#escapeHTML(pathText)}</span> <span class="badge text-bg-${found ? 'success' : 'secondary'}">${stateText}</span></div>`
+	}
+
+	#detectedPathList(label, items, formatter = (item) => item) {
+		if ( items.length === 0 ) {
+			return `<div class="small text-body-secondary">${this.#escapeHTML(label)}: none detected</div>`
+		}
+		const listItems = items
+			.slice(0, 4)
+			.map((item) => `<li class="user-select-text">${this.#escapeHTML(formatter(item))}</li>`)
+			.join('')
+		const hiddenCount = items.length - 4
+		const hiddenText = hiddenCount > 0 ? `<li class="text-body-secondary">and ${hiddenCount} more</li>` : ''
+		return [
+			`<div class="small text-body-secondary">${this.#escapeHTML(label)}:</div>`,
+			`<ul class="small mb-1 ps-3">${listItems}${hiddenText}</ul>`,
+		].join('')
+	}
+
+	#renderGameManagementRow(item) {
+		const node = document.createElement('div')
+		node.className = 'list-group-item'
+		const detectedGames = item.detectedGames ?? []
+		const detectedSettings = item.detectedSettings ?? []
+		const detectedSteamGames = detectedGames.filter((game) => game.source === 'Steam')
+		const detectedOtherGames = detectedGames.filter((game) => game.source !== 'Steam')
+		const trackedFolderCount = item.trackedModFolders?.length ?? 0
+		node.innerHTML = [
+			'<div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">',
+			'<div class="flex-grow-1">',
+			`<div class="fw-bold fs-5"><i class="fsico-ver-${item.version}"></i> FS${item.version} ${item.active ? '<span class="badge text-bg-info ms-1">active game</span>' : ''} ${item.enabled ? '<span class="badge text-bg-success ms-1">enabled</span>' : '<span class="badge text-bg-secondary ms-1">disabled</span>'}</div>`,
+			'<div class="row g-2 mt-1">',
+			'<div class="col-lg-6">',
+			'<div class="small fw-semibold">Configured paths</div>',
+			`<div class="small">${this.#gamePathLine('Game folder', item.gamePath ?? '', item.gameFound === true)}</div>`,
+			`<div class="small">${this.#gamePathLine('Mods folder', item.configuredModFolder ?? '', (item.configuredModFolder ?? '') !== '')}</div>`,
+			`<div class="small">${this.#gamePathLine('Settings file', item.settingsPath ?? '', item.settingsFound === true)}</div>`,
+			'</div>',
+			'<div class="col-lg-6">',
+			'<div class="small fw-semibold">Detected installs</div>',
+			this.#detectedPathList('Steam', detectedSteamGames, (game) => `${game.isConfigured ? '[configured] ' : ''}${game.path}`),
+			this.#detectedPathList('Other stores', detectedOtherGames, (game) => `${game.source}: ${game.path}`),
+			'</div>',
+			'<div class="col-12">',
+			this.#detectedPathList('Detected settings', detectedSettings),
+			this.#detectedPathList('Detected mod folders', item.detectedModFolders ?? []),
+			`<div class="small text-body-secondary">Tracked mod folders: ${trackedFolderCount} of ${(item.detectedModFolders?.length ?? 0)}</div>`,
+			'</div>',
+			'</div>',
+			'</div>',
+			'<div class="d-flex flex-wrap gap-2 align-content-start justify-content-end game-management-actions"></div>',
+			'</div>',
+		].join('')
+		const buttonWrap = node.querySelector('.game-management-actions')
+		buttonWrap.appendChild(this.#pathButton('Open game folder', item.gameFound ? item.gamePath : '', 'outline-info'))
+		buttonWrap.appendChild(this.#pathButton('Open settings folder', item.settingsFound ? item.settingsPath.replace(/[^\\/]+$/u, '') : '', 'outline-info'))
+		buttonWrap.appendChild(this.#pathButton('Open mods folder', item.configuredModFolder ?? '', 'outline-success'))
+		return node
+	}
+
+	async #refreshGameManagement() {
+		const results = await window.setup_IPC.update()
+		this.gameManagement = results.gameManagement ?? this.gameManagement
+		this.folders = results.folders ?? this.folders
+		this.wizard = results.wizard ?? this.wizard
+	}
+
+	#renderGameManagement() {
+		const list = MA.byId('gameManagementList')
+		list.innerHTML = ''
+		if ( this.gameManagement.length === 0 ) {
+			list.innerHTML = '<div class="list-group-item text-body-secondary">No game setup information is available yet.</div>'
+			return
+		}
+		const enabledCount = this.gameManagement.filter((item) => item.enabled).length
+		const active = this.gameManagement.find((item) => item.active)
+		const steamCount = this.gameManagement.reduce((sum, item) => sum + (item.detectedGames ?? []).filter((game) => game.source === 'Steam').length, 0)
+		MA.byIdText('gameManagementSummary', `${enabledCount} Farming Simulator game${enabledCount === 1 ? '' : 's'} configured. ${steamCount} Steam install${steamCount === 1 ? '' : 's'} detected.`)
+		MA.byIdText('gameManagementActive', `Active game: ${typeof active === 'undefined' ? '--' : `FS${active.version}`}`)
+		for ( const item of this.gameManagement ) {
+			list.appendChild(this.#renderGameManagementRow(item))
+		}
+	}
+
+	#performanceText(metric) {
+		if ( metric === null || typeof metric === 'undefined' || !Number.isFinite(metric.ms) ) {
+			return 'not recorded'
+		}
+		return `${metric.ms.toFixed(1)} ms`
+	}
+
+	async #loadPerformanceSummary() {
+		const status = MA.byId('performanceStatus')
+		status.className = 'col-12 small text-info'
+		status.textContent = 'Reading performance log...'
+
+		try {
+			const summary = await window.setup_IPC.performanceSummary()
+			MA.byIdText('performanceMainVisible', this.#performanceText(summary.metrics?.mainVisible))
+			MA.byIdText('performanceFolderScan', this.#performanceText(summary.metrics?.modFolderScan))
+			MA.byIdText('performanceRendererUpdate', this.#performanceText(summary.metrics?.rendererUpdate))
+			MA.byIdText('performanceVaultIndex', this.#performanceText(summary.metrics?.vaultIndex))
+			MA.byIdText('performanceModHubRefresh', this.#performanceText(summary.metrics?.modHubRefresh))
+			MA.byIdText('performanceLogPath', `Log file: ${summary.logPath ?? '--'}`)
+			status.className = summary.ok ? 'col-12 small text-success' : 'col-12 small text-warning'
+			status.textContent = summary.status ?? 'Performance summary refreshed.'
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Performance summary failed: ${err.message}`
+		}
+	}
+
+	async #openPerformanceLog() {
+		const status = MA.byId('performanceStatus')
+		try {
+			const result = await window.setup_IPC.openPerformanceLog()
+			if ( result !== '' ) {
+				status.className = 'col-12 small text-warning'
+				status.textContent = `Could not open performance log: ${result}`
+				return
+			}
+			status.className = 'col-12 small text-success'
+			status.textContent = 'Performance log opened.'
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Could not open performance log: ${err.message}`
 		}
 	}
 

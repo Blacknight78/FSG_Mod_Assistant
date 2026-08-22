@@ -73,6 +73,16 @@ function logPerformanceDuration(label, startedAt, extraDetail = '') {
 	serveIPC.log.info('performance', `${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
 }
 
+function addPerformanceStat(stats, key, elapsedMS) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats[key] = (stats[key] ?? 0) + elapsedMS
+}
+
+function incrementPerformanceStat(stats, key, count = 1) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats[key] = (stats[key] ?? 0) + count
+}
+
 funcLib.wizard.initMain()
 
 // const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
@@ -127,6 +137,9 @@ ipcMain.on('files:openExplore',  (_, modID)    => {
 // MARK: file manage
 ipcMain.handle('files:list',      (_, mode, mods) => getCopyMoveDelete(mode, mods))
 ipcMain.handle('files:list:favs', ()              => getCopyMoveDelete('copyFavs', ...serveIPC.modCollect.getFavoriteCollectionFiles()))
+ipcMain.handle('files:disableSelected', async (_, payload) => disableSelectedCollectionMods(payload))
+ipcMain.handle('files:disabledList', async (_, payload) => listDisabledCollectionMods(payload))
+ipcMain.handle('files:restoreDisabled', async (_, payload) => restoreDisabledCollectionMods(payload))
 ipcMain.handle('files:drop', async (_, files) => {
 	if ( files.length === 1 && files[0].endsWith('.csv') ) {
 		new csvFileChecker(files[0]).getInfo().then((results) => {
@@ -321,7 +334,7 @@ ipcMain.handle('i18n:get', async (_, key, version = 25) => {
 		case 'app_name':
 			return serveIPC.l10n.getTextOverride(key, version, { prefix : '<i class="fsico-ma-large"></i>' })
 		case 'app_version' :
-			return serveIPC.l10n.getTextOverride(key, version, { newText : !app.isPackaged ? app.getVersion().toString() : '' })
+			return serveIPC.l10n.getTextOverride(key, version, { newText : app.getVersion().toString() })
 		case 'game_icon' :
 			return serveIPC.l10n.getTextOverride(key, version, { newText : `<i class="fsico-ver-${funcLib.prefs.ver()}"></i>` })
 		case 'game_icon_lg' :
@@ -700,6 +713,7 @@ ipcMain.handle('gamelog:open', () => {
 })
 ipcMain.handle('gamelog:get',     () => funcLib.gameSet.streamGameLog())
 ipcMain.handle('gamelog:getFile', () => funcLib.prefs.gameLogFile())
+ipcMain.handle('gamelog:scanCollection', async (_, payload) => scanGameLogCollectionIssues(payload))
 ipcMain.on('gamelog:folder',   () => shell.showItemInFolder(funcLib.prefs.gameLogFile()) )
 ipcMain.on('dispatch:gamelog', () => { serveIPC.windowLib.createNamedWindow('gamelog') })
 ipcMain.on('dispatch:history', () => { serveIPC.windowLib.createNamedWindow('history') })
@@ -755,6 +769,56 @@ ipcMain.on('settings:clearMalware', () => {
 	serveIPC.storeSet.set('suppress_malware', [])
 	processModFolders(true)
 })
+function performanceLogPath() {
+	return path.join(app.getPath('userData'), 'assist.log')
+}
+
+function latestPerformanceValue(lines, pattern) {
+	for ( const line of lines.toReversed() ) {
+		const match = line.match(pattern)
+		if ( match !== null ) {
+			return {
+				detail : line.slice(line.indexOf('performance >>') + 15).trim(),
+				ms     : Number.parseFloat(match[1]),
+			}
+		}
+	}
+	return null
+}
+
+function performanceLogSummary() {
+	const logPath = performanceLogPath()
+	if ( !fs.existsSync(logPath) ) {
+		return {
+			logPath,
+			metrics : {},
+			ok      : false,
+			recent  : [],
+			status  : 'Performance log has not been created yet.',
+		}
+	}
+
+	const lines = fs.readFileSync(logPath, 'utf8')
+		.split(/\r?\n/u)
+		.filter((line) => line.includes('performance >>'))
+	const recent = lines.slice(-10).map((line) => line.slice(line.indexOf('performance >>') + 15).trim())
+	return {
+		logPath,
+		metrics : {
+			mainVisible : latestPerformanceValue(lines, /Main window visible in ([\d.]+) ms/u),
+			modFolderScan : latestPerformanceValue(lines, /Mod folder scan took ([\d.]+) ms/u),
+			modHubRefresh : latestPerformanceValue(lines, /ModHub refresh completed in ([\d.]+) ms/u),
+			rendererUpdate : latestPerformanceValue(lines, /Main renderer updateFromData took ([\d.]+) ms/u),
+			vaultIndex : latestPerformanceValue(lines, /Built Vault index .* in ([\d.]+) ms/u),
+		},
+		ok     : true,
+		recent,
+		status : lines.length === 0 ? 'No performance entries were found in the log.' : `Read ${lines.length} performance log entr${lines.length === 1 ? 'y' : 'ies'}.`,
+	}
+}
+
+ipcMain.handle('settings:performanceSummary', () => performanceLogSummary())
+ipcMain.handle('settings:openPerformanceLog', () => shell.openPath(performanceLogPath()))
 ipcMain.on('cache:clear', () => {
 	serveIPC.storeCache.clearAll()
 	serveIPC.windowLib.forceFocus('main')
@@ -786,10 +850,17 @@ ipcMain.on('cache:clean', () => {
 ipcMain.on('settings:prefFile',    (_, version) => { funcLib.prefs.changeFilePath(version, false) })
 ipcMain.on('settings:gamePath',    (_, version) => { funcLib.prefs.changeFilePath(version, true) })
 ipcMain.handle('settings:clear',   (_, version) => funcLib.prefs.clearVersion(version))
+ipcMain.handle('settings:openSetupPath', (_, targetPath) => {
+	if ( typeof targetPath !== 'string' || targetPath.trim() === '' || !fs.existsSync(targetPath) ) {
+		return 'Path does not exist.'
+	}
+	return shell.openPath(targetPath)
+})
 
 // MARK: setup wizard
 ipcMain.handle('wizard:update', () => ({
 	folders : [...serveIPC.modFolders],
+	gameManagement : setupGameManagementSummary(),
 	wizard  : funcLib.wizard.getSettings(),
 }))
 function setupScanExistingPath(value) {
@@ -843,6 +914,41 @@ function setupScanActiveGame(results) {
 	return true
 }
 
+function setupGameManagementSummary() {
+	const scan = funcLib.wizard.getSettings()
+	const activeVersion = Number.parseInt(serveIPC.storeSet.get('game_version'), 10)
+	return [25, 22, 19, 17, 15, 13].map((version) => {
+		const gamePath = serveIPC.storeSet.get(`game_path_${version}`, '')
+		const settingsPath = serveIPC.storeSet.get(`game_settings_${version}`, '')
+		const modInfo = scan.mods.find((item) => item.ver === version)
+		const detectedModFolders = [
+			modInfo?.baseModFolder,
+			...(modInfo?.hasCollections ?? []),
+		].filter((item) => typeof item === 'string' && item !== '')
+		const detectedGames = (scan.games[version] ?? []).map(([source, detectedPath]) => ({
+			isConfigured : detectedPath === gamePath,
+			path         : detectedPath,
+			source,
+		}))
+		const configuredModFolder = detectedModFolders.find((folder) => serveIPC.modFolders.has(folder)) ?? ''
+
+		return {
+			active       : activeVersion === version,
+			configuredModFolder,
+			detectedGames,
+			detectedModFolders,
+			detectedSettings : scan.settings[version] ?? [],
+			enabled      : serveIPC.storeSet.get(`game_enabled_${version}`) === true,
+			gameFound    : setupScanExistingPath(gamePath),
+			gamePath,
+			settingsFound : setupScanExistingPath(settingsPath),
+			settingsPath,
+			trackedModFolders : detectedModFolders.filter((folder) => serveIPC.modFolders.has(folder)),
+			version,
+		}
+	})
+}
+
 ipcMain.handle('wizard:scanGames', () => {
 	const scan = funcLib.wizard.getSettings()
 	const versions = funcLib.gameSet.verList().map(([version]) => Number.parseInt(version, 10))
@@ -887,17 +993,72 @@ ipcMain.handle('settings:site', (_, mod, site = false) => {
 	return serveIPC.storeSites.get(mod, '')
 })
 
-const UPDATE_REMOTE_CACHE_MS = 1000 * 60 * 30
+const UPDATE_REMOTE_CACHE_MS = 1000 * 60 * 60 * 24
+const UPDATE_REMOTE_FETCH_TIMEOUT_MS = 1000 * 12
+const UPDATE_REMOTE_CACHE_STORE_KEY = 'remoteUpdateCache'
 const updateRemoteCache = new Map()
 const updateRemoteInFlight = new Map()
+let updateRemoteDiskCache = null
+let updateRemoteCacheFlushTimer = null
+
+function getUpdateRemoteDiskCache() {
+	if ( updateRemoteDiskCache !== null ) { return updateRemoteDiskCache }
+	const storedCache = serveIPC.storeLibrary.get(UPDATE_REMOTE_CACHE_STORE_KEY, {})
+	updateRemoteDiskCache = typeof storedCache === 'object' && storedCache !== null && !Array.isArray(storedCache) ? storedCache : {}
+	return updateRemoteDiskCache
+}
+
+function scheduleUpdateRemoteCacheFlush() {
+	clearTimeout(updateRemoteCacheFlushTimer)
+	updateRemoteCacheFlushTimer = setTimeout(() => {
+		updateRemoteCacheFlushTimer = null
+		serveIPC.storeLibrary.set(UPDATE_REMOTE_CACHE_STORE_KEY, getUpdateRemoteDiskCache())
+	}, 2000)
+	updateRemoteCacheFlushTimer.unref?.()
+}
+
+function setUpdateRemoteCacheRecord(key, result) {
+	const record = { expiresAt : Date.now() + UPDATE_REMOTE_CACHE_MS, result }
+	updateRemoteCache.set(key, record)
+	getUpdateRemoteDiskCache()[key] = record
+	scheduleUpdateRemoteCacheFlush()
+}
+
+function getUpdateRemoteCacheRecord(key) {
+	const cachedMemory = updateRemoteCache.get(key)
+	if ( typeof cachedMemory !== 'undefined' ) { return cachedMemory }
+
+	const cachedDisk = getUpdateRemoteDiskCache()[key]
+	if ( typeof cachedDisk === 'object' && cachedDisk !== null ) {
+		updateRemoteCache.set(key, cachedDisk)
+		return cachedDisk
+	}
+	return undefined
+}
+
+async function fetchWithTimeout(url, options = {}) {
+	const controller = new AbortController()
+	const timeout = setTimeout(() => { controller.abort() }, UPDATE_REMOTE_FETCH_TIMEOUT_MS)
+	timeout.unref?.()
+	try {
+		return await fetch(url, { ...options, signal : controller.signal })
+	} catch (err) {
+		if ( err.name === 'AbortError' ) {
+			throw new Error(`Request timed out after ${Math.round(UPDATE_REMOTE_FETCH_TIMEOUT_MS / 1000)} seconds`)
+		}
+		throw err
+	} finally {
+		clearTimeout(timeout)
+	}
+}
 
 async function cachedRemoteUpdate(key, force, lookup) {
-	const cached = updateRemoteCache.get(key)
+	const cached = getUpdateRemoteCacheRecord(key)
 	if ( !force && typeof cached !== 'undefined' && cached.expiresAt > Date.now() ) { return cached.result }
 	if ( !force && updateRemoteInFlight.has(key) ) { return updateRemoteInFlight.get(key) }
 
 	const lookupPromise = lookup().then((result) => {
-		updateRemoteCache.set(key, { expiresAt : Date.now() + UPDATE_REMOTE_CACHE_MS, result })
+		setUpdateRemoteCacheRecord(key, result)
 		return result
 	}).finally(() => {
 		updateRemoteInFlight.delete(key)
@@ -911,6 +1072,15 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL, force = false)
 ipcMain.handle('settings:site:modHubLatest', async (_, modHubID, force = false) =>
 	cachedRemoteUpdate(`modhub:${modHubID}`, force, () => getModHubLatestUpdate(modHubID, force)))
 ipcMain.handle('settings:site:sourceInfo', (_, sourceURL) => getUpdateSourceInfo(sourceURL))
+ipcMain.handle('vault:updateCheckPerformance', (_, payload = {}) => {
+	const durationMS = Number.isFinite(payload.durationMS) ? payload.durationMS.toFixed(1) : '0.0'
+	const groups = Number.isFinite(payload.groups) ? payload.groups.toString() : '0'
+	const candidates = Number.isFinite(payload.candidates) ? payload.candidates.toString() : '0'
+	const skipped = Number.isFinite(payload.skipped) ? payload.skipped.toString() : '0'
+	const force = payload.force === true
+	serveIPC.log.info('performance', `Vault update check took ${durationMS} ms groups=${groups} candidates=${candidates} skipped=${skipped} force=${force.toString()}`)
+	return { ok : true }
+})
 
 async function getGitHubLatestUpdate(sourceURL) {
 	const repoInfo = getGitHubRepoInfo(sourceURL)
@@ -939,7 +1109,7 @@ async function getGitHubLatestUpdate(sourceURL) {
 
 async function getGitHubReleaseResult(resolvedRepo, headers) {
 	const releaseURL      = `https://api.github.com/repos/${resolvedRepo.owner}/${resolvedRepo.repo}/releases/latest`
-	const releaseResponse = await fetch(releaseURL, { headers })
+	const releaseResponse = await fetchWithTimeout(releaseURL, { headers })
 	if ( !releaseResponse.ok ) { return null }
 
 	const release  = await releaseResponse.json()
@@ -987,7 +1157,7 @@ async function getGitHubStableReleaseURL(resolvedRepo) {
 async function getGitHubStableReleaseRedirectURL(latestReleaseURL, redirectCount) {
 	if ( redirectCount >= 5 ) { return latestReleaseURL }
 
-	const releaseResponse = await fetch(latestReleaseURL, { method : 'HEAD', redirect : 'manual' })
+	const releaseResponse = await fetchWithTimeout(latestReleaseURL, { method : 'HEAD', redirect : 'manual' })
 	const redirectURL = releaseResponse.headers.get('location')
 
 	if ( redirectURL === null ) { return releaseResponse.url }
@@ -1010,7 +1180,7 @@ function getGitHubReleaseZipAsset(release) {
 
 async function getGitHubRepoZipAsset(repoInfo, headers) {
 	const contentsURL      = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents?ref=${repoInfo.defaultBranch}`
-	const contentsResponse = await fetch(contentsURL, { headers })
+	const contentsResponse = await fetchWithTimeout(contentsURL, { headers })
 	if ( !contentsResponse.ok ) { return getGitHubRepoNamedZipAsset(repoInfo) }
 
 	const contents = await contentsResponse.json()
@@ -1045,7 +1215,7 @@ async function getGitHubRepoNamedZipAsset(repoInfo) {
 	const candidates = await Promise.all(branches.map(async (branch) => {
 		const downloadURL = `https://raw.githubusercontent.com/${repoInfo.owner}/${repoInfo.repo}/${branch}/${fileName}`
 		try {
-			const response = await fetch(downloadURL, { method : 'HEAD' })
+			const response = await fetchWithTimeout(downloadURL, { method : 'HEAD' })
 			if ( response.ok ) {
 				return {
 					downloadSource : 'repositoryFile',
@@ -1066,7 +1236,7 @@ async function getGitHubStableReleaseNamedZipAsset(repoInfo, stableTag) {
 	const fileName = `${repoInfo.repo}.zip`
 	const downloadURL = `${repoInfo.htmlURL}/releases/download/${stableTag}/${fileName}`
 	try {
-		const response = await fetch(downloadURL, { method : 'HEAD' })
+		const response = await fetchWithTimeout(downloadURL, { method : 'HEAD' })
 		if ( response.ok ) {
 			return {
 				downloadSource : 'releaseAsset',
@@ -1169,9 +1339,12 @@ function modHubStateForLibraryRecord(record, savedIDsByNormalizedName = null, ca
 		null
 	const modHubID = nameMatch?.id ?? storedID
 	const localVersion = newestKnownVersion(record?.versions)
-	const officialPageVersion = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)?.version
+	const cachedMetadata = modHubID === null ? null : getCachedModHubMetadata(modHubID, cachedModHubMetadata)
+	const officialPageVersion = cachedMetadata?.version
 	const catalogueVersion = modHubID === null ? null : serveIPC.modCollect.modHubVersionModHubId(modHubID)
-	const latestVersion = typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion
+	const latestVersion = modHubPageUnavailable(cachedMetadata) ?
+		null :
+		(typeof officialPageVersion === 'string' && officialPageVersion !== '' ? officialPageVersion : catalogueVersion)
 	const comparison = compareModVersions(localVersion, latestVersion)
 	let status = 'unmatched'
 
@@ -1413,18 +1586,24 @@ function equipmentSpecsFromIncludeDetail(includeDetail) {
 	}
 }
 
-function storeItemVaultMetadataForMod(modRecord) {
+function storeItemVaultMetadataForMod(modRecord, includeDetail = null) {
 	const storeItems = Number.parseInt(modRecord?.modDesc?.storeItems ?? 0, 10) || 0
 	if ( storeItems === 0 || typeof modRecord?.fileDetail?.fullPath !== 'string' ) {
 		return { equipmentSpecs : {}, itemBrands : [], itemCategories : [], storeItemPreviews : [], storeItemTypes : [] }
 	}
-
-	try {
-		const detailRecord = JSON.parse(parseModLastPass(modRecord.fileDetail.fullPath))
-		const includeDetail = detailRecord.includeDetail
+	if ( typeof includeDetail === 'object' && includeDetail !== null ) {
 		return {
 			...equipmentSpecsFromIncludeDetail(includeDetail),
 			storeItemPreviews : storeItemPreviewsFromIncludeDetail(includeDetail),
+		}
+	}
+
+	try {
+		const detailRecord = JSON.parse(parseModLastPass(modRecord.fileDetail.fullPath))
+		const parsedIncludeDetail = detailRecord.includeDetail
+		return {
+			...equipmentSpecsFromIncludeDetail(parsedIncludeDetail),
+			storeItemPreviews : storeItemPreviewsFromIncludeDetail(parsedIncludeDetail),
 		}
 	} catch (err) {
 		serveIPC.log.warning('mod-vault', `Could not read store item metadata for ${modRecord.fileDetail.shortName}`, err.message)
@@ -1448,12 +1627,12 @@ function detectVaultModTypes(modRecord) {
 }
 
 // eslint-disable-next-line complexity
-function collectionModVaultMetadata(modRecord, collectKey) {
-	const collectionName = serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey
-	const sourceURL = serveIPC.storeSites.get(modRecord.fileDetail.shortName, null)
+function collectionModVaultMetadata(modRecord, collectKey, context = {}) {
+	const collectionName = context.collectionNames?.get(collectKey) ?? serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey
+	const sourceURL = context.sourceSites?.[modRecord.fileDetail.shortName] ?? serveIPC.storeSites.get(modRecord.fileDetail.shortName, null)
 	const modHubRecord = modRecord.modHub ?? {}
-	const modHubMetadata = getCachedModHubMetadata(modHubRecord.id)
-	const storeItemMetadata = storeItemVaultMetadataForMod(modRecord)
+	const modHubMetadata = getCachedModHubMetadata(modHubRecord.id, context.cachedModHubMetadata ?? null)
+	const storeItemMetadata = storeItemVaultMetadataForMod(modRecord, context.includeDetail)
 
 	return {
 		author         : modRecord.modDesc?.author ?? null,
@@ -1486,6 +1665,10 @@ function getCachedModHubMetadata(modHubID, cachedModHubMetadata = null) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
 	if ( cachedModHubMetadata !== null ) { return cachedModHubMetadata[modHubID] ?? null }
 	return serveIPC.storeLibrary.get(`modHub.${modHubID}`, null)
+}
+
+function modHubPageUnavailable(metadata) {
+	return metadata?.ok === false && Object.prototype.hasOwnProperty.call(metadata, 'checkedAt')
 }
 
 function modHubCacheFresh(record) {
@@ -1605,7 +1788,7 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 	}
 
 	try {
-		const response = await fetch(url)
+		const response = await fetchWithTimeout(url)
 		if ( !response.ok ) { throw new Error(`ModHub returned ${response.status}`) }
 		const html = await response.text()
 		const compactText = modHubTextLines(html)
@@ -1671,13 +1854,73 @@ async function sha256File(filePath) {
 	})
 }
 
+function sourceHashCacheKey(filePath) {
+	if ( typeof filePath !== 'string' ) { return '' }
+	const resolvedPath = path.resolve(filePath)
+	return process.platform === 'win32' ? resolvedPath.toLocaleLowerCase() : resolvedPath
+}
+
+async function sourceFileHash(filePath, fileStat, timingStats = null, sourceHashCache = null) {
+	const cacheKey = sourceHashCacheKey(filePath)
+	const cachedEntry = cacheKey === '' || typeof sourceHashCache !== 'object' || sourceHashCache === null
+		? null
+		: sourceHashCache[cacheKey]
+
+	if (
+		typeof cachedEntry?.hash === 'string' &&
+		cachedEntry.size === fileStat.size &&
+		cachedEntry.mtimeMs === fileStat.mtimeMs
+	) {
+		incrementPerformanceStat(timingStats, 'registerHashCacheHits')
+		return cachedEntry.hash
+	}
+
+	const hashStartedAt = performance.now()
+	const hash = await sha256File(filePath)
+	addPerformanceStat(timingStats, 'registerHashMS', performance.now() - hashStartedAt)
+	incrementPerformanceStat(timingStats, 'registerHashCacheMisses')
+
+	if ( cacheKey !== '' && typeof sourceHashCache === 'object' && sourceHashCache !== null ) {
+		sourceHashCache[cacheKey] = {
+			hash,
+			lastSeenAt : new Date().toISOString(),
+			mtimeMs : fileStat.mtimeMs,
+			size    : fileStat.size,
+		}
+		incrementPerformanceStat(timingStats, 'registerHashCacheUpdates')
+	}
+
+	return hash
+}
+
+function cachedSourceHash(filePath, fileStat, sourceHashCache = null) {
+	const cacheKey = sourceHashCacheKey(filePath)
+	if ( cacheKey === '' || typeof sourceHashCache !== 'object' || sourceHashCache === null ) { return null }
+	const cachedEntry = sourceHashCache[cacheKey]
+	if (
+		typeof cachedEntry?.hash === 'string' &&
+		cachedEntry.size === fileStat.size &&
+		cachedEntry.mtimeMs === fileStat.mtimeMs
+	) {
+		return cachedEntry.hash
+	}
+	return null
+}
+
 function modLibraryFilePath(hash, fileName) {
 	const ext = path.extname(safeDownloadFileName(fileName)) || '.zip'
-	return path.join(app.getPath('userData'), 'mod-library', 'files', hash.slice(0, 2), `${hash}${ext}`)
+	return path.join(modLibraryFilesFolder(), hash.slice(0, 2), `${hash}${ext}`)
+}
+
+function defaultModLibraryFolder() {
+	return path.join(app.getPath('userData'), 'mod-library')
 }
 
 function modLibraryFolder() {
-	return path.join(app.getPath('userData'), 'mod-library')
+	const storedFolder = serveIPC.storeLibrary.get('vaultFolder', '')
+	return typeof storedFolder === 'string' && storedFolder.trim() !== '' && path.isAbsolute(storedFolder) ?
+		path.resolve(storedFolder) :
+		defaultModLibraryFolder()
 }
 
 function modLibraryFilesFolder() {
@@ -1689,6 +1932,230 @@ function isPathInsideFolder(childPath, parentPath) {
 	const resolvedParent = path.resolve(parentPath)
 	const relativePath = path.relative(resolvedParent, resolvedChild)
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+}
+
+function sameFileSystemPath(firstPath, secondPath) {
+	const resolvedFirst = path.resolve(firstPath)
+	const resolvedSecond = path.resolve(secondPath)
+	return process.platform === 'win32' ?
+		resolvedFirst.toLocaleLowerCase() === resolvedSecond.toLocaleLowerCase() :
+		resolvedFirst === resolvedSecond
+}
+
+function rewritePathBetweenFolders(value, oldRoot, newRoot) {
+	if ( typeof value !== 'string' || value.trim() === '' || !isPathInsideFolder(value, oldRoot) ) { return value }
+	return path.join(newRoot, path.relative(oldRoot, value))
+}
+
+function rewriteVaultHistoryPaths(oldFilesRoot, newFilesRoot) {
+	const historyEntries = serveIPC.storeHistory.get('entries', [])
+	if ( !Array.isArray(historyEntries) ) { return 0 }
+
+	let updated = 0
+	const nextEntries = historyEntries.map((entry) => {
+		if ( typeof entry !== 'object' || entry === null || Array.isArray(entry) ) { return entry }
+		const nextEntry = { ...entry }
+		for ( const field of ['backupPath', 'currentLibraryPath', 'stagedPath'] ) {
+			const nextPath = rewritePathBetweenFolders(nextEntry[field], oldFilesRoot, newFilesRoot)
+			if ( nextPath !== nextEntry[field] ) {
+				nextEntry[field] = nextPath
+				updated++
+			}
+		}
+		return nextEntry
+	})
+
+	if ( updated !== 0 ) { serveIPC.storeHistory.set('entries', nextEntries) }
+	return updated
+}
+
+async function targetVaultFolderIsUsable(targetFolder) {
+	const existingTargetItems = await fsPromise.readdir(targetFolder, { withFileTypes : true })
+	if ( existingTargetItems.length === 0 ) { return true }
+	return existingTargetItems.every((entry) => ['files', 'index'].includes(entry.name) && entry.isDirectory())
+}
+
+async function collectModLibraryFileMoves(sourceFolder, relativeFolder = '') {
+	if ( !fs.existsSync(sourceFolder) ) { return [] }
+	const entries = await fsPromise.readdir(path.join(sourceFolder, relativeFolder), { withFileTypes : true })
+	const files = []
+	for ( const entry of entries ) {
+		const relativePath = path.join(relativeFolder, entry.name)
+		if ( entry.isDirectory() ) {
+			// eslint-disable-next-line no-await-in-loop
+			files.push(...await collectModLibraryFileMoves(sourceFolder, relativePath))
+			continue
+		}
+		if ( !entry.isFile() ) { continue }
+		// eslint-disable-next-line no-await-in-loop
+		const fileStat = await fsPromise.stat(path.join(sourceFolder, relativePath))
+		files.push({ relativePath, size : fileStat.size })
+	}
+	return files
+}
+
+function formatMoveDuration(milliseconds) {
+	if ( !Number.isFinite(milliseconds) || milliseconds < 0 ) { return 'unknown' }
+	const seconds = Math.ceil(milliseconds / 1000)
+	if ( seconds < 60 ) { return `${seconds}s` }
+	const minutes = Math.floor(seconds / 60)
+	const remainingSeconds = seconds % 60
+	if ( minutes < 60 ) { return `${minutes}m ${remainingSeconds}s` }
+	const hours = Math.floor(minutes / 60)
+	const remainingMinutes = minutes % 60
+	return `${hours}h ${remainingMinutes}m`
+}
+
+function vaultMoveProgressLabel(stats, totalFiles, etaMS = null) {
+	const etaText = etaMS === null ? '' : `, ETA ${formatMoveDuration(etaMS)}`
+	return `Moving Vault: ${stats.processedFiles} / ${totalFiles} files${etaText}`
+}
+
+async function copyModLibraryFiles(sourceFolder, targetFolder, onProgress = null) {
+	const stats = {
+		copiedFiles  : 0,
+		processedBytes : 0,
+		processedFiles : 0,
+		recopiedFiles : 0,
+		skippedFiles : 0,
+		totalBytes   : 0,
+		totalFiles   : 0,
+	}
+
+	if ( !fs.existsSync(sourceFolder) ) {
+		await fsPromise.mkdir(targetFolder, { recursive : true })
+		return stats
+	}
+
+	await fsPromise.mkdir(targetFolder, { recursive : true })
+	const files = await collectModLibraryFileMoves(sourceFolder)
+	stats.totalFiles = files.length
+	stats.totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+	const startedAt = performance.now()
+	let lastProgressAt = 0
+	const emitProgress = (force = false) => {
+		if ( typeof onProgress !== 'function' ) { return }
+		const now = performance.now()
+		if ( !force && now - lastProgressAt < 250 ) { return }
+		lastProgressAt = now
+		const elapsedMS = Math.max(1, now - startedAt)
+		const remainingBytes = Math.max(0, stats.totalBytes - stats.processedBytes)
+		const bytesPerMS = stats.processedBytes / elapsedMS
+		const etaMS = bytesPerMS > 0 && remainingBytes > 0 ? remainingBytes / bytesPerMS : null
+		onProgress({
+			label : vaultMoveProgressLabel(stats, stats.totalFiles, etaMS),
+			value : stats.totalBytes === 0 ? 100 : (stats.processedBytes / stats.totalBytes) * 100,
+		})
+	}
+
+	emitProgress(true)
+	for ( const file of files ) {
+		const sourcePath = path.join(sourceFolder, file.relativePath)
+		const targetPath = path.join(targetFolder, file.relativePath)
+		// eslint-disable-next-line no-await-in-loop
+		await fsPromise.mkdir(path.dirname(targetPath), { recursive : true })
+
+		let targetStat = null
+		try {
+			// eslint-disable-next-line no-await-in-loop
+			targetStat = await fsPromise.stat(targetPath)
+		} catch {
+			targetStat = null
+		}
+
+		if ( targetStat !== null && targetStat.isFile() && targetStat.size === file.size ) {
+			stats.skippedFiles++
+		} else {
+			// eslint-disable-next-line no-await-in-loop
+			await fsPromise.copyFile(sourcePath, targetPath)
+			if ( targetStat === null ) {
+				stats.copiedFiles++
+			} else {
+				stats.recopiedFiles++
+			}
+		}
+		stats.processedBytes += file.size
+		stats.processedFiles++
+		emitProgress()
+	}
+
+	emitProgress(true)
+	return stats
+}
+
+async function moveModLibraryFolder(onProgress = null) {
+	const currentFolder = modLibraryFolder()
+	const currentFilesFolder = modLibraryFilesFolder()
+	const result = await dialog.showOpenDialog(serveIPC.windowLib.win.vault, {
+		buttonLabel : 'Use this folder',
+		message     : 'Choose a folder for the Mod Vault.',
+		properties  : ['openDirectory', 'createDirectory'],
+		title       : 'Choose Mod Vault folder',
+	})
+	if ( result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0 ) {
+		return { cancelled : true, ok : false }
+	}
+
+	const targetFolder = path.resolve(result.filePaths[0])
+	if ( sameFileSystemPath(targetFolder, currentFolder) ) {
+		return { ok : false, error : 'That folder is already the active Vault folder.' }
+	}
+	if ( isPathInsideFolder(targetFolder, currentFolder) ) {
+		return { ok : false, error : 'Choose a folder outside the current Vault folder.' }
+	}
+	if ( isPathInsideFolder(currentFolder, targetFolder) ) {
+		return { ok : false, error : 'Choose an empty folder, not a parent folder that already contains the current Vault.' }
+	}
+
+	await fsPromise.mkdir(targetFolder, { recursive : true })
+	if ( !await targetVaultFolderIsUsable(targetFolder) ) {
+		return { ok : false, error : 'Choose an empty folder or a previous partial Vault move folder.' }
+	}
+
+	const targetFilesFolder = path.join(targetFolder, 'files')
+	const copyStats = await copyModLibraryFiles(currentFilesFolder, targetFilesFolder, onProgress)
+
+	const records = getRawStoredModLibraryRecords()
+	let updatedRecords = 0
+	for ( const record of Object.values(records) ) {
+		if ( typeof record !== 'object' || record === null || Array.isArray(record) ) { continue }
+		const nextPath = rewritePathBetweenFolders(record.filePath, currentFilesFolder, targetFilesFolder)
+		if ( nextPath !== record.filePath ) {
+			record.filePath = nextPath
+			updatedRecords++
+		}
+	}
+
+	const updatedHistoryPaths = rewriteVaultHistoryPaths(currentFilesFolder, targetFilesFolder)
+	serveIPC.storeLibrary.set('vaultFolder', targetFolder)
+	serveIPC.storeLibrary.set('records', records)
+	invalidateModLibrarySummary()
+	if ( typeof onProgress === 'function' ) {
+		onProgress({ label : 'Deleting old Vault folder...', value : 99 })
+	}
+	let oldFolderDeleted = false
+	let oldFolderDeleteError = null
+	try {
+		await fsPromise.rm(currentFolder, { force : true, recursive : true })
+		oldFolderDeleted = true
+	} catch (err) {
+		oldFolderDeleteError = err.message
+	}
+	if ( typeof onProgress === 'function' ) {
+		onProgress({ label : 'Vault move complete.', value : 100 })
+	}
+	serveIPC.log.info('mod-vault', `Vault folder moved from ${currentFolder} to ${targetFolder}; records=${updatedRecords} historyPaths=${updatedHistoryPaths} copied=${copyStats.copiedFiles} skipped=${copyStats.skippedFiles} recopied=${copyStats.recopiedFiles} oldDeleted=${oldFolderDeleted.toString()}`)
+
+	return {
+		copyStats,
+		folder : targetFolder,
+		ok     : true,
+		oldFolderDeleted,
+		oldFolderDeleteError,
+		oldFolder : currentFolder,
+		updatedHistoryPaths,
+		updatedRecords,
+	}
 }
 
 function getRawStoredModLibraryRecords() {
@@ -1710,7 +2177,7 @@ function getStoredModLibraryRecords() {
 		}]))
 }
 
-const MOD_LIBRARY_INDEX_SCHEMA = 1
+const MOD_LIBRARY_INDEX_SCHEMA = 2
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 let modLibraryIndexWarmupStarted = false
@@ -1794,26 +2261,103 @@ function getVaultDetailRecord(hash) {
 		throw new Error('The stored Vault ZIP could not be found.')
 	}
 
-	const parsedRecord = JSON.parse(parseModLastPass(record.filePath))
+	const parsedRecord = parseVaultDetailMod(record, hash)
 	const detailRecord = parsedRecord.includeDetail
+	const canonicalModName = vaultDetailModName(record, parsedRecord)
+	const currentCollection = vaultDetailCollectionKey(record, canonicalModName)
+	parsedRecord.fileDetail.shortName = canonicalModName
+	parsedRecord.fileDetail.fullPath = record.filePath
 	const currentModHub = serveIPC.modCollect.modHubFullRecord(parsedRecord)
 	const storedModHubID = record.modHubIDs?.[0]
 	parsedRecord.colUUID = `vault--${hash}`
-	parsedRecord.currentCollection = 'vault'
+	parsedRecord.currentCollection = currentCollection
 	parsedRecord.gameVersion = record.gameVersions?.[0] ?? funcLib.prefs.ver()
 	parsedRecord.has_brands = detailRecord?.itemBrands ?? []
 	parsedRecord.has_cats = detailRecord?.itemCategories ?? []
+	parsedRecord.detailContext = {
+		displayCollectionKey  : currentCollection,
+		displayCollectionName : vaultDetailCollectionName(currentCollection, record),
+		isVaultRecord         : true,
+		sourceLookupName      : canonicalModName,
+		sourceURL             : vaultDetailSourceURL(record, canonicalModName),
+		vaultFileName         : record.fileName ?? path.basename(record.filePath),
+		vaultHash             : hash,
+		vaultPath             : record.filePath,
+	}
 	parsedRecord.includeDetail = 2
 	parsedRecord.isVaultRecord = true
-	parsedRecord.modHub = {
-		...currentModHub,
-		id      : currentModHub.id ?? (typeof storedModHubID === 'undefined' ? null : Number.parseInt(storedModHubID, 10)),
-		version : currentModHub.version ?? record.modHubLatestVersion ?? record.modHubVersions?.[0] ?? null,
-	}
+	parsedRecord.modHub = vaultDetailModHub(record, currentModHub, storedModHubID)
 
 	const result = [parsedRecord, detailRecord]
 	vaultDetailCache.set(hash, result)
 	return result
+}
+
+function parseVaultDetailMod(record, hash) {
+	const fileName = safeDownloadFileName(record.fileName ?? path.basename(record.filePath))
+	const tempDir = path.join(app.getPath('temp'), `fsgma-vault-detail-${process.pid}-${hash}`)
+	const tempPath = path.join(tempDir, fileName)
+
+	try {
+		fs.rmSync(tempDir, { force : true, recursive : true })
+		fs.mkdirSync(tempDir, { recursive : true })
+		fs.linkSync(record.filePath, tempPath)
+		return JSON.parse(parseModLastPass(tempPath))
+	} catch (err) {
+		serveIPC.log.warning('mod-vault', `Could not parse ${fileName} with its Vault filename; falling back to stored path`, err.message)
+		return JSON.parse(parseModLastPass(record.filePath))
+	} finally {
+		fs.rmSync(tempDir, { force : true, recursive : true })
+	}
+}
+
+function vaultDetailModName(record, parsedRecord) {
+	return normalizedVaultModNames([
+		...(record.modNames ?? []),
+		record.fileName,
+		parsedRecord?.fileDetail?.shortName,
+	]).at(0) ?? parsedRecord.fileDetail.shortName
+}
+
+function vaultDetailCollectionKey(record, modName) {
+	const recordCollectionNames = new Set(Array.isArray(record.collections) ? record.collections : [])
+	const collectionCandidates = [...serveIPC.modCollect.collections]
+		.map((collectionKey) => ({
+			key  : collectionKey,
+			name : serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey,
+		}))
+		.filter((collection) => recordCollectionNames.has(collection.name))
+
+	return collectionCandidates.find((collection) => getCollectionModRecord(collection.key, modName) !== null)?.key ??
+		collectionCandidates[0]?.key ??
+		'vault'
+}
+
+function vaultDetailCollectionName(collectionKey, record) {
+	if ( collectionKey !== 'vault' ) {
+		return serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey
+	}
+	return Array.isArray(record.collections) && record.collections.length !== 0 ? record.collections[0] : 'Mod Vault'
+}
+
+function vaultDetailSourceURL(record, modName) {
+	const currentSource = serveIPC.storeSites.get(modName, '').trim()
+	if ( currentSource !== '' ) { return currentSource }
+	const storedSource = typeof record.sourceURL === 'string' ? record.sourceURL.trim() : ''
+	if ( storedSource !== '' ) { return storedSource }
+	return ''
+}
+
+function vaultDetailModHub(record, currentModHub, storedModHubID) {
+	const modHubID = currentModHub.id ?? (typeof storedModHubID === 'undefined' ? null : Number.parseInt(storedModHubID, 10))
+	const cachedModHubMetadata = getCachedModHubMetadata(modHubID)
+	return {
+		...currentModHub,
+		id      : modHubID,
+		version : modHubPageUnavailable(cachedModHubMetadata) ?
+			null :
+			(cachedModHubMetadata?.version ?? currentModHub.version ?? record.modHubLatestVersion ?? record.modHubVersions?.[0] ?? null),
+	}
 }
 
 function mergeEquipmentSpecs(existingSpecs = {}, incomingSpecs = {}) {
@@ -1836,13 +2380,125 @@ function safeEquipmentSpecs(value) {
 	return mergeEquipmentSpecs({}, value)
 }
 
+function normalizedRecordForVaultComparison(record) {
+	const cleanRecord = { ...record }
+	delete cleanRecord.updatedAt
+	if ( Array.isArray(cleanRecord.collections) ) {
+		cleanRecord.collections = uniqueCleanArray(cleanRecord.collections).toSorted((first, second) => first.localeCompare(second))
+	}
+	return cleanRecord
+}
+
+function recordsMatchWithoutUpdatedAt(firstRecord, secondRecord) {
+	if ( typeof firstRecord !== 'object' || firstRecord === null || typeof secondRecord !== 'object' || secondRecord === null ) {
+		return false
+	}
+	const firstClean = normalizedRecordForVaultComparison(firstRecord)
+	const secondClean = normalizedRecordForVaultComparison(secondRecord)
+	return JSON.stringify(firstClean) === JSON.stringify(secondClean)
+}
+
+function changedRecordFieldsWithoutUpdatedAt(firstRecord, secondRecord) {
+	if ( typeof firstRecord !== 'object' || firstRecord === null || typeof secondRecord !== 'object' || secondRecord === null ) {
+		return ['record']
+	}
+	const fields = new Set([...Object.keys(firstRecord), ...Object.keys(secondRecord)])
+	fields.delete('updatedAt')
+	return [...fields].filter((field) => {
+		if ( field === 'collections' ) {
+			return JSON.stringify(normalizedRecordForVaultComparison(firstRecord).collections ?? []) !==
+				JSON.stringify(normalizedRecordForVaultComparison(secondRecord).collections ?? [])
+		}
+		return JSON.stringify(firstRecord[field]) !== JSON.stringify(secondRecord[field])
+	})
+}
+
+function trackChangedRecordFields(stats, hash, nextRecord, originalRecord) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats.changedRecordFields ??= {}
+	for ( const field of changedRecordFieldsWithoutUpdatedAt(nextRecord, originalRecord) ) {
+		stats.changedRecordFields[field] = (stats.changedRecordFields[field] ?? 0) + 1
+	}
+	stats.changedRecordSamples ??= []
+	if ( stats.changedRecordSamples.length < 5 ) {
+		stats.changedRecordSamples.push(hash)
+	}
+}
+
+function trackTouchedVaultRecord(stats, hash) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	stats.touchedRecordHashes ??= new Set()
+	stats.touchedRecordHashes.add(hash)
+}
+
+function finalizeVaultRecordChangeStats(stats, records, originalRecords) {
+	if ( typeof stats !== 'object' || stats === null ) { return }
+	const touchedHashes = stats.touchedRecordHashes instanceof Set ? stats.touchedRecordHashes : new Set(Object.keys(records))
+	stats.changedRecordFields = {}
+	stats.changedRecordSamples = []
+	stats.registerRecordChanges = 0
+	stats.registerRecordSkips = 0
+
+	for ( const hash of touchedHashes ) {
+		if ( recordsMatchWithoutUpdatedAt(records[hash], originalRecords[hash]) ) {
+			stats.registerRecordSkips++
+		} else {
+			stats.registerRecordChanges++
+			trackChangedRecordFields(stats, hash, records[hash], originalRecords[hash])
+		}
+	}
+}
+
+async function tryIncrementalVaultCollectionImport(filePath, collectionName, records, sourceHashCache, timingStats = null) {
+	const startedAt = performance.now()
+	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'incrementalStatMS', performance.now() - startedAt)
+
+	const hash = cachedSourceHash(filePath, fileStat, sourceHashCache)
+	if ( hash === null ) {
+		incrementPerformanceStat(timingStats, 'incrementalMisses')
+		return false
+	}
+
+	const record = records[hash]
+	if ( typeof record !== 'object' || record === null ) {
+		incrementPerformanceStat(timingStats, 'incrementalFallbackMissingRecord')
+		return false
+	}
+	if ( typeof record.filePath !== 'string' || !fs.existsSync(record.filePath) ) {
+		incrementPerformanceStat(timingStats, 'incrementalFallbackMissingVaultFile')
+		return false
+	}
+
+	trackTouchedVaultRecord(timingStats, hash)
+	records[hash] = {
+		...record,
+		collections : uniqueCleanArray([...(record.collections ?? []), collectionName]),
+	}
+	incrementPerformanceStat(timingStats, 'incrementalHits')
+	addPerformanceStat(timingStats, 'incrementalTotalMS', performance.now() - startedAt)
+	return true
+}
+
 // eslint-disable-next-line complexity
-async function registerModLibraryFile(filePath, metadata = {}) {
+async function registerModLibraryFile(filePath, metadata = {}, timingStats = null, options = {}) {
+	const registerStartedAt = performance.now()
+	const deferStore = options.deferStore === true
+	const deferInvalidate = options.deferInvalidate === true
 	if ( typeof filePath !== 'string' || !fs.existsSync(filePath) ) {
 		throw new Error('Library source file was not found')
 	}
 
-	const hash = await sha256File(filePath)
+	let stepStartedAt = performance.now()
+	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'registerStatMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
+	const hash = await sourceFileHash(filePath, fileStat, timingStats, options.sourceHashCache)
+	trackTouchedVaultRecord(timingStats, hash)
+	addPerformanceStat(timingStats, 'registerHashLookupMS', performance.now() - stepStartedAt)
+
+	stepStartedAt = performance.now()
 	const normalizedModName = normalizeVaultModName(metadata.modName)
 	const suppliedFileName = safeDownloadFileName(metadata.fileName ?? path.basename(filePath))
 	const normalizedFileName = normalizeVaultModName(suppliedFileName)
@@ -1850,14 +2506,28 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		? (normalizedFileName === '' ? suppliedFileName : safeDownloadFileName(`${normalizedFileName}.zip`))
 		: safeDownloadFileName(`${normalizedModName}.zip`)
 	const libraryPath = modLibraryFilePath(hash, fileName)
-	const fileStat = await fsPromise.stat(filePath)
+	addPerformanceStat(timingStats, 'registerNameMS', performance.now() - stepStartedAt)
 
+	stepStartedAt = performance.now()
 	await fsPromise.mkdir(path.dirname(libraryPath), { recursive : true })
+	addPerformanceStat(timingStats, 'registerMkdirMS', performance.now() - stepStartedAt)
+
 	if ( !fs.existsSync(libraryPath) ) {
+		stepStartedAt = performance.now()
 		await fsPromise.copyFile(filePath, libraryPath)
+		addPerformanceStat(timingStats, 'registerCopyMS', performance.now() - stepStartedAt)
+		incrementPerformanceStat(timingStats, 'registerCopies')
+	} else {
+		incrementPerformanceStat(timingStats, 'registerCopySkips')
 	}
 
-	const records = getStoredModLibraryRecords()
+	stepStartedAt = performance.now()
+	const records = typeof options.records === 'object' && options.records !== null ? options.records : getStoredModLibraryRecords()
+	addPerformanceStat(timingStats, 'registerReadRecordsMS', performance.now() - stepStartedAt)
+
+	const originalRecord = typeof options.originalRecords === 'object' && options.originalRecords !== null
+		? options.originalRecords[hash]
+		: undefined
 	const existingRecord = records[hash] ?? {
 		collections : [],
 		createdAt   : new Date().toISOString(),
@@ -1870,7 +2540,8 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		versions    : [],
 	}
 
-	records[hash] = {
+	stepStartedAt = performance.now()
+	const nextRecord = {
 		...existingRecord,
 		collections : uniqueCleanArray([...(existingRecord.collections ?? []), metadata.collectionName]),
 		equipmentSpecs : mergeEquipmentSpecs(existingRecord.equipmentSpecs ?? {}, metadata.equipmentSpecs ?? {}),
@@ -1900,12 +2571,40 @@ async function registerModLibraryFile(filePath, metadata = {}) {
 		storeItems  : Math.max(existingRecord.storeItems ?? 0, metadata.storeItems ?? 0),
 		storeItemTypes : uniqueCleanArray([...(existingRecord.storeItemTypes ?? []), ...(metadata.storeItemTypes ?? [])]
 			.map((value) => cleanStoreItemTypeLabel(value))),
-		updatedAt   : new Date().toISOString(),
+		updatedAt   : existingRecord.updatedAt ?? new Date().toISOString(),
 		versions    : uniqueCleanArray([...(existingRecord.versions ?? []), metadata.version]),
 	}
 
-	serveIPC.storeLibrary.set('records', records)
-	invalidateModLibrarySummary()
+	if ( typeof originalRecord === 'object' && originalRecord !== null && recordsMatchWithoutUpdatedAt(nextRecord, originalRecord) ) {
+		records[hash] = originalRecord
+		incrementPerformanceStat(timingStats, 'registerRecordSkips')
+	} else {
+		trackChangedRecordFields(timingStats, hash, nextRecord, originalRecord)
+		records[hash] = {
+			...nextRecord,
+			updatedAt : new Date().toISOString(),
+		}
+		incrementPerformanceStat(timingStats, 'registerRecordChanges')
+	}
+	addPerformanceStat(timingStats, 'registerMergeMS', performance.now() - stepStartedAt)
+
+	if ( deferStore ) {
+		incrementPerformanceStat(timingStats, 'registerStoreDefers')
+	} else {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('records', records)
+		addPerformanceStat(timingStats, 'registerStoreMS', performance.now() - stepStartedAt)
+	}
+
+	if ( deferInvalidate ) {
+		incrementPerformanceStat(timingStats, 'registerInvalidateDefers')
+	} else {
+		stepStartedAt = performance.now()
+		invalidateModLibrarySummary()
+		addPerformanceStat(timingStats, 'registerInvalidateMS', performance.now() - stepStartedAt)
+	}
+	addPerformanceStat(timingStats, 'registerTotalMS', performance.now() - registerStartedAt)
+	incrementPerformanceStat(timingStats, 'registerCalls')
 
 	return {
 		fileName,
@@ -1941,6 +2640,29 @@ function getVaultNotes() {
 	return typeof storedNotes === 'object' && storedNotes !== null && !Array.isArray(storedNotes) ? storedNotes : {}
 }
 
+function getVaultTags() {
+	const storedTags = serveIPC.storeLibrary.get('tags', {})
+	return typeof storedTags === 'object' && storedTags !== null && !Array.isArray(storedTags) ? storedTags : {}
+}
+
+function cleanVaultTags(tags) {
+	if ( !Array.isArray(tags) ) { throw new Error('Tags must be a list.') }
+	const cleanTags = []
+	const seenTags = new Set()
+	for ( const tag of tags ) {
+		if ( typeof tag !== 'string' ) { continue }
+		const cleanTag = tag.replace(/\s+/gu, ' ').trim()
+		if ( cleanTag === '' ) { continue }
+		if ( cleanTag.length > 40 ) { throw new Error('Tags cannot be longer than 40 characters.') }
+		const tagKey = cleanTag.toLocaleLowerCase()
+		if ( seenTags.has(tagKey) ) { continue }
+		seenTags.add(tagKey)
+		cleanTags.push(cleanTag)
+		if ( cleanTags.length > 20 ) { throw new Error('A mod cannot have more than 20 custom tags.') }
+	}
+	return cleanTags
+}
+
 function saveVaultNote({ modName, note } = {}) {
 	const noteKey = vaultNoteKey(modName)
 	if ( noteKey === '' ) { throw new Error('The mod name is missing.') }
@@ -1968,10 +2690,51 @@ function saveVaultNote({ modName, note } = {}) {
 	}
 }
 
+function saveVaultTags({ modName, tags } = {}) {
+	const tagKey = vaultNoteKey(modName)
+	if ( tagKey === '' ) { throw new Error('The mod name is missing.') }
+
+	const cleanTags = cleanVaultTags(tags)
+	const storedTags = getVaultTags()
+	if ( cleanTags.length === 0 ) {
+		delete storedTags[tagKey]
+	} else {
+		storedTags[tagKey] = {
+			modName,
+			tags      : cleanTags,
+			updatedAt : new Date().toISOString(),
+		}
+	}
+	serveIPC.storeLibrary.set('tags', storedTags)
+	invalidateModLibrarySummary()
+
+	return {
+		key    : tagKey,
+		record : storedTags[tagKey] ?? null,
+	}
+}
+
 function currentVaultCollectionNames() {
 	return new Set([...serveIPC.modCollect.collections]
 		.map((collectionKey) => serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey)
 		.filter((collectionName) => typeof collectionName === 'string' && collectionName !== ''))
+}
+
+function currentVaultCollectionNamesByModName() {
+	const collectionNamesByModName = new Map()
+	for ( const collectionKey of serveIPC.modCollect.collections ) {
+		const collectionName = serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey
+		if ( typeof collectionName !== 'string' || collectionName === '' ) { continue }
+
+		for ( const modRecord of serveIPC.modCollect.getModListFromCollection(collectionKey) ) {
+			const modName = normalizeVaultModName(modRecord?.fileDetail?.shortName)
+			if ( modName === '' ) { continue }
+			const lookupName = modName.toLocaleLowerCase()
+			if ( !collectionNamesByModName.has(lookupName) ) { collectionNamesByModName.set(lookupName, new Set()) }
+			collectionNamesByModName.get(lookupName).add(collectionName)
+		}
+	}
+	return collectionNamesByModName
 }
 
 const MOD_LIBRARY_DEFAULT_RETENTION_COUNT = 3
@@ -2070,6 +2833,7 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 	const prepareStartedAt = performance.now()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
+	const currentCollectionsByModName = currentVaultCollectionNamesByModName()
 	const cachedModHubMetadata = serveIPC.storeLibrary.get('modHub', {})
 	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
 	const retentionCount = getModLibraryRetentionCount()
@@ -2092,9 +2856,15 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 			const sources = Array.isArray(record.sources) ? record.sources : []
 			const isUsed = usedHashes.has(hash) || usedPaths.has(record.filePath)
 			const collections = Array.isArray(record.collections) ? record.collections.filter((collectionName) => currentCollectionNames.has(collectionName)) : []
+			const currentCollections = uniqueCleanArray(normalizedVaultModNames([
+				...(Array.isArray(record.modNames) ? record.modNames : []),
+				record.fileName,
+			]).flatMap((modName) => [...(currentCollectionsByModName.get(modName.toLocaleLowerCase()) ?? [])]))
 			const entry = {
+				collectionFilterNames : uniqueCleanArray([...collections, ...currentCollections]),
 				collections,
 				createdAt    : record.createdAt ?? null,
+				currentCollections,
 				equipmentSpecs : safeEquipmentSpecs(record.equipmentSpecs),
 				fileExists   : fileExists,
 				fileName     : record.fileName ?? path.basename(record.filePath ?? ''),
@@ -2311,6 +3081,7 @@ function modLibrarySummaryForEntries(entries) {
 			maximum : MOD_LIBRARY_MAX_RETENTION_COUNT,
 			versionCount : getModLibraryRetentionCount(),
 		},
+		tags       : getVaultTags(),
 		totalCount : entries.length,
 		totalSize  : entries.reduce((sum, entry) => sum + entry.size, 0),
 		usedCount  : entries.filter((entry) => entry.isUsed).length,
@@ -2701,52 +3472,113 @@ async function copyVaultRecordToCollection({ collectionKey, hash, overwrite = fa
 	}
 }
 
+// eslint-disable-next-line complexity
 async function importCollectionsToVault(progressCallback = null) {
+	const importStartedAt = performance.now()
+	const stats = {
+		eligible : 0,
+		progressCalls : 0,
+	}
 	let scanned = 0
 	let imported = 0
 	let skipped = 0
 	const errors = []
-	const records = getStoredModLibraryRecords()
+
+	let stepStartedAt = performance.now()
+	const originalRecords = getStoredModLibraryRecords()
+	const records = Object.fromEntries(Object.entries(originalRecords).map(([hash, record]) => [hash, { ...record }]))
 	const collectionMods = [...serveIPC.modCollect.collections].map((collectKey) => ({
 		collectKey,
 		mods : serveIPC.modCollect.getModListFromCollection(collectKey),
 	}))
+	const collectionNames = new Map(collectionMods.map(({ collectKey }) => [
+		collectKey,
+		serveIPC.modCollect.mapCollectionToName(collectKey) ?? collectKey,
+	]))
+	const metadataContext = {
+		cachedModHubMetadata : serveIPC.storeLibrary.get('modHub', {}),
+		collectionNames,
+		sourceSites : serveIPC.storeSites.store,
+	}
+	const sourceHashCache = serveIPC.storeLibrary.get('sourceHashCache', {})
 	const totalMods = collectionMods.reduce((sum, collection) => sum + collection.mods.length, 0)
+	addPerformanceStat(stats, 'collectionBuildMS', performance.now() - stepStartedAt)
+
 	const sendProgress = () => {
 		if ( typeof progressCallback !== 'function' ) { return }
+		const progressStartedAt = performance.now()
 		progressCallback({
 			current : scanned,
 			label   : totalMods === 0 ? 'No collection mods found' : `${scanned} / ${totalMods}`,
 			total   : totalMods,
 			value   : totalMods === 0 ? 100 : (scanned / totalMods) * 100,
 		})
+		addPerformanceStat(stats, 'progressMS', performance.now() - progressStartedAt)
+		incrementPerformanceStat(stats, 'progressCalls')
 	}
 
 	// Collection associations describe the current monitored set, not historical membership.
 	// Each successful scan below adds the live associations back to its stored ZIP records.
+	stepStartedAt = performance.now()
 	for ( const [hash, record] of Object.entries(records) ) {
 		records[hash] = { ...record, collections : [] }
 	}
-	serveIPC.storeLibrary.set('records', records)
-	invalidateModLibrarySummary()
+	addPerformanceStat(stats, 'associationResetMS', performance.now() - stepStartedAt)
 	sendProgress()
 
 	for ( const { collectKey, mods } of collectionMods ) {
 		for ( const modRecord of mods ) {
 			scanned++
 			try {
+				stepStartedAt = performance.now()
 				if (
 					typeof modRecord?.fileDetail?.fullPath !== 'string' ||
 					modRecord.fileDetail.isFolder ||
 					!modRecord.fileDetail.fullPath.toLowerCase().endsWith('.zip') ||
 					!fs.existsSync(modRecord.fileDetail.fullPath)
 				) {
+					addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
 					skipped++
 					continue
 				}
+				addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
+				incrementPerformanceStat(stats, 'eligible')
+
+				const collectionName = collectionNames.get(collectKey) ?? collectKey
+				// eslint-disable-next-line no-await-in-loop
+				const incrementalHandled = await tryIncrementalVaultCollectionImport(
+					modRecord.fileDetail.fullPath,
+					collectionName,
+					records,
+					sourceHashCache,
+					stats
+				)
+				if ( incrementalHandled ) {
+					imported++
+					continue
+				}
+
+				stepStartedAt = performance.now()
+				// eslint-disable-next-line no-await-in-loop
+				const [, includeDetail] = await serveIPC.modCollect.detailMod(modRecord.colUUID)
+				addPerformanceStat(stats, 'detailLookupMS', performance.now() - stepStartedAt)
+
+				stepStartedAt = performance.now()
+				const metadata = collectionModVaultMetadata(modRecord, collectKey, {
+					...metadataContext,
+					includeDetail,
+				})
+				addPerformanceStat(stats, 'metadataMS', performance.now() - stepStartedAt)
+
 				// Keep large ZIP hashing sequential to avoid excessive disk and memory pressure.
 				// eslint-disable-next-line no-await-in-loop
-				await registerModLibraryFile(modRecord.fileDetail.fullPath, collectionModVaultMetadata(modRecord, collectKey))
+				await registerModLibraryFile(modRecord.fileDetail.fullPath, metadata, stats, {
+					deferInvalidate : true,
+					deferStore      : true,
+					originalRecords,
+					records,
+					sourceHashCache,
+				})
 				imported++
 			} catch (err) {
 				errors.push({
@@ -2759,13 +3591,93 @@ async function importCollectionsToVault(progressCallback = null) {
 		}
 	}
 
+	finalizeVaultRecordChangeStats(stats, records, originalRecords)
+
+	if ( (stats.registerRecordChanges ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('records', records)
+		addPerformanceStat(stats, 'finalStoreMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalStoreSkips')
+	}
+
+	if ( (stats.registerHashCacheUpdates ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		serveIPC.storeLibrary.set('sourceHashCache', sourceHashCache)
+		addPerformanceStat(stats, 'finalHashCacheStoreMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalHashCacheStoreSkips')
+	}
+
+	if ( (stats.registerRecordChanges ?? 0) > 0 ) {
+		stepStartedAt = performance.now()
+		invalidateModLibrarySummary()
+		addPerformanceStat(stats, 'finalInvalidateMS', performance.now() - stepStartedAt)
+	} else {
+		incrementPerformanceStat(stats, 'finalInvalidateSkips')
+	}
+
+	stepStartedAt = performance.now()
+	const summary = getModLibrarySummary()
+	addPerformanceStat(stats, 'summaryMS', performance.now() - stepStartedAt)
+
+	logPerformanceDuration('Vault collection import', importStartedAt, [
+		`collections=${collectionMods.length.toString()}`,
+		`mods=${totalMods.toString()}`,
+		`eligible=${stats.eligible.toString()}`,
+		`imported=${imported.toString()}`,
+		`skipped=${skipped.toString()}`,
+		`errors=${errors.length.toString()}`,
+	].join(' '))
+	serveIPC.log.info('performance', [
+		'Vault collection import internals',
+		`collectionBuild=${(stats.collectionBuildMS ?? 0).toFixed(1)} ms`,
+		`associationReset=${(stats.associationResetMS ?? 0).toFixed(1)} ms`,
+		`eligibility=${(stats.eligibilityMS ?? 0).toFixed(1)} ms`,
+		`detailLookup=${(stats.detailLookupMS ?? 0).toFixed(1)} ms`,
+		`metadata=${(stats.metadataMS ?? 0).toFixed(1)} ms`,
+		`incremental=${(stats.incrementalTotalMS ?? 0).toFixed(1)} ms`,
+		`incrementalStat=${(stats.incrementalStatMS ?? 0).toFixed(1)} ms`,
+		`registerTotal=${(stats.registerTotalMS ?? 0).toFixed(1)} ms`,
+		`registerHash=${(stats.registerHashMS ?? 0).toFixed(1)} ms`,
+		`registerHashLookup=${(stats.registerHashLookupMS ?? 0).toFixed(1)} ms`,
+		`registerCopy=${(stats.registerCopyMS ?? 0).toFixed(1)} ms`,
+		`registerStore=${(stats.registerStoreMS ?? 0).toFixed(1)} ms`,
+		`registerInvalidate=${(stats.registerInvalidateMS ?? 0).toFixed(1)} ms`,
+		`finalStore=${(stats.finalStoreMS ?? 0).toFixed(1)} ms`,
+		`finalHashCacheStore=${(stats.finalHashCacheStoreMS ?? 0).toFixed(1)} ms`,
+		`finalInvalidate=${(stats.finalInvalidateMS ?? 0).toFixed(1)} ms`,
+		`summary=${(stats.summaryMS ?? 0).toFixed(1)} ms`,
+		`progress=${(stats.progressMS ?? 0).toFixed(1)} ms`,
+		`progressCalls=${(stats.progressCalls ?? 0).toString()}`,
+		`registerCalls=${(stats.registerCalls ?? 0).toString()}`,
+		`recordChanges=${(stats.registerRecordChanges ?? 0).toString()}`,
+		`recordSkips=${(stats.registerRecordSkips ?? 0).toString()}`,
+		`storeDefers=${(stats.registerStoreDefers ?? 0).toString()}`,
+		`invalidateDefers=${(stats.registerInvalidateDefers ?? 0).toString()}`,
+		`finalStoreSkips=${(stats.finalStoreSkips ?? 0).toString()}`,
+		`finalInvalidateSkips=${(stats.finalInvalidateSkips ?? 0).toString()}`,
+		`finalHashCacheStoreSkips=${(stats.finalHashCacheStoreSkips ?? 0).toString()}`,
+		`incrementalHits=${(stats.incrementalHits ?? 0).toString()}`,
+		`incrementalMisses=${(stats.incrementalMisses ?? 0).toString()}`,
+		`incrementalFallbackMissingRecord=${(stats.incrementalFallbackMissingRecord ?? 0).toString()}`,
+		`incrementalFallbackMissingVaultFile=${(stats.incrementalFallbackMissingVaultFile ?? 0).toString()}`,
+		`hashCacheHits=${(stats.registerHashCacheHits ?? 0).toString()}`,
+		`hashCacheMisses=${(stats.registerHashCacheMisses ?? 0).toString()}`,
+		`hashCacheUpdates=${(stats.registerHashCacheUpdates ?? 0).toString()}`,
+		`copies=${(stats.registerCopies ?? 0).toString()}`,
+		`copySkips=${(stats.registerCopySkips ?? 0).toString()}`,
+		`changedFields=${Object.entries(stats.changedRecordFields ?? {}).sort((first, second) => second[1] - first[1]).slice(0, 8).map(([field, count]) => `${field}:${count}`).join(',') || 'none'}`,
+		`changedSamples=${(stats.changedRecordSamples ?? []).join(',') || 'none'}`,
+	].join(' '))
+
 	return {
 		errors,
 		imported,
 		ok : errors.length === 0,
 		scanned,
 		skipped,
-		summary : getModLibrarySummary(),
+		summary,
 	}
 }
 
@@ -2827,7 +3739,7 @@ async function refreshVaultModHubMetadata(progressCallback = null) {
 			if ( typeof metadata?.released === 'string' && metadata.released !== '' ) { releasedDates.push(metadata.released) }
 			if ( typeof metadata?.version === 'string' && metadata.version !== '' ) { versions.push(metadata.version) }
 			const catalogueVersion = serveIPC.modCollect.modHubVersionModHubId(modHubID)
-			if ( typeof catalogueVersion === 'string' && catalogueVersion !== '' ) { versions.push(catalogueVersion) }
+			if ( !modHubPageUnavailable(metadata) && typeof catalogueVersion === 'string' && catalogueVersion !== '' ) { versions.push(catalogueVersion) }
 		}
 		records[hash] = {
 			...record,
@@ -3454,7 +4366,7 @@ function safeDownloadFolderName(folderName) {
 
 async function getGitHubResolvedRepo(repoInfo, headers) {
 	const repoURL      = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}`
-	const repoResponse = await fetch(repoURL, { headers })
+	const repoResponse = await fetchWithTimeout(repoURL, { headers })
 	if ( repoResponse.ok ) {
 		const repo = await repoResponse.json()
 		const [owner, repoName] = repo.full_name.split('/')
@@ -4061,6 +4973,309 @@ function disabledCollectionZipPath(collectionPath, fileName) {
 	return path.join(disabledFolder, `${parsed.name}-${stamp}${parsed.ext || '.zip'}`)
 }
 
+function restoredCollectionZipPath(collectionPath, fileName) {
+	const safeName = safeDownloadFileName(fileName)
+	const firstCandidate = path.join(collectionPath, safeName)
+	if ( !fs.existsSync(firstCandidate) ) { return firstCandidate }
+
+	const parsed = path.parse(safeName)
+	const stamp = new Date().toISOString().replace(/[:.]/gu, '-')
+	return path.join(collectionPath, `${parsed.name}-restored-${stamp}${parsed.ext || '.zip'}`)
+}
+
+async function collectionByKey(collectionKey) {
+	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
+	const collections = await getVaultCollections()
+	const collection = collections.find((entry) => entry.key === collectionKey)
+	if ( typeof collection === 'undefined' ) { throw new Error('The selected collection is no longer available.') }
+	return collection
+}
+
+function disableCollectionModRecord(collection) {
+	const collectionRoot = path.resolve(collection.path)
+	// eslint-disable-next-line complexity
+	return async (modRecord) => {
+		const fileName = safeDownloadFileName(path.basename(modRecord?.fileDetail?.fullPath ?? ''))
+		const modName = modRecord?.fileDetail?.shortName ?? path.basename(fileName, path.extname(fileName))
+		const sourcePath = path.resolve(modRecord?.fileDetail?.fullPath ?? '')
+
+		try {
+			if ( modRecord?.fileDetail?.isFolder === true ) { throw new Error('Folder mods cannot be disabled this way.') }
+			if ( path.extname(sourcePath).toLowerCase() !== '.zip' ) { throw new Error('Selected file is not a ZIP mod.') }
+			if ( !pathIsInsideFolder(sourcePath, collectionRoot) ) { throw new Error('Selected ZIP is outside the collection folder.') }
+			if ( path.basename(path.dirname(sourcePath)).toLowerCase() === '_disabled' ) { throw new Error('Selected ZIP is already disabled.') }
+			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected ZIP is no longer in the collection folder.') }
+
+			await fsPromise.mkdir(path.join(collection.path, '_disabled'), { recursive : true })
+			const targetPath = disabledCollectionZipPath(collection.path, fileName)
+			await fsPromise.rename(sourcePath, targetPath)
+			addCollectionHistoryEntry({
+				action         : 'collection_mod_disabled',
+				collectionName : collection.name,
+				currentVersion : modRecord?.modDesc?.version ?? null,
+				fileName,
+				modName,
+				source         : 'Main collection list',
+				sourceURL      : serveIPC.storeSites.get(modName, null),
+				stagedPath     : sourcePath,
+				targetPath,
+			})
+
+			return { fileName, modName, ok : true, targetPath }
+		} catch (err) {
+			return { error : err.message, fileName, modName, ok : false, targetPath : sourcePath }
+		}
+	}
+}
+
+function gameLogIssueSeverity(line) {
+	if ( /lua call stack|error:|error \(|\berror\b|exception|failed|could not|can't|cannot/iu.test(line) ) { return 'danger' }
+	if ( /warning:|warning \(|conflict|duplicate|missing|requires|invalid|unsupported|not found/iu.test(line) ) { return 'warning' }
+	return null
+}
+
+function gameLogNormalizeNeedle(value) {
+	return String(value ?? '')
+		.toLowerCase()
+		.replace(/\\/gu, '/')
+		.replace(/\.zip\b/gu, '')
+		.trim()
+}
+
+function gameLogModNeedles(modRecord) {
+	const shortName = modRecord?.fileDetail?.shortName ?? ''
+	const fileName = path.basename(modRecord?.fileDetail?.fullPath ?? '')
+	return [...new Set([
+		gameLogNormalizeNeedle(shortName),
+		gameLogNormalizeNeedle(fileName),
+		gameLogNormalizeNeedle(path.basename(fileName, path.extname(fileName))),
+	].filter((value) => value.length >= 4))]
+}
+
+function gameLogLineMatchesMod(normalizedLine, modEntry) {
+	return modEntry.needles.some((needle) => normalizedLine.includes(needle))
+}
+
+function gameLogCandidateEntry(candidates, modEntry) {
+	if ( !candidates.has(modEntry.modID) ) {
+		candidates.set(modEntry.modID, {
+			fileName   : modEntry.fileName,
+			lines      : [],
+			modID      : modEntry.modID,
+			modName    : modEntry.modName,
+			score      : 0,
+			severity   : 'warning',
+		})
+	}
+	return candidates.get(modEntry.modID)
+}
+
+function gameLogAddCandidate(candidates, modEntry, lineNumber, line, severity, confidence) {
+	const candidate = gameLogCandidateEntry(candidates, modEntry)
+	const confidenceScore = confidence === 'direct' ? 4 : 1
+	const severityScore = severity === 'danger' ? 3 : 1
+	candidate.score += confidenceScore + severityScore
+	if ( severity === 'danger' ) { candidate.severity = 'danger' }
+	if ( candidate.lines.length < 5 ) {
+		candidate.lines.push({
+			confidence,
+			line       : line.trim().slice(0, 300),
+			lineNumber,
+			severity,
+		})
+	}
+}
+
+function gameLogLoadedModEntry(line, modEntries) {
+	const normalizedLine = gameLogNormalizeNeedle(line)
+	if ( !/available mod:|load mod:|loading mod/iu.test(line) ) { return null }
+	return modEntries.find((modEntry) => gameLogLineMatchesMod(normalizedLine, modEntry)) ?? null
+}
+
+function gameLogCollectionModEntries(collectionKey) {
+	const collection = serveIPC.modCollect.getModCollection(collectionKey)
+	if ( typeof collection?.mods !== 'object' ) { return [] }
+	return Object.values(collection.mods)
+		.filter((modRecord) => {
+			const fileDetail = modRecord?.fileDetail ?? {}
+			if ( fileDetail.isFolder === true || fileDetail.isSaveGame === true ) { return false }
+			return typeof fileDetail.fullPath === 'string' && fileDetail.fullPath.toLowerCase().endsWith('.zip')
+		})
+		.map((modRecord) => ({
+			fileName : path.basename(modRecord.fileDetail.fullPath),
+			modID   : modRecord.colUUID,
+			modName : modRecord.fileDetail.shortName,
+			needles : gameLogModNeedles(modRecord),
+		}))
+		.filter((entry) => entry.needles.length !== 0)
+}
+
+async function scanGameLogCollectionIssues({ collectionKey } = {}) {
+	const collection = await collectionByKey(collectionKey)
+	const logPath = funcLib.prefs.gameLogFile()
+	if ( logPath === null || !fs.existsSync(logPath) ) {
+		return {
+			candidates    : [],
+			collectionName : collection.name,
+			logPath,
+			ok            : false,
+			status        : 'The active game log could not be found.',
+		}
+	}
+
+	const logText = await funcLib.gameSet.streamGameLog()
+	const modEntries = gameLogCollectionModEntries(collection.key)
+	const candidates = new Map()
+	const lines = String(logText ?? '').split(/\r?\n/u)
+	let lastLoadedMod = null
+	let lastLoadedLine = 0
+
+	for ( const [index, line] of lines.entries() ) {
+		const loadedMod = gameLogLoadedModEntry(line, modEntries)
+		if ( loadedMod !== null ) {
+			lastLoadedMod = loadedMod
+			lastLoadedLine = index + 1
+		}
+
+		const severity = gameLogIssueSeverity(line)
+		if ( severity === null ) { continue }
+
+		const normalizedLine = gameLogNormalizeNeedle(line)
+		const directMatches = modEntries.filter((modEntry) => gameLogLineMatchesMod(normalizedLine, modEntry))
+		for ( const modEntry of directMatches ) {
+			gameLogAddCandidate(candidates, modEntry, index + 1, line, severity, 'direct')
+		}
+
+		if ( directMatches.length === 0 && lastLoadedMod !== null && index + 1 - lastLoadedLine <= 20 ) {
+			gameLogAddCandidate(candidates, lastLoadedMod, index + 1, line, severity, 'nearby')
+		}
+	}
+
+	const sortedCandidates = [...candidates.values()]
+		.toSorted((left, right) => right.score - left.score || left.modName.localeCompare(right.modName))
+
+	return {
+		candidates : sortedCandidates,
+		collectionName : collection.name,
+		logPath,
+		ok     : true,
+		status : sortedCandidates.length === 0 ?
+			'No loaded collection mods were matched to warning, error, or Lua lines in the active game log.' :
+			`Matched ${sortedCandidates.length} loaded collection mod(s) to warning, error, or Lua lines.`,
+	}
+}
+
+async function disableSelectedCollectionMods({ modIDs = [] } = {}) {
+	if ( !Array.isArray(modIDs) || modIDs.length === 0 ) { throw new Error('No mods were selected.') }
+
+	const recordsByCollection = new Map()
+	for ( const modID of modIDs ) {
+		const [collectionKey] = String(modID).split('--')
+		if ( typeof collectionKey !== 'string' || collectionKey === '' ) { continue }
+		if ( !recordsByCollection.has(collectionKey) ) { recordsByCollection.set(collectionKey, []) }
+		const modRecord = serveIPC.modCollect.modColUUIDToRecord(modID)
+		if ( modRecord !== null ) { recordsByCollection.get(collectionKey).push(modRecord) }
+	}
+
+	const results = []
+	for ( const [collectionKey, records] of recordsByCollection ) {
+		// eslint-disable-next-line no-await-in-loop
+		const collection = await collectionByKey(collectionKey)
+		const disableRecord = disableCollectionModRecord(collection)
+		for ( const modRecord of records ) {
+			// eslint-disable-next-line no-await-in-loop
+			results.push(await disableRecord(modRecord))
+		}
+	}
+
+	if ( results.some((result) => result.ok) ) {
+		funcLib.general.toggleFolderDirty()
+		await processModFoldersAndWait()
+		invalidateModLibrarySummary()
+	}
+
+	return {
+		disabled : results.filter((result) => result.ok).length,
+		failed   : results.filter((result) => !result.ok).length,
+		ok       : true,
+		results,
+	}
+}
+
+async function listDisabledCollectionMods({ collectionKey } = {}) {
+	const collection = await collectionByKey(collectionKey)
+	const disabledFolder = path.join(collection.path, '_disabled')
+	if ( !fs.existsSync(disabledFolder) ) {
+		return { collectionName : collection.name, entries : [], ok : true }
+	}
+
+	const entries = (await fsPromise.readdir(disabledFolder, { withFileTypes : true }))
+		.filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.zip')
+		.map((entry) => {
+			const fullPath = path.join(disabledFolder, entry.name)
+			const stats = fs.statSync(fullPath)
+			return {
+				fileName  : entry.name,
+				fullPath,
+				modName   : path.basename(entry.name, path.extname(entry.name)),
+				modified  : stats.mtime.toISOString(),
+				size      : stats.size,
+			}
+		})
+		.toSorted((left, right) => left.fileName.localeCompare(right.fileName))
+
+	return { collectionName : collection.name, entries, ok : true }
+}
+
+async function restoreDisabledCollectionMods({ collectionKey, fileNames = [] } = {}) {
+	if ( !Array.isArray(fileNames) || fileNames.length === 0 ) { throw new Error('No disabled mods were selected.') }
+	const collection = await collectionByKey(collectionKey)
+	const collectionRoot = path.resolve(collection.path)
+	const disabledFolder = path.join(collection.path, '_disabled')
+	const disabledRoot = path.resolve(disabledFolder)
+
+	const results = []
+	for ( const rawFileName of fileNames ) {
+		const fileName = safeDownloadFileName(rawFileName)
+		const sourcePath = path.resolve(path.join(disabledFolder, fileName))
+		const modName = path.basename(fileName, path.extname(fileName))
+		try {
+			if ( path.extname(sourcePath).toLowerCase() !== '.zip' ) { throw new Error('Selected file is not a ZIP mod.') }
+			if ( !pathIsInsideFolder(sourcePath, disabledRoot) ) { throw new Error('Selected ZIP is outside the disabled folder.') }
+			if ( !fs.existsSync(sourcePath) ) { throw new Error('Selected disabled ZIP no longer exists.') }
+			const targetPath = restoredCollectionZipPath(collection.path, fileName)
+			if ( !pathIsInsideFolder(targetPath, collectionRoot) ) { throw new Error('Restore target is outside the collection folder.') }
+			// eslint-disable-next-line no-await-in-loop
+			await fsPromise.rename(sourcePath, targetPath)
+			addCollectionHistoryEntry({
+				action         : 'collection_mod_restored',
+				collectionName : collection.name,
+				fileName,
+				modName,
+				source         : 'Disabled mods',
+				stagedPath     : sourcePath,
+				targetPath,
+			})
+			results.push({ fileName, modName, ok : true, targetPath })
+		} catch (err) {
+			results.push({ error : err.message, fileName, modName, ok : false, targetPath : sourcePath })
+		}
+	}
+
+	if ( results.some((result) => result.ok) ) {
+		funcLib.general.toggleFolderDirty()
+		await processModFoldersAndWait()
+		invalidateModLibrarySummary()
+	}
+
+	return {
+		failed   : results.filter((result) => !result.ok).length,
+		ok       : true,
+		restored : results.filter((result) => result.ok).length,
+		results,
+	}
+}
+
 // eslint-disable-next-line complexity
 async function disableRecentCollectionMods({ collectionKey, items = [] } = {}) {
 	if ( typeof collectionKey !== 'string' || collectionKey === '' ) { throw new Error('Choose a collection first.') }
@@ -4539,7 +5754,16 @@ ipcMain.handle('vault:setRetentionCount', (_, payload) => {
 ipcMain.handle('vault:importCollections', (event) => importCollectionsToVault((progress) => {
 	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'importCollections', ...progress }) }
 }))
-ipcMain.handle('vault:openFolder', () => shell.openPath(path.join(app.getPath('userData'), 'mod-library')))
+ipcMain.handle('vault:moveFolder', async (event) => {
+	try {
+		return await moveModLibraryFolder((progress) => {
+			if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'moveFolder', ...progress }) }
+		})
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('vault:openFolder', () => shell.openPath(modLibraryFolder()))
 ipcMain.handle('vault:openDetail', (_, payload) => {
 	const detailTarget = vaultDetailTarget(payload)
 	if ( detailTarget === null ) {
@@ -4554,6 +5778,13 @@ ipcMain.handle('vault:refreshModHub', (event) => refreshVaultModHubMetadata((pro
 ipcMain.handle('vault:saveNote', async (_, payload) => {
 	try {
 		return { ok : true, ...saveVaultNote(payload) }
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('vault:saveTags', async (_, payload) => {
+	try {
+		return { ok : true, ...saveVaultTags(payload) }
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
@@ -4715,6 +5946,11 @@ ipcMain.on('select:withText', (_, id, txt) => {
 })
 ipcMain.on('dispatch:game', ()         => { funcLib.gameLauncher() })
 ipcMain.on('dispatch:help', ()         => { shell.openExternal('https://fsgmodding.github.io/FSG_Mod_Assistant/') })
+ipcMain.on('main:openReleasePage', () => {
+	const appVersion = app.getVersion().toString()
+	const releaseTag = appVersion.startsWith('v') ? appVersion : `v${appVersion}`
+	shell.openExternal(`https://github.com/Blacknight78/FSG_Mod_Assistant/releases/tag/${releaseTag}`)
+})
 ipcMain.on('win:clipboard', (_, value) => clipboard.writeText(value, 'selection') )
 ipcMain.on('win:openURL',   (_, url)   => { shell.openExternal(url) })
 ipcMain.on('win:close',     (e)        => { BrowserWindow.fromWebContents(e.sender).close() })
@@ -4833,9 +6069,8 @@ modQueueRunner.on('process-mods-done', () => {
 	funcLib.gameSet.gameXML(17)
 	funcLib.gameSet.gameXML(15)
 	funcLib.gameSet.gameXML(13)
-	refreshClientModList()
-
 	serveIPC.isProcessing = false
+	refreshClientModList()
 	scheduleModLibraryIndexesAfterScan(2500)
 
 	if ( serveIPC.modCollect.isDangerMods ) {

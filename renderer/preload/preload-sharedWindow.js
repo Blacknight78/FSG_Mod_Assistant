@@ -142,6 +142,7 @@ const pageAPI = {
 			getGitHub         : (url) => ipcRenderer.invoke('settings:site:githubLatest', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			minimizeToTray    : () => { ipcRenderer.send('main:minimizeToTray') },
+			openReleasePage   : () => { ipcRenderer.send('main:openReleasePage') },
 			performance       : (message) => { ipcRenderer.send('debug:log', 'info', 'performance', message) },
 			startFarmSim      : () => { ipcRenderer.send('dispatch:game') },
 			updateApplication : () => { ipcRenderer.send('main:runUpdateInstall') },
@@ -161,8 +162,14 @@ const pageAPI = {
 			drag : {
 				out : (modID)  => { ipcRenderer.send('main:dragOut', modID ) },
 			},
-	
+
+			gameLog : {
+				scanCollection : (collectionKey) => ipcRenderer.invoke('gamelog:scanCollection', { collectionKey }),
+			},
+
 			files : {
+				disableSelected : (modIDs)      => ipcRenderer.invoke('files:disableSelected', { modIDs }),
+				disabledList    : (collectionKey) => ipcRenderer.invoke('files:disabledList', { collectionKey }),
 				drop        : (files)      => ipcRenderer.invoke('files:drop', Object.values(files).map((x) => webUtils.getPathForFile(x)) ),
 				exportZIP   : (MKey_s)     => { ipcRenderer.send('file:exportZIP', MKey_s) },
 				list        : (mode, mods) => ipcRenderer.invoke('files:list', mode, mods),
@@ -171,6 +178,7 @@ const pageAPI = {
 				openExtSite : (MKey_s)     => { ipcRenderer.send('files:openExtSite', MKey_s) },
 				openModHub  : (MKey_s)     => { ipcRenderer.send('files:openModHub', MKey_s) },
 				process     : ( object )   => ipcRenderer.invoke('file:operation', object),
+				restoreDisabled : (collectionKey, fileNames) => ipcRenderer.invoke('files:restoreDisabled', { collectionKey, fileNames }),
 			},
 	
 			folder : {
@@ -272,6 +280,9 @@ const pageAPI = {
 	'setup' : {
 		functions : {
 			addFolder : ( folder, version ) => { ipcRenderer.send('folders:addDirect', folder, version) },
+			openSetupPath : (targetPath) => ipcRenderer.invoke('settings:openSetupPath', targetPath),
+			openPerformanceLog : () => ipcRenderer.invoke('settings:openPerformanceLog'),
+			performanceSummary : () => ipcRenderer.invoke('settings:performanceSummary'),
 			scanGames : () => ipcRenderer.invoke('wizard:scanGames'),
 			update    : () => ipcRenderer.invoke('wizard:update'),
 		},
@@ -299,6 +310,7 @@ const pageAPI = {
 			getGitHub : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
 			getModHub : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
 			getVault : () => ipcRenderer.invoke('vault:all'),
+			logPerformance : (payload) => ipcRenderer.invoke('vault:updateCheckPerformance', payload),
 			openURL : (url) => ipcRenderer.send('win:openURL', url),
 		},
 		validAsync : new Set(),
@@ -364,10 +376,12 @@ const pageAPI = {
 			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
 			importCollections : () => ipcRenderer.invoke('vault:importCollections'),
+			moveFolder : () => ipcRenderer.invoke('vault:moveFolder'),
 			openDetail : (payload) => ipcRenderer.invoke('vault:openDetail', payload),
 			openFolder : () => ipcRenderer.invoke('vault:openFolder'),
 			refreshModHub : () => ipcRenderer.invoke('vault:refreshModHub'),
 			saveNote   : (payload) => ipcRenderer.invoke('vault:saveNote', payload),
+			saveTags   : (payload) => ipcRenderer.invoke('vault:saveTags', payload),
 			setKeepPinned : (payload) => ipcRenderer.invoke('vault:setKeepPinned', payload),
 			setRetentionCount : (payload) => ipcRenderer.invoke('vault:setRetentionCount', payload),
 			textContext : () => ipcRenderer.send('context:copy'),

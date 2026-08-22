@@ -258,6 +258,7 @@ let updateBusyDepth = 0
 function showUpdateBusyProgress(label = '', value = null) {
 	const wrapper = MA.byId('updateBusyProgress')
 	const bar = MA.byId('updateBusyProgressBar')
+	const readableLabel = MA.byId('updateBusyProgressLabel')
 	if ( wrapper === null || bar === null ) { return }
 	const progress = wrapper.querySelector('.progress')
 	wrapper.classList.remove('d-none')
@@ -272,7 +273,8 @@ function showUpdateBusyProgress(label = '', value = null) {
 		bar.style.width = `${safeValue}%`
 		bar.classList.toggle('progress-bar-animated', safeValue < 100)
 	}
-	bar.textContent = label
+	bar.textContent = ''
+	if ( readableLabel !== null ) { readableLabel.textContent = label }
 }
 
 function beginUpdateBusy(label = '', value = null) {
@@ -309,6 +311,10 @@ function renderEmpty(messageKey) {
 
 function getUpdateCheckboxes() {
 	return [...document.querySelectorAll('.update-candidate-row:not(.d-none) .update-select-checkbox')]
+}
+
+function getAllUpdateCheckboxes() {
+	return [...document.querySelectorAll('.update-candidate-row .update-select-checkbox')]
 }
 
 function updateSelectedCount() {
@@ -375,6 +381,34 @@ function getSelectedDownloadCandidates() {
 		}))
 }
 
+function candidateMatchKey(candidate) {
+	return [
+		candidate.collectionKey ?? '',
+		candidate.modName ?? '',
+		candidate.sourceType ?? '',
+		candidate.version ?? '',
+	].join('\u0001')
+}
+
+function checkboxMatchKey(checkbox) {
+	return candidateMatchKey({
+		collectionKey : checkbox.dataset.collectionKey,
+		modName       : checkbox.dataset.modName,
+		sourceType    : checkbox.dataset.sourceType,
+		version       : checkbox.dataset.remoteVersion,
+	})
+}
+
+function removeAppliedUpdateRows(downloads) {
+	const appliedKeys = new Set(downloads.map((download) => candidateMatchKey(download)))
+	for ( const checkbox of getAllUpdateCheckboxes() ) {
+		if ( !appliedKeys.has(checkboxMatchKey(checkbox)) ) { continue }
+		checkbox.closest('.update-candidate-row')?.remove()
+	}
+	MA.byId('selectionControls').classList.toggle('d-none', getAllUpdateCheckboxes().length === 0)
+	updateSelectedCount()
+}
+
 async function downloadSelectedZIPs() {
 	const downloads = getSelectedDownloadCandidates()
 	if ( downloads.length === 0 ) { return }
@@ -386,9 +420,8 @@ async function downloadSelectedZIPs() {
 		const result = await window.update_IPC.downloadApplySelected(downloads)
 		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
 		if ( result.ok ) {
-			const modCollect = await window.update_IPC.get()
-			await startFromModList(modCollect)
-			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}`)
+			removeAppliedUpdateRows(downloads)
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}. Use Refresh update checks to rescan all sources.`)
 		} else {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
 		}

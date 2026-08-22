@@ -85,6 +85,7 @@ function topBarHandlers() {
 	MA.byIdEventIfExists('topBar-savetrack',   () => { window.main_IPC.dispatch('savetrack') })
 	MA.byIdEventIfExists('topBar-tray',        () => { window.main_IPC.minimizeToTray() })
 	MA.byIdEventIfExists('topBar-update',      () => { window.main_IPC.updateApplication() })
+	MA.byIdEventIfExists('appVersionLink',     () => { window.main_IPC.openReleasePage() })
 }
 //MARK: side bar event
 function sideBarHandlers() {
@@ -95,11 +96,14 @@ function sideBarHandlers() {
 	MA.byIdEventIfExists('moveButton_move',   () => { window.state.startFile('move') })
 	MA.byIdEventIfExists('moveButton_copy',   () => { window.state.startFile('copy') })
 	MA.byIdEventIfExists('moveButton_delete', () => { window.state.startFile('delete') })
+	MA.byIdEventIfExists('moveButton_disable', () => { window.state.action.disableSelectedMods() })
 	MA.byIdEventIfExists('moveButton_zip',    () => { window.state.startFile('zip') })
 
 	MA.byIdEventIfExists('moveButton_open', () => { window.state.startFile('openMods') })
 	MA.byIdEventIfExists('moveButton_hub',  () => { window.state.startFile('openHub') })
 	MA.byIdEventIfExists('moveButton_site', () => { window.state.startFile('openExt') })
+	MA.byIdEventIfExists('moveButton_disabled', () => { window.state.action.openDisabledMods() })
+	MA.byIdEventIfExists('moveButton_logIssues', () => { window.state.action.openGameLogIssues() })
 }
 // MARK: top UI event
 function topUIHandlers() {
@@ -128,6 +132,11 @@ function popUIHandlers() {
 	MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.main_IPC.cancelDownload() })
 	MA.byIdEventIfExists('mismatchLaunchIgnore', () => { window.state.action.launchGame_IGNORE() })
 	MA.byIdEventIfExists('mismatchLaunchFix',    () => { window.state.action.launchGame_FIX() })
+	MA.byIdEventIfExists('collectionReadinessContinue', () => { window.state.action.launchGame_CONTINUE() })
+	MA.byIdEventIfExists('collectionReadinessSelectMissingDependencies', () => { window.state.action.selectMissingDependencyMods() })
+	MA.byIdEventIfExists('gameLogIssuesDisable', () => { window.state.action.disableGameLogIssueMods() })
+	MA.byIdEventIfExists('gameLogIssuesSelect', () => { window.state.action.selectGameLogIssueMods() })
+	MA.byIdEventIfExists('disabledModsRestoreSelected', () => { window.state.action.restoreSelectedDisabledMods() })
 
 	MA.byIdEventIfExists('mod_info_input',  () => { window.main_IPC.contextInput() }, 'contextmenu')
 	MA.byIdEventIfExists('mod_info_button', () => { window.state.action.setModInfo() })

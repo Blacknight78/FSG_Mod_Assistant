@@ -11,6 +11,29 @@
 			height: 64px;
 			object-fit: contain;
 		}
+		.progress-readable {
+			position: relative;
+		}
+		.progress-readable-label {
+			position: absolute;
+			inset: 0;
+			z-index: 2;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: #fff;
+			font-weight: 600;
+			text-shadow: 0 1px 2px #000;
+			pointer-events: none;
+		}
+		.vault-update-filter-menu {
+			width: 100%;
+			max-height: 18rem;
+			overflow-y: auto;
+		}
+		.vault-update-filter-chips {
+			min-height: 1.7rem;
+		}
 	</style>
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
@@ -24,18 +47,111 @@
 				<div class="col text-end"><span class="btn btn-warning fs-3 fw-bold">Vault Updates</span></div>
 			</div>
 			<div class="row g-2 mx-2">
-				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesRefresh" class="btn btn-primary w-100">Refresh Vault update checks</button></div>
-				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesOpenSelected" class="btn btn-success w-100">Open selected web pages</button></div>
-				<div class="col-12 col-md-4"><button type="button" id="vaultUpdatesDownloadSelected" class="btn btn-warning w-100">Download selected to Vault</button></div>
+				<div class="col-12 col-lg-2" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Start remote GitHub and ModHub checks for the currently filtered Vault candidates."><button type="button" id="vaultUpdatesStart" class="btn btn-primary w-100">Start update scan</button></div>
+				<div class="col-12 col-lg-2" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Pause starting new remote checks. Checks already running are allowed to finish."><button class="btn btn-outline-warning w-100" disabled id="vaultUpdatesPause" type="button">Pause checks</button></div>
+				<div class="col-12 col-lg-2" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Stop launching new remote checks and show any update results found so far."><button class="btn btn-outline-danger w-100" disabled id="vaultUpdatesStop" type="button">Stop scan</button></div>
+				<div class="col-12 col-lg-3"><button type="button" id="vaultUpdatesOpenSelected" class="btn btn-success w-100">Open selected web pages</button></div>
+				<div class="col-12 col-lg-3"><button type="button" id="vaultUpdatesDownloadSelected" class="btn btn-warning w-100">Download selected to Vault</button></div>
 				<div class="col-12"><button type="button" id="vaultUpdatesBack" class="btn btn-secondary w-100">Back to Mod Management</button></div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateTagFilterButton">Custom tags</label>
+					<div class="dropdown">
+						<button class="form-select form-select-sm text-start vault-update-filter-control" data-bs-auto-close="outside" data-bs-toggle="dropdown" id="vaultUpdateTagFilterButton" type="button">All custom tags</button>
+						<div class="dropdown-menu p-2 vault-update-filter-menu" id="vaultUpdateTagFilterMenu"></div>
+					</div>
+					<div class="vault-update-filter-chips d-flex flex-wrap gap-1 mt-1" id="vaultUpdateTagChips"></div>
+					<div class="btn-group btn-group-sm w-100 mt-1" role="group" aria-label="Custom tag match mode">
+						<input checked class="btn-check vault-update-filter-input" id="vaultUpdateCustomTagModeAny" name="vaultUpdateCustomTagMode" type="radio" value="any">
+						<label class="btn btn-outline-secondary" data-bs-placement="bottom" data-bs-toggle="tooltip" for="vaultUpdateCustomTagModeAny" title="A Vault mod matches if it has at least one selected custom tag.">Any tag</label>
+						<input class="btn-check vault-update-filter-input" id="vaultUpdateCustomTagModeAll" name="vaultUpdateCustomTagMode" type="radio" value="all">
+						<label class="btn btn-outline-secondary" data-bs-placement="bottom" data-bs-toggle="tooltip" for="vaultUpdateCustomTagModeAll" title="A Vault mod matches only if it has every selected custom tag.">All tags</label>
+					</div>
+				</div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateAutoTagFilterButton">Auto tags</label>
+					<div class="dropdown">
+						<button class="form-select form-select-sm text-start vault-update-filter-control" data-bs-auto-close="outside" data-bs-toggle="dropdown" id="vaultUpdateAutoTagFilterButton" type="button">All auto tags</button>
+						<div class="dropdown-menu p-2 vault-update-filter-menu" id="vaultUpdateAutoTagFilterMenu"></div>
+					</div>
+					<div class="vault-update-filter-chips d-flex flex-wrap gap-1 mt-1" id="vaultUpdateAutoTagChips"></div>
+					<div class="btn-group btn-group-sm w-100 mt-1" role="group" aria-label="Auto tag match mode">
+						<input checked class="btn-check vault-update-filter-input" id="vaultUpdateAutoTagModeAny" name="vaultUpdateAutoTagMode" type="radio" value="any">
+						<label class="btn btn-outline-secondary" data-bs-placement="bottom" data-bs-toggle="tooltip" for="vaultUpdateAutoTagModeAny" title="A Vault mod matches if it has at least one selected auto tag.">Any tag</label>
+						<input class="btn-check vault-update-filter-input" id="vaultUpdateAutoTagModeAll" name="vaultUpdateAutoTagMode" type="radio" value="all">
+						<label class="btn btn-outline-secondary" data-bs-placement="bottom" data-bs-toggle="tooltip" for="vaultUpdateAutoTagModeAll" title="A Vault mod matches only if it has every selected auto tag.">All tags</label>
+					</div>
+				</div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateProfileSelect">Update profile</label>
+					<select class="form-select form-select-sm" id="vaultUpdateProfileSelect">
+						<option value="">No saved profile</option>
+					</select>
+					<input class="form-control form-control-sm mt-1" id="vaultUpdateProfileName" maxlength="60" placeholder="Profile name to save" type="text">
+				</div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateSortFilter">Sort by</label>
+					<select class="form-select form-select-sm" id="vaultUpdateSortFilter">
+						<option selected value="name-asc">Name A-Z</option>
+						<option value="name-desc">Name Z-A</option>
+						<option value="updated-desc">Vault updated newest</option>
+						<option value="updated-asc">Vault updated oldest</option>
+						<option value="size-desc">Size largest</option>
+						<option value="size-asc">Size smallest</option>
+					</select>
+				</div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateCollectionFilter">Collection</label>
+					<select class="form-select form-select-sm vault-update-filter-input" id="vaultUpdateCollectionFilter">
+						<option value="">All collections</option>
+					</select>
+				</div>
+				<div class="col-12 col-md-4 d-flex gap-2 align-items-end">
+					<button class="btn btn-sm btn-outline-info w-100" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileSave" title="Save the current collection, custom tags, auto tags, Any/All modes, ignored setting, review filters, and sort order under the typed profile name." type="button">Save profile</button>
+					<button class="btn btn-sm btn-outline-danger w-100" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileDelete" title="Delete the currently selected saved profile." type="button">Delete profile</button>
+				</div>
+				<div class="col-12 col-md-4 d-flex align-items-end" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Off: hide Vault mods tagged to ignore updates and skip them during scans. On: include ignored mods so you can review or scan them anyway.">
+					<div class="form-check form-switch">
+						<input class="form-check-input" id="vaultIncludeIgnoredUpdates" type="checkbox">
+						<label class="form-check-label" for="vaultIncludeIgnoredUpdates">Include ignored updates</label>
+					</div>
+				</div>
 				<div class="col-12">
-					<div class="progress d-none" id="vaultUpdatesProgressWrap" role="progressbar" aria-label="Vault update progress">
-						<div id="vaultUpdatesProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0%</div>
+					<div class="progress progress-readable d-none" id="vaultUpdatesProgressWrap" role="progressbar" aria-label="Vault update progress">
+						<div id="vaultUpdatesProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+						<div id="vaultUpdatesProgressLabel" class="progress-readable-label">0%</div>
 					</div>
 				</div>
 			</div>
 		</div>
 		<div class="alert alert-secondary mx-2" id="vaultUpdateStatus">Loading Vault ZIPs…</div>
+		<div class="mx-2 mb-3 d-none" id="vaultUpdateCandidateCounts">
+			<div class="row g-2">
+				<div class="col-6 col-lg-3">
+					<div class="border rounded p-2 h-100">
+						<div class="small text-body-secondary">Total Vault mods</div>
+						<div class="fs-5 fw-bold" id="vaultUpdateTotalMods">0</div>
+					</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<div class="border rounded p-2 h-100">
+						<div class="small text-body-secondary">Filtered check candidates</div>
+						<div class="fs-5 fw-bold" id="vaultUpdateFilteredCandidates">0</div>
+					</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<div class="border rounded p-2 h-100">
+						<div class="small text-body-secondary">Skipped by filters</div>
+						<div class="fs-5 fw-bold" id="vaultUpdateFilterSkipped">0</div>
+					</div>
+				</div>
+				<div class="col-6 col-lg-3">
+					<div class="border rounded p-2 h-100">
+						<div class="small text-body-secondary">No supported source</div>
+						<div class="fs-5 fw-bold" id="vaultUpdateNoSourceSkipped">0</div>
+					</div>
+				</div>
+			</div>
+		</div>
 		<div class="mx-2 mb-3 d-none" id="vaultUpdateSelectionControls">
 			<div class="btn-group w-100">
 				<button class="btn btn-outline-success" type="button" id="vaultUpdatesSelectAll">Select All</button>

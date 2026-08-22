@@ -229,8 +229,8 @@ class windowState {
 		}
 
 		const tempTitle = this.#doL10N(this.mod.l10n.title)
-		const sourceURL = await window.settings.site(this.mod.fileDetail.shortName, false)
-		const collectionName = await window.detail_IPC.collectName(this.mod.currentCollection)
+		const sourceURL = await this.#detailSourceURL()
+		const collectionName = await this.#detailCollectionName()
 
 		const idMap = {
 			description    : this.#doL10N(this.mod.l10n.description),
@@ -369,6 +369,26 @@ class windowState {
 		return safeAuthor
 	}
 
+	#sourceLookupName() {
+		const contextName = this.mod.detailContext?.sourceLookupName
+		return typeof contextName === 'string' && contextName !== '' ? contextName : this.mod.fileDetail.shortName
+	}
+
+	async #detailSourceURL() {
+		const contextURL = this.mod.detailContext?.sourceURL
+		if ( typeof contextURL === 'string' && contextURL.trim() !== '' ) { return contextURL.trim() }
+		return window.settings.site(this.#sourceLookupName(), false)
+	}
+
+	async #detailCollectionName() {
+		const contextName = this.mod.detailContext?.displayCollectionName
+		if ( typeof contextName === 'string' && contextName !== '' ) { return contextName }
+		const contextKey = this.mod.detailContext?.displayCollectionKey
+		return window.detail_IPC.collectName(
+			typeof contextKey === 'string' && contextKey !== '' ? contextKey : this.mod.currentCollection
+		)
+	}
+
 	#updateSourceHTML(sourceURL) {
 		if ( sourceURL !== '' ) {
 			const safeURL = DATA.escapeSpecial(sourceURL)
@@ -391,16 +411,16 @@ class windowState {
 		try {
 			const url = new URL(sourceURL)
 			if ( url.protocol !== 'https:' ) {
-				return { label : I18N.defer('update_source_custom', false), type : 'manual' }
+				return { label : 'Manual', type : 'manual' }
 			}
 			const host = url.hostname.toLowerCase().replace(/^www\./u, '')
 			if ( host === 'github.com' ) { return { label : 'GitHub', type : 'github' } }
 			if ( host === 'kingmods.net' ) { return { label : 'KingMods', type : 'kingmods' } }
 			if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return { label : 'itch.io', type : 'itch' } }
 			if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return { label : 'ModHub', type : 'modhub' } }
-			return { label : I18N.defer('update_source_custom', false), type : 'manual' }
+			return { label : 'Manual', type : 'manual' }
 		} catch {
-			return { label : I18N.defer('update_source_custom', false), type : 'manual' }
+			return { label : 'Manual', type : 'manual' }
 		}
 	}
 
@@ -450,7 +470,7 @@ class windowState {
 		}
 
 		MA.byId('update_source_input').classList.remove('is-invalid')
-		window.settings.site(this.mod.fileDetail.shortName, sourceURL).then((value) => {
+		window.settings.site(this.#sourceLookupName(), sourceURL).then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
 			MA.byIdHTML('mod_author', this.#authorHTML(value))
@@ -460,7 +480,7 @@ class windowState {
 
 	#updateSourceClear() {
 		MA.byId('update_source_input').classList.remove('is-invalid')
-		window.settings.site(this.mod.fileDetail.shortName, '').then((value) => {
+		window.settings.site(this.#sourceLookupName(), '').then((value) => {
 			MA.byIdValue('update_source_input', value)
 			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
 			MA.byIdHTML('mod_author', this.#authorHTML(value))
@@ -552,7 +572,7 @@ class windowState {
 			collectionKey : this.mod.currentCollection,
 			fileName      : fileName,
 			modHubID      : modHubID,
-			modName       : this.mod.fileDetail.shortName,
+			modName       : this.#sourceLookupName(),
 			sourceType    : sourceType,
 			sourceURL     : sourceURL,
 		}
