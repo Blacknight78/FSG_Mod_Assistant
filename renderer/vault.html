@@ -37,6 +37,22 @@
 			overflow: hidden;
 			white-space: pre-wrap;
 		}
+		.vault-custom-tags,
+		.vault-tags-editor-list,
+		.vault-tags-existing-chips {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.35rem;
+		}
+		.vault-tags-existing-menu {
+			width: 100%;
+			max-height: 16rem;
+			overflow-y: auto;
+		}
+		.vault-tag-remove {
+			line-height: 1;
+			padding: 0 0.25rem;
+		}
 		.vault-store-preview {
 			display: flex;
 			flex-wrap: wrap;
@@ -125,6 +141,30 @@
 			z-index: 10;
 			box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.35);
 		}
+		.progress-readable {
+			position: relative;
+		}
+		.progress-readable-label {
+			position: absolute;
+			inset: 0;
+			z-index: 2;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: #fff;
+			font-weight: 600;
+			text-shadow: 0 1px 2px #000;
+			pointer-events: none;
+		}
+		.vault-locked #vaultList,
+		.vault-locked .vault-toolbar,
+		.vault-locked #vaultHealthPanel,
+		.vault-locked #vaultCleanupPanel,
+		.vault-locked #vaultSearchPanel,
+		.vault-locked #vaultAdvancedFilters {
+			pointer-events: none;
+			opacity: 0.65;
+		}
 		@media (max-width: 991.98px) {
 			.vault-toolbar {
 				grid-template-columns: 1fr 1fr;
@@ -152,8 +192,9 @@
 
 		<div class="mx-2 mb-3 alert alert-secondary" id="vaultStatus">Loading mod vault...</div>
 		<div class="mx-2 mb-3 d-none" id="vaultBusyProgress" aria-hidden="true">
-			<div class="progress" role="progressbar" aria-label="Vault window busy" aria-valuemin="0" aria-valuemax="100">
+			<div class="progress progress-readable" role="progressbar" aria-label="Vault window busy" aria-valuemin="0" aria-valuemax="100">
 				<div class="progress-bar progress-bar-striped progress-bar-animated" id="vaultBusyProgressBar" style="width: 100%"></div>
+				<div class="progress-readable-label" id="vaultBusyProgressLabel"></div>
 			</div>
 		</div>
 
@@ -193,6 +234,8 @@
 			</div>
 			<div class="small text-body-secondary mt-2">
 				Vault folder: <span class="vault-path user-select-text" id="vaultFolder"></span>
+				<button class="btn btn-sm btn-outline-secondary ms-2" id="vaultOpenFolder" type="button">Open folder</button>
+				<button class="btn btn-sm btn-outline-warning ms-1" id="vaultMoveFolder" type="button">Move Vault</button>
 				<span class="ms-2">Managed by the app. Use cleanup tools here instead of deleting Vault files manually.</span>
 			</div>
 		</section>
@@ -231,11 +274,14 @@
 			<div class="collapse mt-3" id="vaultSearchPanel">
 				<div class="border-top pt-3">
 					<label class="form-label small" for="vaultTextFilter">Search</label>
-					<input class="form-control form-control-sm" id="vaultTextFilter" placeholder="Search mod name, author, game, version, category, brand, specs, source, collection, or notes" type="search">
+					<input class="form-control form-control-sm" id="vaultTextFilter" placeholder="Search mod name, custom tag, author, game, version, category, brand, specs, source, collection, or notes" type="search">
 				</div>
 			</div>
 			<div class="d-flex flex-wrap gap-2 mt-3">
-				<select aria-label="Update status" class="form-select form-select-sm w-auto" id="vaultUpdateFilter">
+				<select aria-label="Custom tag" class="form-select form-select-sm w-auto" id="vaultTagFilter">
+					<option value="">All custom tags</option>
+				</select>
+				<select aria-label="Update status" class="form-select form-select-sm w-auto" data-bs-placement="top" data-bs-toggle="tooltip" id="vaultUpdateFilter" title="All update states: show every Vault mod. Update available: show only mods where the Vault has no current/local-newer ModHub copy. No known update: hide mods with a known newer ModHub copy.">
 					<option value="">All update states</option>
 					<option value="available">Update available</option>
 					<option value="none">No known update</option>
@@ -479,9 +525,11 @@
 					<div class="fw-bold fs-5">
 						<template-var>modName</template-var>
 						<span class="badge text-bg-warning d-none vault-note-badge" data-bs-placement="top" data-bs-toggle="tooltip" title="This mod has a saved Vault note.">Has note</span>
+						<span class="badge text-bg-info d-none vault-tags-badge" data-bs-placement="top" data-bs-toggle="tooltip" title="This mod has saved custom Vault tags.">Tagged</span>
 					</div>
 					<div class="small text-body-secondary"><template-var>fileCount</template-var></div>
 					<div class="small text-warning mt-1 d-none vault-note-preview"></div>
+					<div class="small mt-2 d-none vault-custom-tags"></div>
 					<template-var>storeItemPreviews</template-var>
 				</div>
 			</div>
@@ -496,6 +544,7 @@
 		<div class="d-flex flex-wrap gap-2 mt-3">
 			<button class="btn btn-sm btn-outline-info vault-group-toggle" type="button">Show stored ZIPs</button>
 			<button class="btn btn-sm btn-outline-warning vault-note-toggle" type="button">Add note</button>
+			<button class="btn btn-sm btn-outline-info vault-tags-toggle" type="button">Add tags</button>
 		</div>
 		<div class="collapse mt-3 vault-note-panel">
 			<label class="form-label small">Mod note</label>
@@ -505,6 +554,27 @@
 				<button class="btn btn-sm btn-outline-danger vault-note-clear" type="button">Clear note</button>
 			</div>
 			<div class="small mt-2 vault-note-status" role="status"></div>
+		</div>
+		<div class="collapse mt-3 vault-tags-panel">
+			<label class="form-label small">Custom Vault tags<span class="text-warning d-none vault-tags-unsaved-label">: Changes unsaved</span></label>
+			<div class="vault-tags-editor-list mb-2"></div>
+			<div class="input-group input-group-sm">
+				<input class="form-control vault-tags-input" maxlength="40" placeholder="Add a tag, or paste comma-separated tags" type="text">
+				<button class="btn btn-outline-info vault-tags-add" type="button">Add</button>
+			</div>
+			<div class="input-group input-group-sm mt-2">
+				<div class="dropdown flex-grow-1">
+					<button class="form-select form-select-sm text-start vault-tags-existing-button" data-bs-auto-close="outside" data-bs-toggle="dropdown" type="button">Add existing tags...</button>
+					<div class="dropdown-menu p-2 vault-tags-existing-menu"></div>
+				</div>
+				<button class="btn btn-outline-info vault-tags-existing-add" type="button">Add existing</button>
+			</div>
+			<div class="small vault-tags-existing-chips mt-2"></div>
+			<div class="d-flex gap-2 mt-2">
+				<button class="btn btn-sm btn-info vault-tags-save" type="button">Save tags</button>
+				<button class="btn btn-sm btn-outline-danger vault-tags-clear" type="button">Clear tags</button>
+			</div>
+			<div class="small mt-2 vault-tags-status" role="status"></div>
 		</div>
 		<div class="collapse mt-3 vault-group-body"><template-var>fileRows</template-var></div>
 	</li>
@@ -554,6 +624,9 @@
 			<template-var>brandBadges</template-var>
 			<template-var>sourceBadges</template-var>
 			<template-var>collectionBadges</template-var>
+		</div>
+		<div class="mt-2 d-flex flex-wrap gap-1">
+			<template-var>customTagBadges</template-var>
 		</div>
 		<template-var>storeItemPreviews</template-var>
 		<div class="small mt-2 text-body-secondary"><template-var>equipmentSpecLine</template-var></div>

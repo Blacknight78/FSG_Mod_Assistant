@@ -279,6 +279,22 @@
 			}
 		}
 
+		.progress-readable {
+			position: relative;
+		}
+		.progress-readable-label {
+			position: absolute;
+			inset: 0;
+			z-index: 2;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: #fff;
+			font-weight: 600;
+			text-shadow: 0 1px 2px #000;
+			pointer-events: none;
+		}
+
 	</style>
 	
 </head>
@@ -829,8 +845,9 @@
 					<div id="status-icon-working" class="d-flex justify-content-center">
 						<div id="loadOverlay_speed" class="d-none" style="text-align:center; margin-top:1.7rem; width:4rem; display:block;"><span id="loadOverlay_speed_speed" style="white-space:nowrap" class="small">SPEED</span><br><span id="loadOverlay_speed_time" style="white-space:nowrap" class="small">TIME</span></div>
 					</div>
-					<div id="loadOverlay_statusProgBar" class="progress mt-2">
+					<div id="loadOverlay_statusProgBar" class="progress progress-readable mt-2">
 						<div id="loadOverlay_statusProgBarInner" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 25%;" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+						<div id="loadOverlay_statusProgBarLabel" class="progress-readable-label"></div>
 					</div>
 					<div id="loadOverlay_statusDetail" class="text-center mw-bold my-2 small">Status Title</div>
 					<div id="loadOverlay_statusCount" class="text-center mw-bold my-2">

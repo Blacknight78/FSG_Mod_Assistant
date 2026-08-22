@@ -1,8 +1,20 @@
-/* global DATA */
+/* global DATA, bootstrap */
 
 let candidates = []
 let selectedKeys = new Set()
 let isBusy = false
+let isRemoteCheckRunning = false
+let isUpdateCheckPaused = false
+let isUpdateCheckStopped = false
+let pendingProfileReviewFilters = null
+let pauseWaiters = []
+let lastSkippedCount = 0
+const selectedAutoTagKeys = new Set()
+const selectedCustomTags = new Set()
+const autoTagLabels = new Map()
+const REMOTE_CHECK_CONCURRENCY = 12
+const UPDATE_IGNORE_TAG = 'ignore updates'
+const UPDATE_PROFILE_STORAGE_KEY = 'fsg.vaultUpdateProfiles.v1'
 
 const byID = (id) => document.getElementById(id)
 
@@ -88,8 +100,162 @@ function reviewNoteText(reasons) {
 	return `Needs review: ${reasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join(', ')}`
 }
 
+function dateTimeValue(value) {
+	const time = Date.parse(value ?? '')
+	return Number.isFinite(time) ? time : 0
+}
+
+const UPDATE_CANDIDATE_SORTERS = {
+	'name-asc'     : (left, right) => left.modName.localeCompare(right.modName),
+	'name-desc'    : (left, right) => right.modName.localeCompare(left.modName),
+	'size-asc'     : (left, right) => (left.totalSize ?? 0) - (right.totalSize ?? 0) || left.modName.localeCompare(right.modName),
+	'size-desc'    : (left, right) => (right.totalSize ?? 0) - (left.totalSize ?? 0) || left.modName.localeCompare(right.modName),
+	'updated-asc'  : (left, right) => (left.updatedTime ?? 0) - (right.updatedTime ?? 0) || left.modName.localeCompare(right.modName),
+	'updated-desc' : (left, right) => (right.updatedTime ?? 0) - (left.updatedTime ?? 0) || left.modName.localeCompare(right.modName),
+}
+
+function compareUpdateCandidates(left, right, sortMode = byID('vaultUpdateSortFilter')?.value ?? 'name-asc') {
+	return (UPDATE_CANDIDATE_SORTERS[sortMode] ?? UPDATE_CANDIDATE_SORTERS['name-asc'])(left, right)
+}
+
+function sortedCandidates() {
+	return candidates.toSorted((left, right) => compareUpdateCandidates(left, right))
+}
+
 function selectedReviewReasons() {
 	return [...document.querySelectorAll('.vault-review-reason-filter:checked')].map((filter) => filter.value)
+}
+
+function updateProfiles() {
+	try {
+		const profiles = JSON.parse(localStorage.getItem(UPDATE_PROFILE_STORAGE_KEY) ?? '{}')
+		return typeof profiles === 'object' && profiles !== null && !Array.isArray(profiles) ? profiles : {}
+	} catch {
+		return {}
+	}
+}
+
+function writeUpdateProfiles(profiles) {
+	localStorage.setItem(UPDATE_PROFILE_STORAGE_KEY, JSON.stringify(profiles))
+}
+
+function cleanProfileName(value) {
+	return String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, 60)
+}
+
+function selectedFilterValues(values, fallbackValue = '') {
+	if ( Array.isArray(values) ) { return values.filter((value) => typeof value === 'string' && value !== '') }
+	if ( typeof fallbackValue === 'string' && fallbackValue !== '' ) { return [fallbackValue] }
+	return []
+}
+
+function filterMatchMode(name) {
+	return document.querySelector(`input[name="${name}"]:checked`)?.value === 'all' ? 'all' : 'any'
+}
+
+function setFilterMatchMode(name, value) {
+	const normalized = value === 'all' ? 'all' : 'any'
+	const input = document.querySelector(`input[name="${name}"][value="${normalized}"]`)
+	if ( input !== null ) { input.checked = true }
+}
+
+function currentProfileSettings() {
+	return {
+		autoTagMode : filterMatchMode('vaultUpdateAutoTagMode'),
+		autoTags    : [...selectedAutoTagKeys],
+		collection  : byID('vaultUpdateCollectionFilter')?.value ?? '',
+		customTagMode : filterMatchMode('vaultUpdateCustomTagMode'),
+		customTags  : [...selectedCustomTags],
+		includeIgnored : byID('vaultIncludeIgnoredUpdates')?.checked === true,
+		needsReviewOnly : byID('vaultNeedsReviewOnly')?.checked === true,
+		reviewReasons : selectedReviewReasons(),
+		sortMode : byID('vaultUpdateSortFilter')?.value ?? 'name-asc',
+	}
+}
+
+function fillUpdateProfileSelect(selectedName = byID('vaultUpdateProfileSelect')?.value ?? '') {
+	const select = byID('vaultUpdateProfileSelect')
+	const nameInput = byID('vaultUpdateProfileName')
+	const profiles = updateProfiles()
+	select.replaceChildren()
+	const option = document.createElement('option')
+	option.value = ''
+	option.textContent = 'No saved profile'
+	select.append(option)
+	for ( const name of Object.keys(profiles).toSorted((left, right) => left.localeCompare(right)) ) {
+		const profileOption = document.createElement('option')
+		profileOption.value = name
+		profileOption.textContent = name
+		select.append(profileOption)
+	}
+	if ( Object.hasOwn(profiles, selectedName) ) {
+		select.value = selectedName
+		if ( nameInput !== null ) { nameInput.value = selectedName }
+	} else if ( nameInput !== null && selectedName === '' ) {
+		nameInput.value = ''
+	}
+}
+
+function applyReviewProfileSettings(settings = {}) {
+	byID('vaultNeedsReviewOnly').checked = settings.needsReviewOnly === true
+	const reasons = new Set(Array.isArray(settings.reviewReasons) ? settings.reviewReasons : [])
+	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) {
+		filter.checked = reasons.has(filter.value)
+	}
+	applyNeedsReviewFilter()
+}
+
+function applyPendingProfileReviewFilters() {
+	if ( pendingProfileReviewFilters === null ) { return }
+	applyReviewProfileSettings(pendingProfileReviewFilters)
+	pendingProfileReviewFilters = null
+}
+
+function applyUpdateProfile(name) {
+	const profile = updateProfiles()[name]
+	if ( typeof profile !== 'object' || profile === null ) { return }
+	byID('vaultUpdateProfileName').value = name
+	selectedCustomTags.clear()
+	for ( const tag of selectedFilterValues(profile.customTags, profile.customTag) ) { selectedCustomTags.add(tag) }
+	selectedAutoTagKeys.clear()
+	for ( const tag of selectedFilterValues(profile.autoTags, profile.autoTag) ) { selectedAutoTagKeys.add(tag) }
+	setFilterMatchMode('vaultUpdateCustomTagMode', profile.customTagMode)
+	setFilterMatchMode('vaultUpdateAutoTagMode', profile.autoTagMode)
+	if ( byID('vaultUpdateCollectionFilter') !== null ) { byID('vaultUpdateCollectionFilter').value = profile.collection ?? '' }
+	if ( byID('vaultUpdateSortFilter') !== null ) { byID('vaultUpdateSortFilter').value = profile.sortMode ?? 'name-asc' }
+	byID('vaultIncludeIgnoredUpdates').checked = profile.includeIgnored === true
+	pendingProfileReviewFilters = profile
+	loadCandidates(false, false)
+}
+
+function saveUpdateProfile() {
+	const name = cleanProfileName(byID('vaultUpdateProfileName')?.value ?? '')
+	if ( name === '' ) {
+		setStatus('Type a profile name before saving.', 'warning')
+		byID('vaultUpdateProfileName')?.focus()
+		return
+	}
+
+	const profiles = updateProfiles()
+	profiles[name] = currentProfileSettings()
+	writeUpdateProfiles(profiles)
+	fillUpdateProfileSelect(name)
+	setStatus(`Saved update profile "${name}".`, 'success')
+}
+
+function deleteUpdateProfile() {
+	const name = byID('vaultUpdateProfileSelect')?.value ?? ''
+	if ( name === '' ) {
+		setStatus('Choose an update profile to delete.', 'secondary')
+		return
+	}
+	if ( !confirm(`Delete update profile "${name}"?`) ) { return }
+	const profiles = updateProfiles()
+	delete profiles[name]
+	writeUpdateProfiles(profiles)
+	fillUpdateProfileSelect('')
+	byID('vaultUpdateProfileName').value = ''
+	setStatus(`Deleted update profile "${name}".`, 'success')
 }
 
 function visibleCandidates() {
@@ -130,23 +296,93 @@ function applyNeedsReviewFilter() {
 function setBusy(value, label = '') {
 	isBusy = value
 	for ( const element of document.querySelectorAll('button') ) {
+		if ( element.id === 'vaultUpdatesPause' || element.id === 'vaultUpdatesStop' ) { continue }
+		element.disabled = value
+	}
+	byID('vaultUpdateProfileSelect').disabled = value
+	byID('vaultUpdateProfileName').disabled = value
+	byID('vaultUpdateSortFilter').disabled = value
+	byID('vaultIncludeIgnoredUpdates').disabled = value
+	for ( const element of document.querySelectorAll('.vault-update-filter-input') ) {
 		element.disabled = value
 	}
 	syncSelectionCheckboxes()
 	byID('vaultUpdatesProgressWrap').classList.toggle('d-none', !value)
 	byID('vaultUpdatesProgress').style.width = value ? '8%' : '0%'
-	byID('vaultUpdatesProgress').textContent = label
+	byID('vaultUpdatesProgress').textContent = ''
+	byID('vaultUpdatesProgressLabel').textContent = label
+	updatePauseButton()
+	updateStopButton()
 }
 
 function setProgress(percent, label) {
 	byID('vaultUpdatesProgress').style.width = `${Math.max(0, Math.min(100, percent))}%`
-	byID('vaultUpdatesProgress').textContent = label
+	byID('vaultUpdatesProgress').textContent = ''
+	byID('vaultUpdatesProgressLabel').textContent = label
 }
 
 function setStatus(message, kind = 'secondary') {
 	const status = byID('vaultUpdateStatus')
 	status.textContent = message
 	status.className = `alert alert-${kind} mb-3`
+}
+
+function updatePauseButton() {
+	const button = byID('vaultUpdatesPause')
+	button.disabled = !isRemoteCheckRunning
+	button.textContent = isUpdateCheckPaused ? 'Resume checks' : 'Pause checks'
+	button.classList.toggle('btn-warning', isUpdateCheckPaused)
+	button.classList.toggle('btn-outline-warning', !isUpdateCheckPaused)
+}
+
+function updateStopButton() {
+	const button = byID('vaultUpdatesStop')
+	button.disabled = !isRemoteCheckRunning || isUpdateCheckStopped
+	button.textContent = isUpdateCheckStopped ? 'Stopping...' : 'Stop scan'
+}
+
+function resumeUpdateChecks() {
+	const waiters = pauseWaiters
+	pauseWaiters = []
+	for ( const resume of waiters ) { resume() }
+}
+
+function setUpdateCheckPaused(paused) {
+	if ( !isRemoteCheckRunning && paused ) { return }
+	isUpdateCheckPaused = paused
+	updatePauseButton()
+	if ( !paused ) { resumeUpdateChecks() }
+}
+
+function stopUpdateChecks() {
+	if ( !isRemoteCheckRunning ) { return }
+	isUpdateCheckStopped = true
+	setUpdateCheckPaused(false)
+	updateStopButton()
+	setProgress(
+		Number.parseFloat(byID('vaultUpdatesProgress').style.width) || 8,
+		'Stopping after current checks finish...'
+	)
+}
+
+async function waitWhileUpdateCheckPaused() {
+	while ( isUpdateCheckPaused ) {
+		// eslint-disable-next-line no-await-in-loop
+		await new Promise((resolve) => { pauseWaiters.push(resolve) })
+	}
+}
+
+function setCandidateCounts({
+	filteredCandidates = 0,
+	filterSkipped = 0,
+	noSourceSkipped = 0,
+	totalMods = 0,
+} = {}) {
+	byID('vaultUpdateCandidateCounts').classList.remove('d-none')
+	byID('vaultUpdateTotalMods').textContent = totalMods.toString()
+	byID('vaultUpdateFilteredCandidates').textContent = filteredCandidates.toString()
+	byID('vaultUpdateFilterSkipped').textContent = filterSkipped.toString()
+	byID('vaultUpdateNoSourceSkipped').textContent = noSourceSkipped.toString()
 }
 
 function getSources(record) {
@@ -191,6 +427,263 @@ function canonicalVaultModName(value) {
 
 function vaultRecordModName(record) {
 	return canonicalVaultModName(record?.modNames?.[0] ?? record?.fileName ?? '') || '-- unknown mod --'
+}
+
+function vaultTagKey(modName) {
+	return String(modName ?? '').trim().toLocaleLowerCase()
+}
+
+function tagsForVaultRecord(record, vaultTags = {}) {
+	const modName = vaultRecordModName(record)
+	const tags = vaultTags[vaultTagKey(modName)]?.tags
+	return Array.isArray(tags) ? tags : []
+}
+
+function hasIgnoreUpdateTag(tags) {
+	return tags.some((tag) => String(tag ?? '').trim().toLocaleLowerCase() === UPDATE_IGNORE_TAG)
+}
+
+function uniqueStrings(values) {
+	return [...new Set(values.filter((value) => typeof value === 'string' && value.trim() !== '').map((value) => value.trim()))]
+}
+
+function autoTag(key, label, group) {
+	return { group, key : `${group}:${key}`, label }
+}
+
+function autoTagsForVaultRecord(record) {
+	const sources = getSources(record).map((source) => autoTag(source.sourceType, sourceLabel(source.sourceType), 'source'))
+	return [
+		...uniqueStrings(record.modHubCategories ?? []).map((value) => autoTag(value, value, 'modhub')),
+		...uniqueStrings(record.itemCategories ?? []).map((value) => autoTag(value, value, 'category')),
+		...uniqueStrings(record.itemBrands ?? []).map((value) => autoTag(value, value, 'brand')),
+		...uniqueStrings(record.modTypes ?? []).map((value) => autoTag(value, value, 'type')),
+		...uniqueStrings(record.storeItemTypes ?? []).map((value) => autoTag(value, value, 'storeItem')),
+		...sources,
+	]
+}
+
+function checkboxID(prefix, value, index) {
+	return `${prefix}-${index}-${String(value).replace(/[^a-z0-9_-]+/giu, '-').slice(0, 40)}`
+}
+
+function makeFilterCheckbox({
+	checked,
+	id,
+	label,
+	onChange,
+	value,
+}) {
+	const wrapper = document.createElement('div')
+	wrapper.className = 'form-check dropdown-item m-0'
+
+	const input = document.createElement('input')
+	input.className = 'form-check-input vault-update-filter-input'
+	input.checked = checked
+	input.id = id
+	input.type = 'checkbox'
+	input.value = value
+	input.addEventListener('change', onChange)
+	wrapper.append(input)
+
+	const checkboxLabel = document.createElement('label')
+	checkboxLabel.className = 'form-check-label w-100'
+	checkboxLabel.htmlFor = id
+	checkboxLabel.textContent = label
+	wrapper.append(checkboxLabel)
+	return wrapper
+}
+
+function updateFilterSummary({
+	buttonID,
+	chipsID,
+	emptyLabel,
+	selectedItems,
+}) {
+	const button = byID(buttonID)
+	const chips = byID(chipsID)
+	chips.replaceChildren()
+	if ( selectedItems.length === 0 ) {
+		button.textContent = emptyLabel
+		return
+	}
+
+	button.textContent = `${selectedItems.length} selected`
+	for ( const item of selectedItems ) {
+		chips.append(removableFilterChip(item))
+	}
+}
+
+function removableFilterChip({ label, onRemove }) {
+	const chip = document.createElement('button')
+	chip.className = 'badge text-bg-info border-0 d-inline-flex align-items-center gap-1'
+	chip.type = 'button'
+	chip.title = `Remove ${label}`
+	chip.textContent = label
+	chip.disabled = isBusy
+	chip.addEventListener('click', onRemove)
+
+	const remove = document.createElement('span')
+	remove.setAttribute('aria-hidden', 'true')
+	remove.textContent = 'x'
+	chip.append(remove)
+
+	const srOnly = document.createElement('span')
+	srOnly.className = 'visually-hidden'
+	srOnly.textContent = `Remove ${label}`
+	chip.append(srOnly)
+	return chip
+}
+
+function fillTagFilter(vaultTags = {}) {
+	const menu = byID('vaultUpdateTagFilterMenu')
+	const tagValues = uniqueStrings(Object.values(vaultTags)
+		.flatMap((record) => Array.isArray(record?.tags) ? record.tags : [])
+	)
+		.toSorted((left, right) => left.localeCompare(right))
+	const validTags = new Set(tagValues)
+	for ( const tag of selectedCustomTags ) {
+		if ( !validTags.has(tag) ) { selectedCustomTags.delete(tag) }
+	}
+	menu.replaceChildren()
+	if ( tagValues.length === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'dropdown-item-text text-body-secondary small'
+		empty.textContent = 'No custom tags found'
+		menu.append(empty)
+	}
+	for ( const [index, tag] of tagValues.entries() ) {
+		menu.append(makeFilterCheckbox({
+			checked : selectedCustomTags.has(tag),
+			id      : checkboxID('vault-update-custom-tag', tag, index),
+			label   : tag,
+			onChange : (event) => {
+				if ( event.currentTarget.checked ) { selectedCustomTags.add(tag) } else { selectedCustomTags.delete(tag) }
+				updateTagFilterSummaries()
+				loadCandidates(false, false)
+			},
+			value   : tag,
+		}))
+	}
+	updateTagFilterSummaries()
+}
+
+function autoTagGroupLabel(group) {
+	return {
+		brand     : 'Manufacturer / brand',
+		category  : 'Internal store category',
+		modhub    : 'ModHub category',
+		source    : 'Update source',
+		storeItem : 'Store-item type',
+		type      : 'Internal mod type',
+	}[group] ?? group
+}
+
+function fillAutoTagFilter(vaultEntries = []) {
+	const menu = byID('vaultUpdateAutoTagFilterMenu')
+	const tagsByGroup = new Map()
+	autoTagLabels.clear()
+	for ( const tag of vaultEntries.flatMap((record) => autoTagsForVaultRecord(record)) ) {
+		if ( !tagsByGroup.has(tag.group) ) { tagsByGroup.set(tag.group, new Map()) }
+		tagsByGroup.get(tag.group).set(tag.key, tag)
+		autoTagLabels.set(tag.key, tag.label)
+	}
+	for ( const key of selectedAutoTagKeys ) {
+		if ( !autoTagLabels.has(key) ) { selectedAutoTagKeys.delete(key) }
+	}
+
+	menu.replaceChildren()
+	if ( tagsByGroup.size === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'dropdown-item-text text-body-secondary small'
+		empty.textContent = 'No auto tags found'
+		menu.append(empty)
+	}
+	for ( const group of [...tagsByGroup.keys()].toSorted((left, right) => autoTagGroupLabel(left).localeCompare(autoTagGroupLabel(right))) ) {
+		const header = document.createElement('h6')
+		header.className = 'dropdown-header'
+		header.textContent = autoTagGroupLabel(group)
+		menu.append(header)
+		for ( const [index, tag] of [...tagsByGroup.get(group).values()].toSorted((left, right) => left.label.localeCompare(right.label)).entries() ) {
+			menu.append(makeFilterCheckbox({
+				checked : selectedAutoTagKeys.has(tag.key),
+				id      : checkboxID('vault-update-auto-tag', tag.key, index),
+				label   : tag.label,
+				onChange : (event) => {
+					if ( event.currentTarget.checked ) { selectedAutoTagKeys.add(tag.key) } else { selectedAutoTagKeys.delete(tag.key) }
+					updateTagFilterSummaries()
+					loadCandidates(false, false)
+				},
+				value   : tag.key,
+			}))
+		}
+	}
+	updateTagFilterSummaries()
+}
+
+function updateTagFilterSummaries() {
+	updateFilterSummary({
+		buttonID : 'vaultUpdateTagFilterButton',
+		chipsID  : 'vaultUpdateTagChips',
+		emptyLabel : 'All custom tags',
+		selectedItems : [...selectedCustomTags].map((tag) => ({
+			label : tag,
+			onRemove : () => {
+				selectedCustomTags.delete(tag)
+				updateTagFilterSummaries()
+				loadCandidates(false, false)
+			},
+		})),
+	})
+	updateFilterSummary({
+		buttonID : 'vaultUpdateAutoTagFilterButton',
+		chipsID  : 'vaultUpdateAutoTagChips',
+		emptyLabel : 'All auto tags',
+		selectedItems : [...selectedAutoTagKeys].map((key) => ({
+			label : autoTagLabels.get(key) ?? key,
+			onRemove : () => {
+				selectedAutoTagKeys.delete(key)
+				updateTagFilterSummaries()
+				loadCandidates(false, false)
+			},
+		})),
+	})
+}
+
+function collectionNamesForRecord(record) {
+	return uniqueStrings([
+		...(Array.isArray(record.collectionFilterNames) ? record.collectionFilterNames : []),
+		...(Array.isArray(record.collections) ? record.collections : []),
+	])
+}
+
+function fillCollectionFilter(vaultEntries = []) {
+	const select = byID('vaultUpdateCollectionFilter')
+	const currentValue = select?.value ?? ''
+	const collectionNames = uniqueStrings(vaultEntries.flatMap((record) => collectionNamesForRecord(record)))
+		.toSorted((left, right) => left.localeCompare(right))
+
+	select.replaceChildren()
+	const allOption = document.createElement('option')
+	allOption.value = ''
+	allOption.textContent = 'All collections'
+	select.append(allOption)
+	for ( const collectionName of collectionNames ) {
+		const option = document.createElement('option')
+		option.value = collectionName
+		option.textContent = collectionName
+		select.append(option)
+	}
+	select.value = collectionNames.includes(currentValue) ? currentValue : ''
+}
+
+function matchesSelectedValues(values, selectedValues, mode) {
+	if ( selectedValues.size === 0 ) { return true }
+	const available = new Set(values)
+	if ( mode === 'all' ) {
+		return [...selectedValues].every((value) => available.has(value))
+	}
+	return [...selectedValues].some((value) => available.has(value))
 }
 
 function addBadge(parent, text, className) {
@@ -267,6 +760,12 @@ function cardFor(candidate) {
 	const sourceBadges = document.createElement('div')
 	sourceBadges.className = 'mb-2'
 	addBadge(sourceBadges, sourceBadgeLabel(candidate), 'text-bg-info')
+	for ( const tag of (candidate.autoTags ?? []).slice(0, 6) ) {
+		addBadge(sourceBadges, tag.label, 'text-bg-secondary')
+	}
+	for ( const tag of candidate.tags ?? [] ) {
+		addBadge(sourceBadges, tag, 'text-bg-info')
+	}
 	actionColumn.append(sourceBadges)
 
 	if ( candidate.needsReview ) {
@@ -347,7 +846,8 @@ function updateSelectionText() {
 	byID('vaultUpdatesSelectNone').disabled = isBusy || selectedCount === 0
 }
 
-function renderCandidates(skipped) {
+function renderCandidates(skipped = lastSkippedCount) {
+	lastSkippedCount = skipped
 	const list = byID('vaultUpdateList')
 	list.replaceChildren()
 	selectedKeys = new Set([...selectedKeys].filter((key) => candidates.some((candidate) => candidate.key === key)))
@@ -358,13 +858,22 @@ function renderCandidates(skipped) {
 		empty.textContent = 'No newer supported Vault updates were found.'
 		list.append(empty)
 	} else {
-		for ( const candidate of candidates ) { list.append(cardFor(candidate)) }
+		for ( const candidate of sortedCandidates() ) { list.append(cardFor(candidate)) }
 	}
 
 	applyNeedsReviewFilter()
 	const reviewCount = candidates.filter((candidate) => candidate.needsReview).length
 	setStatus(`${candidates.length} Vault update(s) found.${reviewCount === 0 ? '' : ` ${reviewCount} need review.`}${skipped > 0 ? ` ${skipped} item(s) skipped because they have no supported update source.` : ''}`, candidates.length !== 0 ? 'warning' : 'success')
 	updateSelectionText()
+}
+
+function renderReadyToScan(sourceGroupsLength) {
+	const list = byID('vaultUpdateList')
+	list.replaceChildren()
+	const prompt = document.createElement('div')
+	prompt.className = 'alert alert-info'
+	prompt.textContent = `Ready to scan ${sourceGroupsLength} filtered Vault update candidate${sourceGroupsLength === 1 ? '' : 's'}. Press Start update scan when you want remote checks to begin.`
+	list.append(prompt)
 }
 
 function removeStoredCandidates(storedResults) {
@@ -385,9 +894,29 @@ function removeStoredCandidates(storedResults) {
 	renderCandidates(0)
 }
 
+async function mapWithConcurrency(items, concurrency, worker) {
+	const results = new Array(items.length)
+	let nextIndex = 0
+	const workers = Array.from({ length : Math.min(concurrency, items.length) }, async () => {
+		while ( nextIndex < items.length && !isUpdateCheckStopped ) {
+			// eslint-disable-next-line no-await-in-loop
+			await waitWhileUpdateCheckPaused()
+			if ( isUpdateCheckStopped ) { return }
+			const index = nextIndex
+			nextIndex++
+			// eslint-disable-next-line no-await-in-loop
+			results[index] = await worker(items[index], index)
+		}
+	})
+	await Promise.all(workers)
+	return results
+}
+
 // eslint-disable-next-line complexity
-async function loadCandidates(force = false) {
+async function loadCandidates(force = false, runRemoteChecks = false) {
+	if ( isBusy ) { return }
 	setBusy(true, 'Loading Vault...')
+	const checkStartedAt = performance.now()
 	// A fresh update check must never inherit selection from an older result
 	// set. Only the visible ticked rows may be downloaded.
 	selectedKeys.clear()
@@ -397,19 +926,49 @@ async function loadCandidates(force = false) {
 	try {
 		const vault = await window.vault_update_IPC.getVault()
 		const groups = new Map()
+		let collectionSkipped = 0
+		let ignoredSkipped = 0
 		let skipped = 0
+		let tagSkipped = 0
 
 		const vaultEntries = Array.isArray(vault.entries)
 			? vault.entries
 			: (Array.isArray(vault.records) ? vault.records : [])
+		fillTagFilter(vault.tags ?? {})
+		fillAutoTagFilter(vaultEntries)
+		fillCollectionFilter(vaultEntries)
+		const includeIgnored = byID('vaultIncludeIgnoredUpdates')?.checked === true
+		const collectionFilter = byID('vaultUpdateCollectionFilter')?.value ?? ''
+		const selectedCustomTagValues = [...selectedCustomTags]
+		const selectedAutoTagValues = [...selectedAutoTagKeys]
+		const customTagMode = filterMatchMode('vaultUpdateCustomTagMode')
+		const autoTagMode = filterMatchMode('vaultUpdateAutoTagMode')
 
 		for ( const record of vaultEntries ) {
+			const customTags = tagsForVaultRecord(record, vault.tags ?? {})
+			if ( !includeIgnored && hasIgnoreUpdateTag(customTags) ) {
+				ignoredSkipped++
+				continue
+			}
+			if ( collectionFilter !== '' && !collectionNamesForRecord(record).includes(collectionFilter) ) {
+				collectionSkipped++
+				continue
+			}
+			const autoTags = autoTagsForVaultRecord(record)
+			if (
+				!matchesSelectedValues(customTags, selectedCustomTags, customTagMode) ||
+				!matchesSelectedValues(autoTags.map((tag) => tag.key), selectedAutoTagKeys, autoTagMode)
+			) {
+				tagSkipped++
+				continue
+			}
 			const sources = getSources(record)
 			if ( sources.length === 0 ) { skipped++; continue }
 			const modName = vaultRecordModName(record)
 			for ( const source of sources ) {
 				const key = makeGroupKey(modName, source)
 				const existing = groups.get(key) ?? {
+					autoTags      : [],
 					fileName      : record.fileName,
 					key,
 					localVersions : [],
@@ -418,8 +977,19 @@ async function loadCandidates(force = false) {
 					modName,
 					sourceType    : source.sourceType,
 					sourceURL     : source.sourceURL,
+					tags          : customTags,
+					totalSize     : 0,
+					updatedTime   : 0,
 				}
 				existing.localVersions.push(...(record.versions ?? []))
+				existing.tags.push(...customTags.filter((tag) => !existing.tags.includes(tag)))
+				existing.totalSize += record.size ?? 0
+				existing.updatedTime = Math.max(existing.updatedTime, dateTimeValue(record.updatedAt))
+				for ( const autoTagRecord of autoTags ) {
+					if ( !existing.autoTags.some((tag) => tag.key === autoTagRecord.key) ) {
+						existing.autoTags.push(autoTagRecord)
+					}
+				}
 				if ( existing.modIcon === null && typeof record.modIcon === 'string' && record.modIcon !== '' ) {
 					existing.modIcon = record.modIcon
 				}
@@ -428,20 +998,46 @@ async function loadCandidates(force = false) {
 		}
 
 		const sourceGroups = [...groups.values()]
+		setCandidateCounts({
+			filteredCandidates : sourceGroups.length,
+			filterSkipped : ignoredSkipped + tagSkipped + collectionSkipped,
+			noSourceSkipped : skipped,
+			totalMods : vaultEntries.length,
+		})
+		setStatus(`Checking ${sourceGroups.length} filtered Vault update candidate${sourceGroups.length === 1 ? '' : 's'} from ${vaultEntries.length} Vault mod${vaultEntries.length === 1 ? '' : 's'}.`, 'secondary')
 		candidates = []
-		for ( const [index, group] of sourceGroups.entries() ) {
-			setProgress(Math.round(((index + 1) / Math.max(sourceGroups.length, 1)) * 90), `Checking ${index + 1} of ${sourceGroups.length}`)
-			// Vault update checks are deliberately sequential to avoid hammering source sites.
-			// eslint-disable-next-line no-await-in-loop
+		if ( !runRemoteChecks ) {
+			renderReadyToScan(sourceGroups.length)
+			setStatus(`Ready to scan ${sourceGroups.length} filtered Vault update candidate${sourceGroups.length === 1 ? '' : 's'} from ${vaultEntries.length} Vault mod${vaultEntries.length === 1 ? '' : 's'}.`, 'secondary')
+			return
+		}
+		let checked = 0
+		isUpdateCheckStopped = false
+		isRemoteCheckRunning = true
+		updatePauseButton()
+		updateStopButton()
+		const remoteResults = await mapWithConcurrency(sourceGroups, REMOTE_CHECK_CONCURRENCY, async (group) => {
 			const remote = await (group.sourceType === 'modhub'
 				? window.vault_update_IPC.getModHub(group.modHubID, force)
 				: window.vault_update_IPC.getGitHub(group.sourceURL, force))
+			checked++
+			setProgress(Math.round((checked / Math.max(sourceGroups.length, 1)) * 90), `Checking ${checked} of ${sourceGroups.length}`)
+			return { group, remote }
+		})
+		const wasStopped = isUpdateCheckStopped
+		isRemoteCheckRunning = false
+		setUpdateCheckPaused(false)
+		updateStopButton()
 
+		for ( const result of remoteResults ) {
+			if ( result === undefined ) { continue }
+			const { group, remote } = result
 			if ( !remote?.ok || typeof remote.version !== 'string' ) { continue }
 			const localVersion = newestVersion(group.localVersions)
 			if ( compareVersions(remote.version, localVersion) <= 0 ) { continue }
 			const candidate = {
 				assetName     : remote.assetName ?? group.fileName,
+				autoTags      : group.autoTags,
 				downloadSource : remote.downloadSource ?? null,
 				downloadURL   : remote.hasDownload ? remote.downloadURL : null,
 				fileName      : group.fileName,
@@ -455,18 +1051,45 @@ async function loadCandidates(force = false) {
 				remoteVersion : remote.version,
 				sourceType    : group.sourceType,
 				sourceURL     : group.sourceURL,
+				tags          : group.tags,
+				totalSize     : group.totalSize,
+				updatedTime   : group.updatedTime,
 			}
 			candidate.reviewReasons = reviewReasons(candidate)
 			candidate.needsReview = candidate.reviewReasons.length !== 0
 			candidates.push(candidate)
 		}
 
-		candidates.sort((left, right) => left.modName.localeCompare(right.modName))
-		setProgress(100, 'Update check complete')
+		setProgress(wasStopped ? Math.round((checked / Math.max(sourceGroups.length, 1)) * 90) : 100, wasStopped ? 'Update check stopped' : 'Update check complete')
 		renderCandidates(skipped)
+		applyPendingProfileReviewFilters()
+		if ( wasStopped ) {
+			setStatus(`Vault update scan stopped after ${checked} of ${sourceGroups.length} remote check${sourceGroups.length === 1 ? '' : 's'}. Showing ${candidates.length} update${candidates.length === 1 ? '' : 's'} found before stopping.`, candidates.length !== 0 ? 'warning' : 'secondary')
+		}
+		if ( !wasStopped && (collectionFilter !== '' || selectedCustomTagValues.length !== 0 || selectedAutoTagValues.length !== 0 || ignoredSkipped !== 0) ) {
+			const filterParts = [
+				collectionFilter === '' ? '' : `collection "${collectionFilter}"`,
+				selectedCustomTagValues.length === 0 ? '' : `${customTagMode} custom tags "${selectedCustomTagValues.join(', ')}"`,
+				selectedAutoTagValues.length === 0 ? '' : `${autoTagMode} auto tags "${selectedAutoTagValues.map((key) => autoTagLabels.get(key) ?? key).join(', ')}"`,
+			].filter((part) => part !== '')
+			const filterText = filterParts.length === 0 ? '' : ` for ${filterParts.join(' and ')}`
+			const ignoredText = ignoredSkipped === 0 ? '' : ` ${ignoredSkipped} item(s) hidden by Ignore Updates.`
+			const tagText = tagSkipped + collectionSkipped === 0 ? '' : ` ${tagSkipped + collectionSkipped} Vault item(s) skipped by filter.`
+			setStatus(`${candidates.length} Vault update(s) found${filterText}.${ignoredText}${tagText}${skipped > 0 ? ` ${skipped} matching item(s) skipped because they have no supported update source.` : ''}`, candidates.length !== 0 ? 'warning' : 'success')
+		}
+		void window.vault_update_IPC.logPerformance({
+			candidates : candidates.length,
+			durationMS : performance.now() - checkStartedAt,
+			force,
+			groups : sourceGroups.length,
+			skipped : skipped + tagSkipped + ignoredSkipped + collectionSkipped,
+		})
 	} catch (err) {
 		setStatus(`Vault update check failed: ${err.message}`, 'danger')
 	} finally {
+		isRemoteCheckRunning = false
+		setUpdateCheckPaused(false)
+		isUpdateCheckStopped = false
 		setBusy(false)
 		updateSelectionText()
 	}
@@ -507,7 +1130,29 @@ async function downloadSelected() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-	byID('vaultUpdatesRefresh').addEventListener('click', () => loadCandidates(true))
+	for ( const trigger of document.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		bootstrap.Tooltip.getOrCreateInstance(trigger)
+	}
+	fillUpdateProfileSelect()
+	byID('vaultUpdatesStart').addEventListener('click', () => loadCandidates(false, true))
+	byID('vaultUpdatesPause').addEventListener('click', () => {
+		setUpdateCheckPaused(!isUpdateCheckPaused)
+	})
+	byID('vaultUpdatesStop').addEventListener('click', stopUpdateChecks)
+	byID('vaultIncludeIgnoredUpdates').addEventListener('change', () => loadCandidates(false, false))
+	byID('vaultUpdateCollectionFilter').addEventListener('change', () => loadCandidates(false, false))
+	for ( const modeInput of document.querySelectorAll('input[name="vaultUpdateCustomTagMode"], input[name="vaultUpdateAutoTagMode"]') ) {
+		modeInput.addEventListener('change', () => loadCandidates(false, false))
+	}
+	byID('vaultUpdateProfileSelect').addEventListener('change', (event) => {
+		const profileName = event.target.value
+		if ( profileName !== '' ) { applyUpdateProfile(profileName) }
+	})
+	byID('vaultUpdateProfileSave').addEventListener('click', saveUpdateProfile)
+	byID('vaultUpdateProfileDelete').addEventListener('click', deleteUpdateProfile)
+	byID('vaultUpdateSortFilter').addEventListener('change', () => {
+		if ( candidates.length !== 0 ) { renderCandidates() }
+	})
 	byID('vaultUpdatesDownloadSelected').addEventListener('click', downloadSelected)
 	byID('vaultUpdatesSelectAll').addEventListener('click', () => setAllSelections(true))
 	byID('vaultUpdatesSelectNone').addEventListener('click', () => setAllSelections(false))
@@ -521,5 +1166,5 @@ window.addEventListener('DOMContentLoaded', () => {
 		filter.addEventListener('change', applyNeedsReviewFilter)
 	}
 	byID('vaultUpdatesBack').addEventListener('click', () => window.vault_update_IPC.dispatchModManagement())
-	loadCandidates(false)
+	loadCandidates(false, false)
 })

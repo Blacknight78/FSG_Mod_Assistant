@@ -258,6 +258,7 @@ let updateBusyDepth = 0
 function showUpdateBusyProgress(label = '', value = null) {
 	const wrapper = MA.byId('updateBusyProgress')
 	const bar = MA.byId('updateBusyProgressBar')
+	const readableLabel = MA.byId('updateBusyProgressLabel')
 	if ( wrapper === null || bar === null ) { return }
 	const progress = wrapper.querySelector('.progress')
 	wrapper.classList.remove('d-none')
@@ -272,7 +273,8 @@ function showUpdateBusyProgress(label = '', value = null) {
 		bar.style.width = `${safeValue}%`
 		bar.classList.toggle('progress-bar-animated', safeValue < 100)
 	}
-	bar.textContent = label
+	bar.textContent = ''
+	if ( readableLabel !== null ) { readableLabel.textContent = label }
 }
 
 function beginUpdateBusy(label = '', value = null) {

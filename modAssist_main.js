@@ -993,17 +993,72 @@ ipcMain.handle('settings:site', (_, mod, site = false) => {
 	return serveIPC.storeSites.get(mod, '')
 })
 
-const UPDATE_REMOTE_CACHE_MS = 1000 * 60 * 30
+const UPDATE_REMOTE_CACHE_MS = 1000 * 60 * 60 * 24
+const UPDATE_REMOTE_FETCH_TIMEOUT_MS = 1000 * 12
+const UPDATE_REMOTE_CACHE_STORE_KEY = 'remoteUpdateCache'
 const updateRemoteCache = new Map()
 const updateRemoteInFlight = new Map()
+let updateRemoteDiskCache = null
+let updateRemoteCacheFlushTimer = null
+
+function getUpdateRemoteDiskCache() {
+	if ( updateRemoteDiskCache !== null ) { return updateRemoteDiskCache }
+	const storedCache = serveIPC.storeLibrary.get(UPDATE_REMOTE_CACHE_STORE_KEY, {})
+	updateRemoteDiskCache = typeof storedCache === 'object' && storedCache !== null && !Array.isArray(storedCache) ? storedCache : {}
+	return updateRemoteDiskCache
+}
+
+function scheduleUpdateRemoteCacheFlush() {
+	clearTimeout(updateRemoteCacheFlushTimer)
+	updateRemoteCacheFlushTimer = setTimeout(() => {
+		updateRemoteCacheFlushTimer = null
+		serveIPC.storeLibrary.set(UPDATE_REMOTE_CACHE_STORE_KEY, getUpdateRemoteDiskCache())
+	}, 2000)
+	updateRemoteCacheFlushTimer.unref?.()
+}
+
+function setUpdateRemoteCacheRecord(key, result) {
+	const record = { expiresAt : Date.now() + UPDATE_REMOTE_CACHE_MS, result }
+	updateRemoteCache.set(key, record)
+	getUpdateRemoteDiskCache()[key] = record
+	scheduleUpdateRemoteCacheFlush()
+}
+
+function getUpdateRemoteCacheRecord(key) {
+	const cachedMemory = updateRemoteCache.get(key)
+	if ( typeof cachedMemory !== 'undefined' ) { return cachedMemory }
+
+	const cachedDisk = getUpdateRemoteDiskCache()[key]
+	if ( typeof cachedDisk === 'object' && cachedDisk !== null ) {
+		updateRemoteCache.set(key, cachedDisk)
+		return cachedDisk
+	}
+	return undefined
+}
+
+async function fetchWithTimeout(url, options = {}) {
+	const controller = new AbortController()
+	const timeout = setTimeout(() => { controller.abort() }, UPDATE_REMOTE_FETCH_TIMEOUT_MS)
+	timeout.unref?.()
+	try {
+		return await fetch(url, { ...options, signal : controller.signal })
+	} catch (err) {
+		if ( err.name === 'AbortError' ) {
+			throw new Error(`Request timed out after ${Math.round(UPDATE_REMOTE_FETCH_TIMEOUT_MS / 1000)} seconds`)
+		}
+		throw err
+	} finally {
+		clearTimeout(timeout)
+	}
+}
 
 async function cachedRemoteUpdate(key, force, lookup) {
-	const cached = updateRemoteCache.get(key)
+	const cached = getUpdateRemoteCacheRecord(key)
 	if ( !force && typeof cached !== 'undefined' && cached.expiresAt > Date.now() ) { return cached.result }
 	if ( !force && updateRemoteInFlight.has(key) ) { return updateRemoteInFlight.get(key) }
 
 	const lookupPromise = lookup().then((result) => {
-		updateRemoteCache.set(key, { expiresAt : Date.now() + UPDATE_REMOTE_CACHE_MS, result })
+		setUpdateRemoteCacheRecord(key, result)
 		return result
 	}).finally(() => {
 		updateRemoteInFlight.delete(key)
@@ -1017,6 +1072,15 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL, force = false)
 ipcMain.handle('settings:site:modHubLatest', async (_, modHubID, force = false) =>
 	cachedRemoteUpdate(`modhub:${modHubID}`, force, () => getModHubLatestUpdate(modHubID, force)))
 ipcMain.handle('settings:site:sourceInfo', (_, sourceURL) => getUpdateSourceInfo(sourceURL))
+ipcMain.handle('vault:updateCheckPerformance', (_, payload = {}) => {
+	const durationMS = Number.isFinite(payload.durationMS) ? payload.durationMS.toFixed(1) : '0.0'
+	const groups = Number.isFinite(payload.groups) ? payload.groups.toString() : '0'
+	const candidates = Number.isFinite(payload.candidates) ? payload.candidates.toString() : '0'
+	const skipped = Number.isFinite(payload.skipped) ? payload.skipped.toString() : '0'
+	const force = payload.force === true
+	serveIPC.log.info('performance', `Vault update check took ${durationMS} ms groups=${groups} candidates=${candidates} skipped=${skipped} force=${force.toString()}`)
+	return { ok : true }
+})
 
 async function getGitHubLatestUpdate(sourceURL) {
 	const repoInfo = getGitHubRepoInfo(sourceURL)
@@ -1045,7 +1109,7 @@ async function getGitHubLatestUpdate(sourceURL) {
 
 async function getGitHubReleaseResult(resolvedRepo, headers) {
 	const releaseURL      = `https://api.github.com/repos/${resolvedRepo.owner}/${resolvedRepo.repo}/releases/latest`
-	const releaseResponse = await fetch(releaseURL, { headers })
+	const releaseResponse = await fetchWithTimeout(releaseURL, { headers })
 	if ( !releaseResponse.ok ) { return null }
 
 	const release  = await releaseResponse.json()
@@ -1093,7 +1157,7 @@ async function getGitHubStableReleaseURL(resolvedRepo) {
 async function getGitHubStableReleaseRedirectURL(latestReleaseURL, redirectCount) {
 	if ( redirectCount >= 5 ) { return latestReleaseURL }
 
-	const releaseResponse = await fetch(latestReleaseURL, { method : 'HEAD', redirect : 'manual' })
+	const releaseResponse = await fetchWithTimeout(latestReleaseURL, { method : 'HEAD', redirect : 'manual' })
 	const redirectURL = releaseResponse.headers.get('location')
 
 	if ( redirectURL === null ) { return releaseResponse.url }
@@ -1116,7 +1180,7 @@ function getGitHubReleaseZipAsset(release) {
 
 async function getGitHubRepoZipAsset(repoInfo, headers) {
 	const contentsURL      = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents?ref=${repoInfo.defaultBranch}`
-	const contentsResponse = await fetch(contentsURL, { headers })
+	const contentsResponse = await fetchWithTimeout(contentsURL, { headers })
 	if ( !contentsResponse.ok ) { return getGitHubRepoNamedZipAsset(repoInfo) }
 
 	const contents = await contentsResponse.json()
@@ -1151,7 +1215,7 @@ async function getGitHubRepoNamedZipAsset(repoInfo) {
 	const candidates = await Promise.all(branches.map(async (branch) => {
 		const downloadURL = `https://raw.githubusercontent.com/${repoInfo.owner}/${repoInfo.repo}/${branch}/${fileName}`
 		try {
-			const response = await fetch(downloadURL, { method : 'HEAD' })
+			const response = await fetchWithTimeout(downloadURL, { method : 'HEAD' })
 			if ( response.ok ) {
 				return {
 					downloadSource : 'repositoryFile',
@@ -1172,7 +1236,7 @@ async function getGitHubStableReleaseNamedZipAsset(repoInfo, stableTag) {
 	const fileName = `${repoInfo.repo}.zip`
 	const downloadURL = `${repoInfo.htmlURL}/releases/download/${stableTag}/${fileName}`
 	try {
-		const response = await fetch(downloadURL, { method : 'HEAD' })
+		const response = await fetchWithTimeout(downloadURL, { method : 'HEAD' })
 		if ( response.ok ) {
 			return {
 				downloadSource : 'releaseAsset',
@@ -1724,7 +1788,7 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 	}
 
 	try {
-		const response = await fetch(url)
+		const response = await fetchWithTimeout(url)
 		if ( !response.ok ) { throw new Error(`ModHub returned ${response.status}`) }
 		const html = await response.text()
 		const compactText = modHubTextLines(html)
@@ -1845,11 +1909,18 @@ function cachedSourceHash(filePath, fileStat, sourceHashCache = null) {
 
 function modLibraryFilePath(hash, fileName) {
 	const ext = path.extname(safeDownloadFileName(fileName)) || '.zip'
-	return path.join(app.getPath('userData'), 'mod-library', 'files', hash.slice(0, 2), `${hash}${ext}`)
+	return path.join(modLibraryFilesFolder(), hash.slice(0, 2), `${hash}${ext}`)
+}
+
+function defaultModLibraryFolder() {
+	return path.join(app.getPath('userData'), 'mod-library')
 }
 
 function modLibraryFolder() {
-	return path.join(app.getPath('userData'), 'mod-library')
+	const storedFolder = serveIPC.storeLibrary.get('vaultFolder', '')
+	return typeof storedFolder === 'string' && storedFolder.trim() !== '' && path.isAbsolute(storedFolder) ?
+		path.resolve(storedFolder) :
+		defaultModLibraryFolder()
 }
 
 function modLibraryFilesFolder() {
@@ -1861,6 +1932,230 @@ function isPathInsideFolder(childPath, parentPath) {
 	const resolvedParent = path.resolve(parentPath)
 	const relativePath = path.relative(resolvedParent, resolvedChild)
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+}
+
+function sameFileSystemPath(firstPath, secondPath) {
+	const resolvedFirst = path.resolve(firstPath)
+	const resolvedSecond = path.resolve(secondPath)
+	return process.platform === 'win32' ?
+		resolvedFirst.toLocaleLowerCase() === resolvedSecond.toLocaleLowerCase() :
+		resolvedFirst === resolvedSecond
+}
+
+function rewritePathBetweenFolders(value, oldRoot, newRoot) {
+	if ( typeof value !== 'string' || value.trim() === '' || !isPathInsideFolder(value, oldRoot) ) { return value }
+	return path.join(newRoot, path.relative(oldRoot, value))
+}
+
+function rewriteVaultHistoryPaths(oldFilesRoot, newFilesRoot) {
+	const historyEntries = serveIPC.storeHistory.get('entries', [])
+	if ( !Array.isArray(historyEntries) ) { return 0 }
+
+	let updated = 0
+	const nextEntries = historyEntries.map((entry) => {
+		if ( typeof entry !== 'object' || entry === null || Array.isArray(entry) ) { return entry }
+		const nextEntry = { ...entry }
+		for ( const field of ['backupPath', 'currentLibraryPath', 'stagedPath'] ) {
+			const nextPath = rewritePathBetweenFolders(nextEntry[field], oldFilesRoot, newFilesRoot)
+			if ( nextPath !== nextEntry[field] ) {
+				nextEntry[field] = nextPath
+				updated++
+			}
+		}
+		return nextEntry
+	})
+
+	if ( updated !== 0 ) { serveIPC.storeHistory.set('entries', nextEntries) }
+	return updated
+}
+
+async function targetVaultFolderIsUsable(targetFolder) {
+	const existingTargetItems = await fsPromise.readdir(targetFolder, { withFileTypes : true })
+	if ( existingTargetItems.length === 0 ) { return true }
+	return existingTargetItems.every((entry) => ['files', 'index'].includes(entry.name) && entry.isDirectory())
+}
+
+async function collectModLibraryFileMoves(sourceFolder, relativeFolder = '') {
+	if ( !fs.existsSync(sourceFolder) ) { return [] }
+	const entries = await fsPromise.readdir(path.join(sourceFolder, relativeFolder), { withFileTypes : true })
+	const files = []
+	for ( const entry of entries ) {
+		const relativePath = path.join(relativeFolder, entry.name)
+		if ( entry.isDirectory() ) {
+			// eslint-disable-next-line no-await-in-loop
+			files.push(...await collectModLibraryFileMoves(sourceFolder, relativePath))
+			continue
+		}
+		if ( !entry.isFile() ) { continue }
+		// eslint-disable-next-line no-await-in-loop
+		const fileStat = await fsPromise.stat(path.join(sourceFolder, relativePath))
+		files.push({ relativePath, size : fileStat.size })
+	}
+	return files
+}
+
+function formatMoveDuration(milliseconds) {
+	if ( !Number.isFinite(milliseconds) || milliseconds < 0 ) { return 'unknown' }
+	const seconds = Math.ceil(milliseconds / 1000)
+	if ( seconds < 60 ) { return `${seconds}s` }
+	const minutes = Math.floor(seconds / 60)
+	const remainingSeconds = seconds % 60
+	if ( minutes < 60 ) { return `${minutes}m ${remainingSeconds}s` }
+	const hours = Math.floor(minutes / 60)
+	const remainingMinutes = minutes % 60
+	return `${hours}h ${remainingMinutes}m`
+}
+
+function vaultMoveProgressLabel(stats, totalFiles, etaMS = null) {
+	const etaText = etaMS === null ? '' : `, ETA ${formatMoveDuration(etaMS)}`
+	return `Moving Vault: ${stats.processedFiles} / ${totalFiles} files${etaText}`
+}
+
+async function copyModLibraryFiles(sourceFolder, targetFolder, onProgress = null) {
+	const stats = {
+		copiedFiles  : 0,
+		processedBytes : 0,
+		processedFiles : 0,
+		recopiedFiles : 0,
+		skippedFiles : 0,
+		totalBytes   : 0,
+		totalFiles   : 0,
+	}
+
+	if ( !fs.existsSync(sourceFolder) ) {
+		await fsPromise.mkdir(targetFolder, { recursive : true })
+		return stats
+	}
+
+	await fsPromise.mkdir(targetFolder, { recursive : true })
+	const files = await collectModLibraryFileMoves(sourceFolder)
+	stats.totalFiles = files.length
+	stats.totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+	const startedAt = performance.now()
+	let lastProgressAt = 0
+	const emitProgress = (force = false) => {
+		if ( typeof onProgress !== 'function' ) { return }
+		const now = performance.now()
+		if ( !force && now - lastProgressAt < 250 ) { return }
+		lastProgressAt = now
+		const elapsedMS = Math.max(1, now - startedAt)
+		const remainingBytes = Math.max(0, stats.totalBytes - stats.processedBytes)
+		const bytesPerMS = stats.processedBytes / elapsedMS
+		const etaMS = bytesPerMS > 0 && remainingBytes > 0 ? remainingBytes / bytesPerMS : null
+		onProgress({
+			label : vaultMoveProgressLabel(stats, stats.totalFiles, etaMS),
+			value : stats.totalBytes === 0 ? 100 : (stats.processedBytes / stats.totalBytes) * 100,
+		})
+	}
+
+	emitProgress(true)
+	for ( const file of files ) {
+		const sourcePath = path.join(sourceFolder, file.relativePath)
+		const targetPath = path.join(targetFolder, file.relativePath)
+		// eslint-disable-next-line no-await-in-loop
+		await fsPromise.mkdir(path.dirname(targetPath), { recursive : true })
+
+		let targetStat = null
+		try {
+			// eslint-disable-next-line no-await-in-loop
+			targetStat = await fsPromise.stat(targetPath)
+		} catch {
+			targetStat = null
+		}
+
+		if ( targetStat !== null && targetStat.isFile() && targetStat.size === file.size ) {
+			stats.skippedFiles++
+		} else {
+			// eslint-disable-next-line no-await-in-loop
+			await fsPromise.copyFile(sourcePath, targetPath)
+			if ( targetStat === null ) {
+				stats.copiedFiles++
+			} else {
+				stats.recopiedFiles++
+			}
+		}
+		stats.processedBytes += file.size
+		stats.processedFiles++
+		emitProgress()
+	}
+
+	emitProgress(true)
+	return stats
+}
+
+async function moveModLibraryFolder(onProgress = null) {
+	const currentFolder = modLibraryFolder()
+	const currentFilesFolder = modLibraryFilesFolder()
+	const result = await dialog.showOpenDialog(serveIPC.windowLib.win.vault, {
+		buttonLabel : 'Use this folder',
+		message     : 'Choose a folder for the Mod Vault.',
+		properties  : ['openDirectory', 'createDirectory'],
+		title       : 'Choose Mod Vault folder',
+	})
+	if ( result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0 ) {
+		return { cancelled : true, ok : false }
+	}
+
+	const targetFolder = path.resolve(result.filePaths[0])
+	if ( sameFileSystemPath(targetFolder, currentFolder) ) {
+		return { ok : false, error : 'That folder is already the active Vault folder.' }
+	}
+	if ( isPathInsideFolder(targetFolder, currentFolder) ) {
+		return { ok : false, error : 'Choose a folder outside the current Vault folder.' }
+	}
+	if ( isPathInsideFolder(currentFolder, targetFolder) ) {
+		return { ok : false, error : 'Choose an empty folder, not a parent folder that already contains the current Vault.' }
+	}
+
+	await fsPromise.mkdir(targetFolder, { recursive : true })
+	if ( !await targetVaultFolderIsUsable(targetFolder) ) {
+		return { ok : false, error : 'Choose an empty folder or a previous partial Vault move folder.' }
+	}
+
+	const targetFilesFolder = path.join(targetFolder, 'files')
+	const copyStats = await copyModLibraryFiles(currentFilesFolder, targetFilesFolder, onProgress)
+
+	const records = getRawStoredModLibraryRecords()
+	let updatedRecords = 0
+	for ( const record of Object.values(records) ) {
+		if ( typeof record !== 'object' || record === null || Array.isArray(record) ) { continue }
+		const nextPath = rewritePathBetweenFolders(record.filePath, currentFilesFolder, targetFilesFolder)
+		if ( nextPath !== record.filePath ) {
+			record.filePath = nextPath
+			updatedRecords++
+		}
+	}
+
+	const updatedHistoryPaths = rewriteVaultHistoryPaths(currentFilesFolder, targetFilesFolder)
+	serveIPC.storeLibrary.set('vaultFolder', targetFolder)
+	serveIPC.storeLibrary.set('records', records)
+	invalidateModLibrarySummary()
+	if ( typeof onProgress === 'function' ) {
+		onProgress({ label : 'Deleting old Vault folder...', value : 99 })
+	}
+	let oldFolderDeleted = false
+	let oldFolderDeleteError = null
+	try {
+		await fsPromise.rm(currentFolder, { force : true, recursive : true })
+		oldFolderDeleted = true
+	} catch (err) {
+		oldFolderDeleteError = err.message
+	}
+	if ( typeof onProgress === 'function' ) {
+		onProgress({ label : 'Vault move complete.', value : 100 })
+	}
+	serveIPC.log.info('mod-vault', `Vault folder moved from ${currentFolder} to ${targetFolder}; records=${updatedRecords} historyPaths=${updatedHistoryPaths} copied=${copyStats.copiedFiles} skipped=${copyStats.skippedFiles} recopied=${copyStats.recopiedFiles} oldDeleted=${oldFolderDeleted.toString()}`)
+
+	return {
+		copyStats,
+		folder : targetFolder,
+		ok     : true,
+		oldFolderDeleted,
+		oldFolderDeleteError,
+		oldFolder : currentFolder,
+		updatedHistoryPaths,
+		updatedRecords,
+	}
 }
 
 function getRawStoredModLibraryRecords() {
@@ -1882,7 +2177,7 @@ function getStoredModLibraryRecords() {
 		}]))
 }
 
-const MOD_LIBRARY_INDEX_SCHEMA = 1
+const MOD_LIBRARY_INDEX_SCHEMA = 2
 const modLibrarySummaryCache = new Map()
 const vaultDetailCache = new Map()
 let modLibraryIndexWarmupStarted = false
@@ -2345,6 +2640,29 @@ function getVaultNotes() {
 	return typeof storedNotes === 'object' && storedNotes !== null && !Array.isArray(storedNotes) ? storedNotes : {}
 }
 
+function getVaultTags() {
+	const storedTags = serveIPC.storeLibrary.get('tags', {})
+	return typeof storedTags === 'object' && storedTags !== null && !Array.isArray(storedTags) ? storedTags : {}
+}
+
+function cleanVaultTags(tags) {
+	if ( !Array.isArray(tags) ) { throw new Error('Tags must be a list.') }
+	const cleanTags = []
+	const seenTags = new Set()
+	for ( const tag of tags ) {
+		if ( typeof tag !== 'string' ) { continue }
+		const cleanTag = tag.replace(/\s+/gu, ' ').trim()
+		if ( cleanTag === '' ) { continue }
+		if ( cleanTag.length > 40 ) { throw new Error('Tags cannot be longer than 40 characters.') }
+		const tagKey = cleanTag.toLocaleLowerCase()
+		if ( seenTags.has(tagKey) ) { continue }
+		seenTags.add(tagKey)
+		cleanTags.push(cleanTag)
+		if ( cleanTags.length > 20 ) { throw new Error('A mod cannot have more than 20 custom tags.') }
+	}
+	return cleanTags
+}
+
 function saveVaultNote({ modName, note } = {}) {
 	const noteKey = vaultNoteKey(modName)
 	if ( noteKey === '' ) { throw new Error('The mod name is missing.') }
@@ -2372,10 +2690,51 @@ function saveVaultNote({ modName, note } = {}) {
 	}
 }
 
+function saveVaultTags({ modName, tags } = {}) {
+	const tagKey = vaultNoteKey(modName)
+	if ( tagKey === '' ) { throw new Error('The mod name is missing.') }
+
+	const cleanTags = cleanVaultTags(tags)
+	const storedTags = getVaultTags()
+	if ( cleanTags.length === 0 ) {
+		delete storedTags[tagKey]
+	} else {
+		storedTags[tagKey] = {
+			modName,
+			tags      : cleanTags,
+			updatedAt : new Date().toISOString(),
+		}
+	}
+	serveIPC.storeLibrary.set('tags', storedTags)
+	invalidateModLibrarySummary()
+
+	return {
+		key    : tagKey,
+		record : storedTags[tagKey] ?? null,
+	}
+}
+
 function currentVaultCollectionNames() {
 	return new Set([...serveIPC.modCollect.collections]
 		.map((collectionKey) => serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey)
 		.filter((collectionName) => typeof collectionName === 'string' && collectionName !== ''))
+}
+
+function currentVaultCollectionNamesByModName() {
+	const collectionNamesByModName = new Map()
+	for ( const collectionKey of serveIPC.modCollect.collections ) {
+		const collectionName = serveIPC.modCollect.mapCollectionToName(collectionKey) ?? collectionKey
+		if ( typeof collectionName !== 'string' || collectionName === '' ) { continue }
+
+		for ( const modRecord of serveIPC.modCollect.getModListFromCollection(collectionKey) ) {
+			const modName = normalizeVaultModName(modRecord?.fileDetail?.shortName)
+			if ( modName === '' ) { continue }
+			const lookupName = modName.toLocaleLowerCase()
+			if ( !collectionNamesByModName.has(lookupName) ) { collectionNamesByModName.set(lookupName, new Set()) }
+			collectionNamesByModName.get(lookupName).add(collectionName)
+		}
+	}
+	return collectionNamesByModName
 }
 
 const MOD_LIBRARY_DEFAULT_RETENTION_COUNT = 3
@@ -2474,6 +2833,7 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 	const prepareStartedAt = performance.now()
 	const historyEntries = serveIPC.storeHistory.get('entries', [])
 	const currentCollectionNames = currentVaultCollectionNames()
+	const currentCollectionsByModName = currentVaultCollectionNamesByModName()
 	const cachedModHubMetadata = serveIPC.storeLibrary.get('modHub', {})
 	const savedIDsByNormalizedName = modHubSavedIDsByNormalizedName(records)
 	const retentionCount = getModLibraryRetentionCount()
@@ -2496,9 +2856,15 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 			const sources = Array.isArray(record.sources) ? record.sources : []
 			const isUsed = usedHashes.has(hash) || usedPaths.has(record.filePath)
 			const collections = Array.isArray(record.collections) ? record.collections.filter((collectionName) => currentCollectionNames.has(collectionName)) : []
+			const currentCollections = uniqueCleanArray(normalizedVaultModNames([
+				...(Array.isArray(record.modNames) ? record.modNames : []),
+				record.fileName,
+			]).flatMap((modName) => [...(currentCollectionsByModName.get(modName.toLocaleLowerCase()) ?? [])]))
 			const entry = {
+				collectionFilterNames : uniqueCleanArray([...collections, ...currentCollections]),
 				collections,
 				createdAt    : record.createdAt ?? null,
+				currentCollections,
 				equipmentSpecs : safeEquipmentSpecs(record.equipmentSpecs),
 				fileExists   : fileExists,
 				fileName     : record.fileName ?? path.basename(record.filePath ?? ''),
@@ -2715,6 +3081,7 @@ function modLibrarySummaryForEntries(entries) {
 			maximum : MOD_LIBRARY_MAX_RETENTION_COUNT,
 			versionCount : getModLibraryRetentionCount(),
 		},
+		tags       : getVaultTags(),
 		totalCount : entries.length,
 		totalSize  : entries.reduce((sum, entry) => sum + entry.size, 0),
 		usedCount  : entries.filter((entry) => entry.isUsed).length,
@@ -3999,7 +4366,7 @@ function safeDownloadFolderName(folderName) {
 
 async function getGitHubResolvedRepo(repoInfo, headers) {
 	const repoURL      = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}`
-	const repoResponse = await fetch(repoURL, { headers })
+	const repoResponse = await fetchWithTimeout(repoURL, { headers })
 	if ( repoResponse.ok ) {
 		const repo = await repoResponse.json()
 		const [owner, repoName] = repo.full_name.split('/')
@@ -5387,7 +5754,16 @@ ipcMain.handle('vault:setRetentionCount', (_, payload) => {
 ipcMain.handle('vault:importCollections', (event) => importCollectionsToVault((progress) => {
 	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'importCollections', ...progress }) }
 }))
-ipcMain.handle('vault:openFolder', () => shell.openPath(path.join(app.getPath('userData'), 'mod-library')))
+ipcMain.handle('vault:moveFolder', async (event) => {
+	try {
+		return await moveModLibraryFolder((progress) => {
+			if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'moveFolder', ...progress }) }
+		})
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('vault:openFolder', () => shell.openPath(modLibraryFolder()))
 ipcMain.handle('vault:openDetail', (_, payload) => {
 	const detailTarget = vaultDetailTarget(payload)
 	if ( detailTarget === null ) {
@@ -5402,6 +5778,13 @@ ipcMain.handle('vault:refreshModHub', (event) => refreshVaultModHubMetadata((pro
 ipcMain.handle('vault:saveNote', async (_, payload) => {
 	try {
 		return { ok : true, ...saveVaultNote(payload) }
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('vault:saveTags', async (_, payload) => {
+	try {
+		return { ok : true, ...saveVaultTags(payload) }
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}

@@ -37,6 +37,7 @@ class StateManager {
 		newFolder      : null,
 		openCollection : null,
 		pendingLaunchCollection : null,
+		pendingSearchFocus : false,
 		scrollPosition : 0,
 		searchString   : '',
 		searchType     : 'find_all',
@@ -571,6 +572,7 @@ class StateManager {
 		if ( this.track.newFolder !== null ) {
 			this.colScroll(this.track.newFolder)
 		}
+		this.#restorePendingSearchFocus()
 		this.#logPerformance('Main renderer updateFromData', updateStartedAt, [
 			`collections=${updateStats.collectionsRendered.toString()}`,
 			`mods=${updateStats.modsRendered.toString()}`,
@@ -587,6 +589,19 @@ class StateManager {
 			`finalPrefs=${updateStats.finalPrefsMS.toFixed(1)} ms`,
 			`finalDisplay=${updateStats.finalDisplayMS.toFixed(1)} ms`,
 		].join(' '))
+	}
+
+	#restorePendingSearchFocus() {
+		if ( !this.track.pendingSearchFocus ) { return }
+		this.track.pendingSearchFocus = false
+		this.#focusSearchBox()
+	}
+
+	#focusSearchBox() {
+		const searchBox = MA.byId('filter_input')
+		if ( searchBox === null ) { return }
+		MA.restoreInputFocus(searchBox)
+		setTimeout(() => { MA.restoreInputFocus(searchBox) }, 120)
 	}
 
 	updateVerPick(data) {
@@ -1710,14 +1725,15 @@ class StateManager {
 			const modIDs = this.#selectedGameLogIssueModIDs()
 			if ( modIDs.length === 0 ) { return }
 			MA.byId('gameLogIssuesDisable').disabled = true
+			this.track.pendingSearchFocus = true
 			try {
 				const result = await window.main_IPC.files.disableSelected(modIDs)
 				MA.alert(`Disabled ${result.disabled} log issue mod(s); ${result.failed} could not be disabled.`)
 				this.modal.gameLogIssues.hide()
 				this.track.selected.clear()
 				this.forceSelectOnly(false)
-				window.main_IPC.folder.reload()
 			} catch (err) {
+				this.track.pendingSearchFocus = false
 				MA.alert(`Disable failed: ${err.message}`)
 				MA.byId('gameLogIssuesDisable').disabled = false
 			}
@@ -1726,13 +1742,14 @@ class StateManager {
 			const modIDs = [...this.track.selected]
 			if ( modIDs.length === 0 ) { return }
 			MA.byId('moveButton_disable').clsDisable()
+			this.track.pendingSearchFocus = true
 			try {
 				const result = await window.main_IPC.files.disableSelected(modIDs)
 				MA.alert(`Disabled ${result.disabled} mod(s); ${result.failed} could not be disabled.`)
 				this.track.selected.clear()
 				this.forceSelectOnly(false)
-				window.main_IPC.folder.reload()
 			} catch (err) {
+				this.track.pendingSearchFocus = false
 				MA.alert(`Disable failed: ${err.message}`)
 				this.doSideBar()
 			}
@@ -2616,9 +2633,11 @@ class LoaderLib {
 		const thisCount   = inMB ? await DATA.bytesToMB(count, false) : count
 		const thisElement = MA.byId('loadOverlay_statusCurrent')
 		const thisProg    = MA.byId('loadOverlay_statusProgBarInner')
+		const thisProgLabel = MA.byId('loadOverlay_statusProgBarLabel')
 		const thisPercent = `${Math.max(Math.ceil((count / this.lastTotal) * 100), 0)}%`
 	
 		if ( thisProg !== null ) { thisProg.style.width = thisPercent }
+		if ( thisProgLabel !== null ) { thisProgLabel.textContent = `${thisCount} / ${MA.byId('loadOverlay_statusTotal')?.textContent ?? this.lastTotal}` }
 	
 		if ( thisElement !== null ) { thisElement.innerHTML = thisCount }
 	
@@ -2641,6 +2660,7 @@ class LoaderLib {
 		MA.byIdHTML('loadOverlay_statusDetail', subTitle)
 		MA.byIdText('loadOverlay_statusTotal', '0')
 		MA.byIdText('loadOverlay_statusCurrent', '0')
+		MA.byIdText('loadOverlay_statusProgBarLabel', '')
 		MA.byIdHTML('loadOverlay_downloadCancelButton', dlCancel)
 	
 		MA.byId('loadOverlay_statusCount').clsShow()
@@ -2655,6 +2675,7 @@ class LoaderLib {
 		if ( inMB ) { this.startTime = Date.now() }
 		const thisCount   = inMB ? await DATA.bytesToMB(count) : count
 		MA.byIdText('loadOverlay_statusTotal', thisCount)
+		MA.byIdText('loadOverlay_statusProgBarLabel', `0 / ${thisCount}`)
 		this.lastTotal = ( count < 1 ) ? 1 : count
 	}
 }
