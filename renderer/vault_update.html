@@ -34,6 +34,23 @@
 		.vault-update-filter-chips {
 			min-height: 1.7rem;
 		}
+		.vault-no-source-dialog {
+			width: min(92vw, 52rem);
+			max-height: 86vh;
+			padding: 1rem;
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			color: var(--bs-body-color);
+		}
+		.vault-no-source-dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
+		.vault-no-source-list {
+			max-height: 58vh;
+			overflow-y: auto;
+		}
+		.vault-no-source-row {
+			cursor: context-menu;
+		}
 	</style>
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
@@ -83,10 +100,10 @@
 				</div>
 				<div class="col-12 col-md-4">
 					<label class="form-label small" for="vaultUpdateProfileSelect">Update profile</label>
-					<select class="form-select form-select-sm" id="vaultUpdateProfileSelect">
+					<select class="form-select form-select-sm" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileSelect" title="Load a saved set of Vault update filters. Profiles store tags, Any/All modes, collection, state, review filters, ignored setting, and sort order.">
 						<option value="">No saved profile</option>
 					</select>
-					<input class="form-control form-control-sm mt-1" id="vaultUpdateProfileName" maxlength="60" placeholder="Profile name to save" type="text">
+					<input class="form-control form-control-sm mt-1" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileName" maxlength="60" placeholder="Profile name to save" title="Type a new name to save the current filters, or select an existing profile and save again to update it." type="text">
 				</div>
 				<div class="col-12 col-md-4">
 					<label class="form-label small" for="vaultUpdateSortFilter">Sort by</label>
@@ -105,9 +122,22 @@
 						<option value="">All collections</option>
 					</select>
 				</div>
+				<div class="col-12 col-md-4">
+					<label class="form-label small" for="vaultUpdateStateFilter">Update state</label>
+					<select class="form-select form-select-sm vault-update-filter-input" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateStateFilter" title="Filter the scanned update list by whether an item is ready, needs review, requires manual download, or has a remote package mismatch.">
+						<option selected value="">All states</option>
+						<option value="ready">Ready to download</option>
+						<option value="review">Needs review</option>
+						<option value="manual">Manual download only</option>
+						<option value="packageMismatch">Package mismatch</option>
+					</select>
+				</div>
 				<div class="col-12 col-md-4 d-flex gap-2 align-items-end">
-					<button class="btn btn-sm btn-outline-info w-100" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileSave" title="Save the current collection, custom tags, auto tags, Any/All modes, ignored setting, review filters, and sort order under the typed profile name." type="button">Save profile</button>
+					<button class="btn btn-sm btn-outline-info w-100" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileSave" title="Save the current collection, custom tags, auto tags, Any/All modes, ignored setting, update state, review filters, and sort order under the typed profile name." type="button">Save profile</button>
 					<button class="btn btn-sm btn-outline-danger w-100" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateProfileDelete" title="Delete the currently selected saved profile." type="button">Delete profile</button>
+				</div>
+				<div class="col-12 col-md-4 d-flex align-items-end">
+					<button class="btn btn-sm btn-outline-secondary w-100 vault-update-filter-input" data-bs-placement="bottom" data-bs-toggle="tooltip" id="vaultUpdateClearFilters" title="Reset the Vault Updates filters to the default view. Saved profiles are not deleted." type="button">Clear filters</button>
 				</div>
 				<div class="col-12 col-md-4 d-flex align-items-end" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Off: hide Vault mods tagged to ignore updates and skip them during scans. On: include ignored mods so you can review or scan them anyway.">
 					<div class="form-check form-switch">
@@ -148,6 +178,7 @@
 					<div class="border rounded p-2 h-100">
 						<div class="small text-body-secondary">No supported source</div>
 						<div class="fs-5 fw-bold" id="vaultUpdateNoSourceSkipped">0</div>
+						<button class="btn btn-sm btn-outline-info mt-1 w-100" disabled id="vaultUpdateReviewNoSource" title="Review Vault mods that matched the current filters but cannot be checked because they have no ModHub or GitHub update source." type="button">Review</button>
 					</div>
 				</div>
 			</div>
@@ -155,9 +186,11 @@
 		<div class="mx-2 mb-3 d-none" id="vaultUpdateSelectionControls">
 			<div class="btn-group w-100">
 				<button class="btn btn-outline-success" type="button" id="vaultUpdatesSelectAll">Select All</button>
+				<button class="btn btn-outline-info" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Select only visible updates that are ready to download without review warnings." type="button" id="vaultUpdatesSelectReady">Select Ready</button>
 				<button class="btn btn-outline-secondary" type="button" id="vaultUpdatesSelectNone">Select None</button>
 				<button class="btn btn-secondary disabled" type="button" id="vaultUpdatesSelectedCount">Selected: 0</button>
 			</div>
+			<div class="alert alert-dark mt-2 mb-0" id="vaultUpdateStateSummary">Visible updates: 0.</div>
 			<div class="form-check form-switch mt-2">
 				<input class="form-check-input" type="checkbox" id="vaultNeedsReviewOnly">
 				<label class="form-check-label" for="vaultNeedsReviewOnly">Needs review only</label>
@@ -185,11 +218,29 @@
 						<input class="form-check-input vault-review-reason-filter" type="checkbox" value="sourceMismatch" id="vaultReviewSourceMismatch">
 						<label class="form-check-label" for="vaultReviewSourceMismatch">Source mismatch risk</label>
 					</div>
+					<div class="form-check">
+						<input class="form-check-input vault-review-reason-filter" type="checkbox" value="packageMismatch" id="vaultReviewPackageMismatch">
+						<label class="form-check-label" for="vaultReviewPackageMismatch">Package mismatch</label>
+					</div>
 				</div>
 			</div>
 		</div>
 	<div class="alert alert-secondary mx-2" id="vaultUpdateSelection">0 update(s) selected. Downloads are stored in the Vault only.</div>
+	<div class="mx-2 mb-3 d-none" id="vaultDownloadResults"></div>
 	<div class="list-group mx-2 my-3" id="vaultUpdateList"></div>
 	</div>
+	<dialog class="vault-no-source-dialog" id="vaultNoSourceDialog">
+		<div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+			<div>
+				<h2 class="h4 mb-1">No supported update source</h2>
+				<div class="small text-body-secondary" id="vaultNoSourceSummary">0 Vault mods need review.</div>
+			</div>
+			<button class="btn btn-sm btn-outline-secondary" id="vaultNoSourceClose" type="button">Close</button>
+		</div>
+		<div class="alert alert-info small">
+			These Vault mods matched the current filters, but the updater could not find a ModHub ID or GitHub source. Right-click a row to open its details window and update the Source URL if needed.
+		</div>
+		<div class="list-group vault-no-source-list" id="vaultNoSourceList"></div>
+	</dialog>
 </body>
 </html>

@@ -19,6 +19,11 @@ let vaultSourceFilter = ''
 let vaultHealthFilter = ''
 let vaultSelectedHashes = new Set()
 let vaultGroupRows = new Map()
+const VAULT_RENDER_BATCH_SIZE = 250
+let vaultFilteredGroups = []
+let vaultVisibleGroupLimit = VAULT_RENDER_BATCH_SIZE
+let vaultRenderSequence = 0
+let vaultFilterRenderTimer = null
 let vaultBusyDepth = 0
 let vaultInteractionLockDepth = 0
 let vaultLockedControls = []
@@ -752,7 +757,7 @@ function healthFilterLabel(filter) {
 function setHealthFilter(filter, shouldRender = true) {
 	vaultHealthFilter = filter
 	updateHealthFilterButtons()
-	if ( shouldRender ) { renderVault(filterEntries()) }
+	if ( shouldRender ) { renderFilteredVault() }
 }
 
 function fragmentToHTML(fragment) {
@@ -761,9 +766,13 @@ function fragmentToHTML(fragment) {
 	return wrapper.innerHTML
 }
 
+function nextFrame() {
+	return new Promise((resolve) => { requestAnimationFrame(resolve) })
+}
+
 function modIconHTML(icon) {
 	const iconSource = DATA.escapeSpecial(DATA.iconMaker(icon))
-	return `<img alt="" class="vault-mod-logo" src="${iconSource}">`
+	return `<img alt="" class="vault-mod-logo" decoding="async" src="${iconSource}">`
 }
 
 function storePreviewIconSource(icon) {
@@ -792,7 +801,7 @@ function storeItemPreviewHTML(previews, maxItems = 6) {
 	const imageHTML = gallery.slice(0, maxItems).map((preview, index) => {
 		const iconSource = DATA.escapeSpecial(storePreviewIconSource(preview.icon))
 		const title = DATA.escapeSpecial(preview.name || 'Store item')
-		return `<button type="button" class="vault-store-preview-button" data-vault-preview-index="${index}" title="Open preview: ${title}"><img alt="" src="${iconSource}"></button>`
+		return `<button type="button" class="vault-store-preview-button" data-vault-preview-index="${index}" title="Open preview: ${title}"><img alt="" decoding="async" src="${iconSource}"></button>`
 	})
 	const remaining = gallery.length - maxItems
 	if ( remaining > 0 ) {
@@ -967,6 +976,12 @@ function pruneVaultSelection() {
 
 function enableTooltips(parent) {
 	for ( const element of parent.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		new bootstrap.Tooltip(element)
+	}
+}
+
+function enableTooltipElements(elements) {
+	for ( const element of elements ) {
 		new bootstrap.Tooltip(element)
 	}
 }
@@ -1156,6 +1171,39 @@ function filterEntries() {
 	).sort((left, right) => compareVaultGroups(left, right, sortMode))
 }
 
+function displayedVaultGroups() {
+	return vaultFilteredGroups.slice(0, Math.min(vaultVisibleGroupLimit, vaultFilteredGroups.length))
+}
+
+async function renderFilteredVault({ keepVisibleLimit = false } = {}) {
+	if ( !keepVisibleLimit ) { vaultVisibleGroupLimit = VAULT_RENDER_BATCH_SIZE }
+	await renderVault(filterEntries(), { keepVisibleLimit })
+}
+
+function scheduleFilteredVaultRender() {
+	window.clearTimeout(vaultFilterRenderTimer)
+	vaultFilterRenderTimer = window.setTimeout(() => {
+		vaultFilterRenderTimer = null
+		renderFilteredVault()
+	}, 150)
+}
+
+async function showMoreVaultGroups() {
+	const renderSequence = vaultRenderSequence
+	const oldLimit = Math.min(vaultVisibleGroupLimit, vaultFilteredGroups.length)
+	const button = MA.byId('vaultShowMore')
+	button.disabled = true
+	vaultVisibleGroupLimit += VAULT_RENDER_BATCH_SIZE
+	try {
+		const appended = await appendVaultGroups(oldLimit, Math.min(vaultVisibleGroupLimit, vaultFilteredGroups.length), renderSequence)
+		if ( !appended ) { return }
+		updateVaultDisplayStatus()
+		updateVaultSelectionControls()
+	} finally {
+		button.disabled = displayedVaultGroups().length >= vaultFilteredGroups.length
+	}
+}
+
 function setSourceFilter(sourceType, shouldRender = true) {
 	vaultSourceFilter = sourceType
 	for ( const button of MA.byId('vaultSourceFilter').querySelectorAll('button[data-source]') ) {
@@ -1163,7 +1211,7 @@ function setSourceFilter(sourceType, shouldRender = true) {
 		button.classList.toggle('active', isActive)
 		button.setAttribute('aria-pressed', isActive.toString())
 	}
-	if ( shouldRender ) { renderVault(filterEntries()) }
+	if ( shouldRender ) { renderFilteredVault() }
 }
 
 function clearQuickFilters(shouldRender = true) {
@@ -1174,7 +1222,7 @@ function clearQuickFilters(shouldRender = true) {
 	MA.byId('vaultRollbackFilter').value = ''
 	MA.byId('vaultUpdateFilter').value = ''
 	MA.byId('vaultSortFilter').value = 'name-asc'
-	if ( shouldRender ) { renderVault(filterEntries()) }
+	if ( shouldRender ) { renderFilteredVault() }
 }
 
 function clearAdvancedFilters(shouldRender = true) {
@@ -1188,14 +1236,14 @@ function clearAdvancedFilters(shouldRender = true) {
 	MA.byId('vaultStoreItemTypeFilter').value = ''
 	MA.byId('vaultUpdatedFilter').value = ''
 	setSourceFilter('', false)
-	if ( shouldRender ) { renderVault(filterEntries()) }
+	if ( shouldRender ) { renderFilteredVault() }
 }
 
 function clearAllFilters() {
 	clearQuickFilters(false)
 	clearAdvancedFilters(false)
 	setHealthFilter('', false)
-	renderVault(filterEntries())
+	renderFilteredVault()
 }
 
 function bindCollapseToggle(panelID, buttonID, focusID = null) {
@@ -1298,6 +1346,7 @@ async function ensureVaultGroupRows(body) {
 
 	body.dataset.loading = 'true'
 	body.innerHTML = '<div class="text-body-secondary p-3">Loading stored ZIP details...</div>'
+	await nextFrame()
 	const rows = await renderFileRows(groupData.entries, groupData.groupIndex, groupData.customTags)
 	if ( !body.isConnected ) { return }
 	body.innerHTML = rows
@@ -1467,98 +1516,127 @@ async function updateVaultRetentionCount(event) {
 	}
 }
 
-async function renderVault(groups) {
+async function renderVaultGroup(group, groupIndex) {
+	const totalSize = await DATA.bytesToHR(group.totalSize)
+	const groupBodyId = `vaultGroup_${groupIndex}`
+	const noteBodyId = `vaultNote_${groupIndex}`
+	const tagsBodyId = `vaultTags_${groupIndex}`
+	const versionText = group.versions.length === 0 ?
+		'No version metadata recorded' :
+		`${group.versions.length} version label${group.versions.length === 1 ? '' : 's'} recorded`
+	const gameText = group.gameLabels.length === 0 ?
+		'Game: unknown' :
+		`Game: ${group.gameLabels.join(', ')}`
+	const lastUpdatedText = group.updatedTime === 0 ?
+		'Last Vault updated: not recorded' :
+		`Last Vault updated: ${formatTimestamp(group.updatedTime)}`
+	const modHubReleased = newestDateLabel(group.modHubReleasedDates)
+	const modHubReleasedText = modHubReleased === '' ?
+		'ModHub released: not recorded' :
+		`ModHub released: ${modHubReleased}`
+	const node = DATA.templateEngine('vault_line', {
+		fileCount      : DATA.escapeSpecial(`${group.entries.length} stored ZIP file${group.entries.length === 1 ? '' : 's'}`),
+		fileRows       : '',
+		gameSummary    : DATA.escapeSpecial(gameText),
+		lastUpdated    : DATA.escapeSpecial(lastUpdatedText),
+		modHubReleased : DATA.escapeSpecial(modHubReleasedText),
+		modIcon        : modIconHTML(group.modIcon),
+		modName        : DATA.escapeSpecial(group.modName),
+		storeItemPreviews : storeItemPreviewHTML(group.storeItemPreviews, 6),
+		totalSize      : DATA.escapeSpecial(totalSize),
+		versionSummary : DATA.escapeSpecial(versionText),
+	})
+	const nodeRoot = node.querySelector('.vault-group-row')
+	node.querySelector('.vault-group-toggle').setAttribute('data-bs-toggle', 'collapse')
+	node.querySelector('.vault-group-toggle').setAttribute('data-bs-target', `#${groupBodyId}`)
+	node.querySelector('.vault-group-body').id = groupBodyId
+	vaultGroupRows.set(groupBodyId, { customTags : group.customTags, entries : group.entries, groupIndex })
+	nodeRoot.dataset.collections = JSON.stringify(group.collections)
+	nodeRoot.dataset.fileName = group.entries[0]?.fileName ?? ''
+	nodeRoot.dataset.hash = group.entries[0]?.hash ?? ''
+	nodeRoot.dataset.modName = group.modName
+	nodeRoot.title = 'Right-click for mod actions.'
+	const noteToggle = node.querySelector('.vault-note-toggle')
+	const notePanel = node.querySelector('.vault-note-panel')
+	const noteInput = node.querySelector('.vault-note-input')
+	const notePreview = node.querySelector('.vault-note-preview')
+	const noteBadge = node.querySelector('.vault-note-badge')
+	const tagsToggle = node.querySelector('.vault-tags-toggle')
+	const tagsPanel = node.querySelector('.vault-tags-panel')
+	noteToggle.setAttribute('data-bs-toggle', 'collapse')
+	noteToggle.setAttribute('data-bs-target', `#${noteBodyId}`)
+	noteToggle.textContent = group.note === '' ? 'Add note' : 'Edit note'
+	notePanel.id = noteBodyId
+	noteInput.value = group.note
+	notePreview.textContent = group.note
+	for ( const button of node.querySelectorAll('.vault-note-save, .vault-note-clear') ) {
+		button.dataset.modName = group.modName
+	}
+	tagsToggle.setAttribute('data-bs-toggle', 'collapse')
+	tagsToggle.setAttribute('data-bs-target', `#${tagsBodyId}`)
+	tagsPanel.id = tagsBodyId
+	for ( const button of node.querySelectorAll('.vault-tags-save, .vault-tags-clear') ) {
+		button.dataset.modName = group.modName
+	}
+	renderVaultTags(nodeRoot, group.customTags)
+	if ( group.note !== '' ) {
+		noteBadge.classList.remove('d-none')
+		notePreview.classList.remove('d-none')
+	} else {
+		node.querySelector('.vault-note-clear').disabled = true
+	}
+	return node
+}
+
+function updateVaultDisplayStatus() {
+	const visibleGroups = displayedVaultGroups()
+	const shownFileCount = visibleGroups.reduce((sum, group) => sum + group.entries.length, 0)
+	const totalFileCount = vaultFilteredGroups.reduce((sum, group) => sum + group.entries.length, 0)
+	const hiddenGroupCount = vaultFilteredGroups.length - visibleGroups.length
+	const hasHiddenGroups = hiddenGroupCount > 0
+	MA.byIdText(
+		'vaultStatus',
+		hasHiddenGroups ?
+			`${visibleGroups.length} of ${vaultFilteredGroups.length} matching mod${vaultFilteredGroups.length === 1 ? '' : 's'} shown, containing ${shownFileCount} of ${totalFileCount} stored ZIP file${totalFileCount === 1 ? '' : 's'}.` :
+			`${vaultFilteredGroups.length} mod${vaultFilteredGroups.length === 1 ? '' : 's'} shown, containing ${shownFileCount} stored ZIP file${shownFileCount === 1 ? '' : 's'}.`
+	)
+	MA.byId('vaultShowMoreWrap').classList.toggle('d-none', !hasHiddenGroups)
+	MA.byId('vaultShowMore').disabled = !hasHiddenGroups
+	MA.byIdText('vaultShowMoreStatus', hasHiddenGroups ? `${hiddenGroupCount} matching mod${hiddenGroupCount === 1 ? '' : 's'} not displayed yet.` : '')
+}
+
+async function appendVaultGroups(startIndex, endIndex, expectedRenderSequence = null) {
+	const groups = vaultFilteredGroups.slice(startIndex, endIndex)
+	const nodes = await Promise.all(groups.map((group, offset) => renderVaultGroup(group, startIndex + offset)))
+	if ( expectedRenderSequence !== null && expectedRenderSequence !== vaultRenderSequence ) { return false }
 	const list = MA.byId('vaultList')
-	list.innerHTML = ''
+	const tooltipElements = []
+	for ( const node of nodes ) {
+		tooltipElements.push(...node.querySelectorAll('[data-bs-toggle="tooltip"]'))
+		list.appendChild(node)
+	}
+	enableTooltipElements(tooltipElements)
+	return true
+}
+
+async function renderVault(groups, { keepVisibleLimit = false } = {}) {
+	const renderSequence = ++vaultRenderSequence
+	vaultFilteredGroups = groups
+	if ( !keepVisibleLimit ) { vaultVisibleGroupLimit = VAULT_RENDER_BATCH_SIZE }
+
+	MA.byId('vaultList').innerHTML = ''
 	vaultGroupRows = new Map()
+	MA.byId('vaultShowMoreWrap').classList.add('d-none')
+	MA.byId('vaultShowMore').disabled = true
 
 	if ( groups.length === 0 ) {
 		MA.byIdText('vaultStatus', vaultEntries.length === 0 ? 'No mod vault entries found.' : 'No matching vault entries found.')
 		return
 	}
 
-	const shownFileCount = groups.reduce((sum, group) => sum + group.entries.length, 0)
-	MA.byIdText(
-		'vaultStatus',
-		`${groups.length} mod${groups.length === 1 ? '' : 's'} shown, containing ${shownFileCount} stored ZIP file${shownFileCount === 1 ? '' : 's'}.`
-	)
-
-	const nodes = await Promise.all(groups.map(async (group, groupIndex) => {
-		const totalSize = await DATA.bytesToHR(group.totalSize)
-		const groupBodyId = `vaultGroup_${groupIndex}`
-		const noteBodyId = `vaultNote_${groupIndex}`
-		const tagsBodyId = `vaultTags_${groupIndex}`
-		const versionText = group.versions.length === 0 ?
-			'No version metadata recorded' :
-			`${group.versions.length} version label${group.versions.length === 1 ? '' : 's'} recorded`
-		const gameText = group.gameLabels.length === 0 ?
-			'Game: unknown' :
-			`Game: ${group.gameLabels.join(', ')}`
-		const lastUpdatedText = group.updatedTime === 0 ?
-			'Last Vault updated: not recorded' :
-			`Last Vault updated: ${formatTimestamp(group.updatedTime)}`
-		const modHubReleased = newestDateLabel(group.modHubReleasedDates)
-		const modHubReleasedText = modHubReleased === '' ?
-			'ModHub released: not recorded' :
-			`ModHub released: ${modHubReleased}`
-		const node = DATA.templateEngine('vault_line', {
-			fileCount      : DATA.escapeSpecial(`${group.entries.length} stored ZIP file${group.entries.length === 1 ? '' : 's'}`),
-			fileRows       : '',
-			gameSummary    : DATA.escapeSpecial(gameText),
-			lastUpdated    : DATA.escapeSpecial(lastUpdatedText),
-			modHubReleased : DATA.escapeSpecial(modHubReleasedText),
-			modIcon        : modIconHTML(group.modIcon),
-			modName        : DATA.escapeSpecial(group.modName),
-			storeItemPreviews : storeItemPreviewHTML(group.storeItemPreviews, 6),
-			totalSize      : DATA.escapeSpecial(totalSize),
-			versionSummary : DATA.escapeSpecial(versionText),
-		})
-		const nodeRoot = node.querySelector('.vault-group-row')
-		node.querySelector('.vault-group-toggle').setAttribute('data-bs-toggle', 'collapse')
-		node.querySelector('.vault-group-toggle').setAttribute('data-bs-target', `#${groupBodyId}`)
-		node.querySelector('.vault-group-body').id = groupBodyId
-		vaultGroupRows.set(groupBodyId, { customTags : group.customTags, entries : group.entries, groupIndex })
-		nodeRoot.dataset.collections = JSON.stringify(group.collections)
-		nodeRoot.dataset.fileName = group.entries[0]?.fileName ?? ''
-		nodeRoot.dataset.hash = group.entries[0]?.hash ?? ''
-		nodeRoot.dataset.modName = group.modName
-		nodeRoot.title = 'Right-click for mod actions.'
-		const noteToggle = node.querySelector('.vault-note-toggle')
-		const notePanel = node.querySelector('.vault-note-panel')
-		const noteInput = node.querySelector('.vault-note-input')
-		const notePreview = node.querySelector('.vault-note-preview')
-		const noteBadge = node.querySelector('.vault-note-badge')
-		const tagsToggle = node.querySelector('.vault-tags-toggle')
-		const tagsPanel = node.querySelector('.vault-tags-panel')
-		noteToggle.setAttribute('data-bs-toggle', 'collapse')
-		noteToggle.setAttribute('data-bs-target', `#${noteBodyId}`)
-		noteToggle.textContent = group.note === '' ? 'Add note' : 'Edit note'
-		notePanel.id = noteBodyId
-		noteInput.value = group.note
-		notePreview.textContent = group.note
-		for ( const button of node.querySelectorAll('.vault-note-save, .vault-note-clear') ) {
-			button.dataset.modName = group.modName
-		}
-		tagsToggle.setAttribute('data-bs-toggle', 'collapse')
-		tagsToggle.setAttribute('data-bs-target', `#${tagsBodyId}`)
-		tagsPanel.id = tagsBodyId
-		for ( const button of node.querySelectorAll('.vault-tags-save, .vault-tags-clear') ) {
-			button.dataset.modName = group.modName
-		}
-		renderVaultTags(nodeRoot, group.customTags)
-		if ( group.note !== '' ) {
-			noteBadge.classList.remove('d-none')
-			notePreview.classList.remove('d-none')
-		} else {
-			node.querySelector('.vault-note-clear').disabled = true
-		}
-		return node
-	}))
-
-	for ( const node of nodes ) {
-		list.appendChild(node)
-	}
-	enableTooltips(list)
+	const appended = await appendVaultGroups(0, displayedVaultGroups().length, renderSequence)
+	if ( !appended ) { return }
+	updateVaultDisplayStatus()
 	updateVaultSelectionControls()
 }
 
@@ -1572,7 +1650,7 @@ async function loadVault() {
 		vaultCollections = collections
 		await updateVaultSummary(vault)
 		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await renderFilteredVault()
 	} finally {
 		endVaultBusy()
 	}
@@ -1642,6 +1720,54 @@ async function moveVaultFolder() {
 		)
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault move failed: ${err.message}`)
+	} finally {
+		endVaultBusy()
+		setVaultInteractionLocked(false)
+		setButtonState(button, false, originalText)
+	}
+}
+
+async function wipeVaultForTesting() {
+	const confirmed = MA.confirm([
+		'Wipe the Mod Vault for testing?',
+		'',
+		'This deletes all managed Vault ZIP copies, Vault records, notes, custom tags, ModHub metadata, and cached update-check data.',
+		'',
+		'Your configured Vault folder location and monitored collections will not be removed.',
+	].join('\n'))
+	if ( !confirmed ) {
+		MA.byIdText('vaultStatus', 'Vault wipe cancelled. Nothing was changed.')
+		return
+	}
+
+	const finalConfirmed = MA.confirm([
+		'Final confirmation.',
+		'',
+		'Click OK to wipe the Vault now.',
+		'Click Cancel to leave every Vault file and record untouched.',
+	].join('\n'))
+	if ( !finalConfirmed ) {
+		MA.byIdText('vaultStatus', 'Vault wipe cancelled. Nothing was changed.')
+		return
+	}
+
+	const button = MA.byId('vaultWipeForTesting')
+	const originalText = button.textContent
+	setButtonState(button, true, 'Wiping...')
+	setVaultInteractionLocked(true)
+	MA.byIdText('vaultStatus', 'Wiping the Mod Vault for testing...')
+	beginVaultBusy('Wiping Vault...', null)
+	try {
+		const result = await window.vault_IPC.wipeForTesting()
+		if ( !result.ok ) {
+			MA.byIdText('vaultStatus', `Vault wipe failed: ${result.error ?? 'Unknown error'}`)
+			return
+		}
+		vaultSelectedHashes.clear()
+		await loadVault()
+		MA.byIdText('vaultStatus', `Vault wiped for testing. Removed ${result.records} Vault record${result.records === 1 ? '' : 's'} and cleared managed Vault files from ${result.filesFolder}.`)
+	} catch (err) {
+		MA.byIdText('vaultStatus', `Vault wipe failed: ${err.message}`)
 	} finally {
 		endVaultBusy()
 		setVaultInteractionLocked(false)
@@ -1739,7 +1865,7 @@ async function saveVaultNote(button, shouldClear = false) {
 		group.querySelector('.vault-note-status').textContent = savedNote === '' ? 'Note cleared.' : 'Note saved.'
 		MA.byIdText('vaultStatus', savedNote === '' ? `Cleared the note for ${modName}.` : `Saved the note for ${modName}.`)
 		if ( MA.byId('vaultNoteFilter').value !== '' ) {
-			await renderVault(filterEntries())
+			await renderFilteredVault({ keepVisibleLimit : true })
 		}
 	} catch (err) {
 		group.querySelector('.vault-note-status').textContent = `Note could not be saved: ${err.message}`
@@ -1873,7 +1999,7 @@ async function saveVaultTags(button, shouldClear = false) {
 		MA.byIdText('vaultStatus', savedTags.length === 0 ? `Cleared custom tags for ${modName}.` : `Saved custom tags for ${modName}.`)
 		refreshFilterOptions()
 		if ( MA.byId('vaultTextFilter').value.trim() !== '' || MA.byId('vaultTagFilter').value !== '' ) {
-			await renderVault(filterEntries())
+			await renderFilteredVault({ keepVisibleLimit : true })
 		}
 	} catch (err) {
 		status.textContent = `Tags could not be saved: ${err.message}`
@@ -2044,7 +2170,7 @@ async function setVaultKeepPinned(button) {
 		vaultCleanup = result.cleanup ?? vaultCleanup
 		await renderCleanupPanel()
 		refreshFilterOptions()
-		await renderVault(filterEntries())
+		await renderFilteredVault({ keepVisibleLimit : true })
 		restoreVaultViewState(viewState)
 		const entryName = result.entry?.fileName ?? vaultEntries[entryIndex]?.fileName ?? 'Vault ZIP'
 		MA.byIdText('vaultStatus', keepPinned ? `${entryName} is now kept and protected from cleanup.` : `${entryName} is no longer manually kept.`)
@@ -2194,7 +2320,7 @@ async function copySelectedVaultEntries() {
 }
 
 function setShownVaultSelection(shouldSelect) {
-	const shownHashes = filterEntries().flatMap((group) => group.entries.map((entry) => entry.hash)).filter((hash) => typeof hash === 'string' && hash !== '')
+	const shownHashes = displayedVaultGroups().flatMap((group) => group.entries.map((entry) => entry.hash)).filter((hash) => typeof hash === 'string' && hash !== '')
 	for ( const hash of shownHashes ) {
 		if ( shouldSelect ) {
 			vaultSelectedHashes.add(hash)
@@ -2297,6 +2423,14 @@ async function deleteSelectedUnusedVaultFiles() {
 	}
 }
 
+function updateVaultBackToTopVisibility() {
+	MA.byId('vaultBackToTop').classList.toggle('d-none', window.scrollY < 600)
+}
+
+function scrollVaultToTop() {
+	window.scrollTo({ behavior : 'smooth', top : 0 })
+}
+
 window.addEventListener('DOMContentLoaded', () => {
 	window.vault_IPC.receive('vault:contextResult', handleVaultContextResult)
 	window.vault_IPC.receive('vault:progress', handleVaultProgress)
@@ -2374,26 +2508,26 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 		updateVaultSelectionControls()
 	})
-	MA.byId('vaultTextFilter').addEventListener('input', () => { renderVault(filterEntries()) })
-	MA.byId('vaultAuthorFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultTypeFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultBrandFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultTagFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultTextFilter').addEventListener('input', scheduleFilteredVaultRender)
+	MA.byId('vaultAuthorFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultTypeFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultBrandFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultTagFilter').addEventListener('change', () => { renderFilteredVault() })
 	MA.byId('vaultGameVersionFilter').addEventListener('change', () => {
 		vaultGameVersionUserSelected = true
 		loadVaultPreservingView()
 	})
-	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultHorsepowerFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultPriceFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultStoreItemTypeFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultUpdateFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultUpdatedFilter').addEventListener('change', () => { renderVault(filterEntries()) })
-	MA.byId('vaultSortFilter').addEventListener('change', () => { renderVault(filterEntries()) })
+	MA.byId('vaultNoteFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultRollbackFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultHorsepowerFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultPriceFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultStoreItemTypeFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultUpdateFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultUpdatedFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultSortFilter').addEventListener('change', () => { renderFilteredVault() })
 	MA.byId('vaultSourceFilter').addEventListener('click', (event) => {
 		const sourceButton = event.target.closest('button[data-source]')
 		if ( sourceButton !== null ) { setSourceFilter(sourceButton.dataset.source) }
@@ -2409,6 +2543,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultRefreshModHub').addEventListener('click', refreshModHubCategories)
 	MA.byId('vaultOpenFolder').addEventListener('click', openVaultFolder)
 	MA.byId('vaultMoveFolder').addEventListener('click', moveVaultFolder)
+	MA.byId('vaultWipeForTesting').addEventListener('click', wipeVaultForTesting)
 	MA.byId('vaultCleanupList').addEventListener('change', (event) => {
 		if ( event.target.closest('.vault-cleanup-check') !== null ) { updateCleanupSelectionPreview() }
 	})
@@ -2418,6 +2553,10 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultBulkCopyButton').addEventListener('click', copySelectedVaultEntries)
 	MA.byId('vaultSelectShown').addEventListener('click', () => { setShownVaultSelection(true) })
 	MA.byId('vaultSelectNone').addEventListener('click', () => { setShownVaultSelection(false) })
+	MA.byId('vaultShowMore').addEventListener('click', showMoreVaultGroups)
+	MA.byId('vaultBackToTop').addEventListener('click', scrollVaultToTop)
+	window.addEventListener('scroll', updateVaultBackToTopVisibility, { passive : true })
 	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.vault_IPC.dispatchModManagement() })
+	updateVaultBackToTopVisibility()
 	loadVault()
 })
