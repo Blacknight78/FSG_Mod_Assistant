@@ -14,6 +14,19 @@ window.addEventListener('DOMContentLoaded', () => {
 	window.state = new windowState()
 })
 
+function normalizeStoreInfo(storeInfo) {
+	const safeStoreInfo = typeof storeInfo === 'object' && storeInfo !== null ? storeInfo : {}
+	return {
+		...safeStoreInfo,
+		brands     : typeof safeStoreInfo.brands === 'object' && safeStoreInfo.brands !== null ? safeStoreInfo.brands : {},
+		icon       : typeof safeStoreInfo.icon === 'object' && safeStoreInfo.icon !== null ? safeStoreInfo.icon : {},
+		items      : typeof safeStoreInfo.items === 'object' && safeStoreInfo.items !== null ? safeStoreInfo.items : {},
+		l10n       : typeof safeStoreInfo.l10n === 'object' && safeStoreInfo.l10n !== null ? safeStoreInfo.l10n : { en : {} },
+		placeables : typeof safeStoreInfo.placeables === 'object' && safeStoreInfo.placeables !== null ? safeStoreInfo.placeables : {},
+		vehicles   : typeof safeStoreInfo.vehicles === 'object' && safeStoreInfo.vehicles !== null ? safeStoreInfo.vehicles : {},
+	}
+}
+
 // MARK: PAGE STATE CLASS
 class windowState {
 	locale     = 'en'
@@ -37,9 +50,13 @@ class windowState {
 		this.i18nUnits = await window.settings.units()
 
 		window.detail_IPC.getMod(this.modColUUID).then(async (thisResponse) => {
-			this.mod       = thisResponse[0]
-			this.storeInfo = thisResponse[1]
+			this.mod       = Array.isArray(thisResponse) ? thisResponse[0] : null
+			this.storeInfo = normalizeStoreInfo(Array.isArray(thisResponse) ? thisResponse[1] : null)
 			this.#resetDynamicPage()
+			if ( this.mod === null ) {
+				this.#showDetailError('The selected mod could not be found. Refresh the mod list and try again.')
+				return
+			}
 
 			I18N.local_entries = this.storeInfo.l10n[this.locale] || this.storeInfo.l10n.en || {}
 
@@ -102,6 +119,7 @@ class windowState {
 				})
 			}
 		}).catch((err) => {
+			this.#showDetailError(`The selected mod details could not be loaded: ${err.message}`)
 			window.log.error('page build error',  err.message, `\n${err.stack}`)
 		})
 
@@ -131,6 +149,16 @@ class windowState {
 		MA.byId('rollback_latest_update')?.clsHide()
 		MA.byId('rollback_versions')?.clsHide()
 		MA.byIdHTML('rollback_versions', '')
+	}
+
+	#showDetailError(message) {
+		MA.byIdText('title', 'Mod details unavailable')
+		MA.byIdText('mod_location', message)
+		MA.byId('problem_div')?.clsHide()
+		MA.byId('desc_div')?.clsHide()
+		MA.byId('depend_div')?.clsHide()
+		MA.byId('detail_div')?.clsHide()
+		MA.byId('loading-spinner')?.clsHide()
 	}
 
 	// MARK: crops
@@ -245,6 +273,7 @@ class windowState {
 				`<em>${I18N.defer(this.mod.modHub.id === null ? 'mh_norecord' : 'mh_unknown', false )}</em>`,
 			mod_author     : this.#authorHTML(sourceURL),
 			mod_collection : `${I18N.defer('detail_mod_collection', false)}: ${DATA.escapeSpecial(collectionName ?? this.mod.currentCollection)}`,
+			mod_filename   : this.#actualFileName(),
 			mod_location   : this.mod.fileDetail.fullPath,
 			modhub_status  : this.#modHubStatusHTML(),
 			store_items    : DATA.checkX(this.mod.modDesc.storeItems),
@@ -367,6 +396,16 @@ class windowState {
 		}
 
 		return safeAuthor
+	}
+
+	#actualFileName() {
+		const vaultFileName = this.mod.detailContext?.vaultFileName
+		if ( typeof vaultFileName === 'string' && vaultFileName.trim() !== '' ) {
+			return DATA.escapeSpecial(vaultFileName.trim())
+		}
+		const fullPath = String(this.mod.fileDetail.fullPath ?? '')
+		const fileName = fullPath.split(/[\\/]/u).at(-1) ?? ''
+		return DATA.escapeSpecial(fileName || '--')
 	}
 
 	#sourceLookupName() {

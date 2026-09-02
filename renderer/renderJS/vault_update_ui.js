@@ -1,6 +1,7 @@
 /* global DATA, bootstrap */
 
 let candidates = []
+let noSourceRecords = []
 let selectedKeys = new Set()
 let isBusy = false
 let isRemoteCheckRunning = false
@@ -14,6 +15,7 @@ const selectedCustomTags = new Set()
 const autoTagLabels = new Map()
 const REMOTE_CHECK_CONCURRENCY = 12
 const UPDATE_IGNORE_TAG = 'ignore updates'
+const PACKAGE_MISMATCH_STORAGE_KEY = 'fsg.vaultUpdatePackageMismatches.v1'
 const UPDATE_PROFILE_STORAGE_KEY = 'fsg.vaultUpdateProfiles.v1'
 
 const byID = (id) => document.getElementById(id)
@@ -62,9 +64,39 @@ function sourceBadgeLabel(candidate) {
 const REVIEW_REASON_LABELS = {
 	manualOnly       : 'manual download only',
 	missingModHubDate : 'ModHub release date not recorded',
+	packageMismatch  : 'downloaded package version does not match source version',
 	repositoryZip    : 'repository ZIP instead of release asset',
 	sourceMismatch   : 'source mismatch risk',
 	versionUnclear   : 'version comparison unclear',
+}
+
+function packageMismatchStates() {
+	try {
+		const records = JSON.parse(localStorage.getItem(PACKAGE_MISMATCH_STORAGE_KEY) ?? '{}')
+		return typeof records === 'object' && records !== null && !Array.isArray(records) ? records : {}
+	} catch {
+		return {}
+	}
+}
+
+function writePackageMismatchStates(records) {
+	localStorage.setItem(PACKAGE_MISMATCH_STORAGE_KEY, JSON.stringify(records))
+}
+
+function packageMismatchKey(candidate) {
+	if ( typeof candidate?.key !== 'string' || typeof candidate?.remoteVersion !== 'string' ) { return '' }
+	return `${candidate.key}:${candidate.remoteVersion}`
+}
+
+function applyPackageMismatchState(candidate) {
+	const key = packageMismatchKey(candidate)
+	candidate.packageMismatch = key === '' ? null : packageMismatchStates()[key] ?? null
+	return candidate
+}
+
+function updateCandidateReviewState(candidate) {
+	candidate.reviewReasons = reviewReasons(candidate)
+	candidate.needsReview = candidate.reviewReasons.length !== 0
 }
 
 function sourceMismatchRisk(candidate) {
@@ -77,6 +109,9 @@ function sourceMismatchRisk(candidate) {
 
 function reviewReasons(candidate) {
 	const reasons = []
+	if ( candidate.packageMismatch !== null && typeof candidate.packageMismatch === 'object' ) {
+		reasons.push('packageMismatch')
+	}
 	if ( candidate.downloadURL === null ) {
 		reasons.push('manualOnly')
 	}
@@ -98,6 +133,42 @@ function reviewReasons(candidate) {
 function reviewNoteText(reasons) {
 	if ( reasons.length === 0 ) { return '' }
 	return `Needs review: ${reasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join(', ')}`
+}
+
+function candidateUpdateState(candidate) {
+	if ( candidate.packageMismatch !== null && typeof candidate.packageMismatch === 'object' ) { return 'packageMismatch' }
+	if ( candidate.downloadURL === null ) { return 'manual' }
+	if ( candidate.needsReview === true ) { return 'review' }
+	return 'ready'
+}
+
+function candidateStateCounts(items) {
+	const counts = {
+		manual          : 0,
+		packageMismatch : 0,
+		ready           : 0,
+		review          : 0,
+	}
+	for ( const candidate of items ) {
+		counts[candidateUpdateState(candidate)] += 1
+	}
+	return counts
+}
+
+function stateSummaryText(items) {
+	const counts = candidateStateCounts(items)
+	const parts = [
+		`Visible updates: ${items.length}`,
+		`ready: ${counts.ready}`,
+		`needs review: ${counts.review}`,
+		`manual only: ${counts.manual}`,
+		`package mismatch: ${counts.packageMismatch}`,
+	]
+	return `${parts.join(' | ')}.`
+}
+
+function packageMismatchMessage(mismatch, fallbackExpectedVersion = 'unknown') {
+	return `Remote package mismatch: the source site says version ${mismatch?.expectedVersion ?? fallbackExpectedVersion}, but its downloaded ZIP reports ${mismatch?.downloadedVersion ?? 'unknown'}. This is a remote package/version-label problem, not an issue with your local Vault mod.`
 }
 
 function dateTimeValue(value) {
@@ -143,6 +214,19 @@ function cleanProfileName(value) {
 	return String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, 60)
 }
 
+function updateProfileControls() {
+	const select = byID('vaultUpdateProfileSelect')
+	const input = byID('vaultUpdateProfileName')
+	const saveButton = byID('vaultUpdateProfileSave')
+	const deleteButton = byID('vaultUpdateProfileDelete')
+	if ( select === null || input === null || saveButton === null || deleteButton === null ) { return }
+	const name = cleanProfileName(input.value)
+	const selectedName = select.value
+	saveButton.disabled = isBusy || name === ''
+	deleteButton.disabled = isBusy || selectedName === ''
+	saveButton.textContent = selectedName !== '' && selectedName === name ? 'Update profile' : 'Save profile'
+}
+
 function selectedFilterValues(values, fallbackValue = '') {
 	if ( Array.isArray(values) ) { return values.filter((value) => typeof value === 'string' && value !== '') }
 	if ( typeof fallbackValue === 'string' && fallbackValue !== '' ) { return [fallbackValue] }
@@ -170,6 +254,7 @@ function currentProfileSettings() {
 		needsReviewOnly : byID('vaultNeedsReviewOnly')?.checked === true,
 		reviewReasons : selectedReviewReasons(),
 		sortMode : byID('vaultUpdateSortFilter')?.value ?? 'name-asc',
+		stateFilter : byID('vaultUpdateStateFilter')?.value ?? '',
 	}
 }
 
@@ -194,10 +279,14 @@ function fillUpdateProfileSelect(selectedName = byID('vaultUpdateProfileSelect')
 	} else if ( nameInput !== null && selectedName === '' ) {
 		nameInput.value = ''
 	}
+	updateProfileControls()
 }
 
 function applyReviewProfileSettings(settings = {}) {
 	byID('vaultNeedsReviewOnly').checked = settings.needsReviewOnly === true
+	if ( byID('vaultUpdateStateFilter') !== null ) {
+		byID('vaultUpdateStateFilter').value = settings.stateFilter ?? ''
+	}
 	const reasons = new Set(Array.isArray(settings.reviewReasons) ? settings.reviewReasons : [])
 	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) {
 		filter.checked = reasons.has(filter.value)
@@ -215,6 +304,7 @@ function applyUpdateProfile(name) {
 	const profile = updateProfiles()[name]
 	if ( typeof profile !== 'object' || profile === null ) { return }
 	byID('vaultUpdateProfileName').value = name
+	byID('vaultUpdateProfileSelect').value = name
 	selectedCustomTags.clear()
 	for ( const tag of selectedFilterValues(profile.customTags, profile.customTag) ) { selectedCustomTags.add(tag) }
 	selectedAutoTagKeys.clear()
@@ -225,6 +315,7 @@ function applyUpdateProfile(name) {
 	if ( byID('vaultUpdateSortFilter') !== null ) { byID('vaultUpdateSortFilter').value = profile.sortMode ?? 'name-asc' }
 	byID('vaultIncludeIgnoredUpdates').checked = profile.includeIgnored === true
 	pendingProfileReviewFilters = profile
+	updateProfileControls()
 	loadCandidates(false, false)
 }
 
@@ -241,6 +332,7 @@ function saveUpdateProfile() {
 	writeUpdateProfiles(profiles)
 	fillUpdateProfileSelect(name)
 	setStatus(`Saved update profile "${name}".`, 'success')
+	updateProfileControls()
 }
 
 function deleteUpdateProfile() {
@@ -256,12 +348,35 @@ function deleteUpdateProfile() {
 	fillUpdateProfileSelect('')
 	byID('vaultUpdateProfileName').value = ''
 	setStatus(`Deleted update profile "${name}".`, 'success')
+	updateProfileControls()
+}
+
+function clearVaultUpdateFilters() {
+	selectedCustomTags.clear()
+	selectedAutoTagKeys.clear()
+	setFilterMatchMode('vaultUpdateCustomTagMode', 'any')
+	setFilterMatchMode('vaultUpdateAutoTagMode', 'any')
+	byID('vaultUpdateCollectionFilter').value = ''
+	byID('vaultUpdateSortFilter').value = 'name-asc'
+	byID('vaultUpdateStateFilter').value = ''
+	byID('vaultIncludeIgnoredUpdates').checked = false
+	byID('vaultNeedsReviewOnly').checked = false
+	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) {
+		filter.checked = false
+	}
+	byID('vaultUpdateProfileSelect').value = ''
+	byID('vaultUpdateProfileName').value = ''
+	updateTagFilterSummaries()
+	updateProfileControls()
+	loadCandidates(false, false)
 }
 
 function visibleCandidates() {
 	const needsReviewOnly = byID('vaultNeedsReviewOnly')?.checked === true
+	const stateFilter = byID('vaultUpdateStateFilter')?.value ?? ''
 	const selectedReasons = selectedReviewReasons()
 	return candidates.filter((candidate) => {
+		if ( stateFilter !== '' && candidateUpdateState(candidate) !== stateFilter ) { return false }
 		if ( !needsReviewOnly ) { return true }
 		if ( candidate.needsReview !== true ) { return false }
 		return selectedReasons.length === 0 || selectedReasons.some((reason) => candidate.reviewReasons.includes(reason))
@@ -306,6 +421,7 @@ function setBusy(value, label = '') {
 	for ( const element of document.querySelectorAll('.vault-update-filter-input') ) {
 		element.disabled = value
 	}
+	updateProfileControls()
 	syncSelectionCheckboxes()
 	byID('vaultUpdatesProgressWrap').classList.toggle('d-none', !value)
 	byID('vaultUpdatesProgress').style.width = value ? '8%' : '0%'
@@ -383,6 +499,11 @@ function setCandidateCounts({
 	byID('vaultUpdateFilteredCandidates').textContent = filteredCandidates.toString()
 	byID('vaultUpdateFilterSkipped').textContent = filterSkipped.toString()
 	byID('vaultUpdateNoSourceSkipped').textContent = noSourceSkipped.toString()
+	const reviewButton = byID('vaultUpdateReviewNoSource')
+	if ( reviewButton !== null ) {
+		reviewButton.disabled = isBusy || noSourceSkipped === 0
+		reviewButton.textContent = noSourceSkipped === 0 ? 'Review' : `Review ${noSourceSkipped}`
+	}
 }
 
 function getSources(record) {
@@ -437,6 +558,23 @@ function tagsForVaultRecord(record, vaultTags = {}) {
 	const modName = vaultRecordModName(record)
 	const tags = vaultTags[vaultTagKey(modName)]?.tags
 	return Array.isArray(tags) ? tags : []
+}
+
+function noSourceReviewRecord(record, customTags = [], autoTags = []) {
+	const modName = vaultRecordModName(record)
+	return {
+		autoTags,
+		collections : collectionNamesForRecord(record),
+		fileName    : record.fileName ?? '',
+		hash        : record.hash ?? '',
+		localVersion : newestVersion(record.versions ?? []),
+		modIcon     : typeof record.modIcon === 'string' && record.modIcon !== '' ? record.modIcon : null,
+		modName,
+		sourceURL   : record.sourceURL ?? '',
+		tags        : customTags,
+		totalSize   : record.size ?? 0,
+		updatedTime : dateTimeValue(record.updatedAt),
+	}
 }
 
 function hasIgnoreUpdateTag(tags) {
@@ -693,6 +831,111 @@ function addBadge(parent, text, className) {
 	parent.append(badge)
 }
 
+function formatBytes(value) {
+	const bytes = Number(value)
+	if ( !Number.isFinite(bytes) || bytes <= 0 ) { return '0 B' }
+	const units = ['B', 'KB', 'MB', 'GB']
+	let size = bytes
+	let unitIndex = 0
+	while ( size >= 1024 && unitIndex < units.length - 1 ) {
+		size /= 1024
+		unitIndex++
+	}
+	return `${size.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`
+}
+
+async function openNoSourceDetail(record) {
+	if ( typeof record?.hash !== 'string' || record.hash === '' ) {
+		setStatus('Could not open details because this Vault record has no hash.', 'danger')
+		return
+	}
+	const result = await window.vault_update_IPC.openDetail({
+		collections : record.collections,
+		fileName    : record.fileName,
+		hash        : record.hash,
+		modName     : record.modName,
+	})
+	if ( result?.ok === false ) {
+		setStatus(`Could not open Vault details: ${result.error ?? 'Unknown error'}`, 'danger')
+	}
+}
+
+function noSourceReviewRow(record) {
+	const row = document.createElement('button')
+	row.className = 'list-group-item list-group-item-action bg-dark text-body border-secondary vault-no-source-row'
+	row.type = 'button'
+	row.title = 'Right-click to open this mod in the details window.'
+	row.addEventListener('contextmenu', (event) => {
+		event.preventDefault()
+		openNoSourceDetail(record)
+	})
+	row.addEventListener('dblclick', () => openNoSourceDetail(record))
+
+	const wrapper = document.createElement('div')
+	wrapper.className = 'd-flex gap-3 align-items-center'
+	row.append(wrapper)
+
+	if ( record.modIcon ) {
+		const icon = document.createElement('img')
+		icon.className = 'vault-update-icon rounded border border-secondary bg-body flex-shrink-0'
+		icon.src = DATA.iconMaker(record.modIcon)
+		icon.alt = ''
+		wrapper.append(icon)
+	}
+
+	const content = document.createElement('div')
+	content.className = 'flex-grow-1'
+	wrapper.append(content)
+
+	const title = document.createElement('div')
+	title.className = 'fw-bold'
+	title.textContent = record.modName
+	content.append(title)
+
+	const filename = document.createElement('div')
+	filename.className = 'small text-body-secondary'
+	filename.textContent = record.fileName === '' ? 'Filename not recorded' : record.fileName
+	content.append(filename)
+
+	const meta = document.createElement('div')
+	meta.className = 'small text-body-secondary'
+	meta.textContent = `Vault ${record.localVersion} | ${formatBytes(record.totalSize)}${record.collections.length === 0 ? '' : ` | ${record.collections.join(', ')}`}`
+	content.append(meta)
+
+	const source = document.createElement('div')
+	source.className = record.sourceURL === '' ? 'small text-warning' : 'small text-info'
+	source.textContent = record.sourceURL === ''
+		? 'No source URL recorded.'
+		: `Unsupported source URL: ${record.sourceURL}`
+	content.append(source)
+
+	const tags = document.createElement('div')
+	tags.className = 'd-flex flex-wrap gap-1 mt-2'
+	for ( const tag of (record.autoTags ?? []).slice(0, 4) ) { addBadge(tags, tag.label, 'text-bg-secondary') }
+	for ( const tag of record.tags ?? [] ) { addBadge(tags, tag, 'text-bg-info') }
+	if ( tags.childElementCount !== 0 ) { content.append(tags) }
+
+	return row
+}
+
+function reviewNoSourceRecords() {
+	const dialog = byID('vaultNoSourceDialog')
+	const list = byID('vaultNoSourceList')
+	const summary = byID('vaultNoSourceSummary')
+	list.replaceChildren()
+	const records = noSourceRecords.toSorted((left, right) => compareUpdateCandidates(left, right))
+	summary.textContent = `${records.length} Vault mod${records.length === 1 ? '' : 's'} matched the current filters but have no supported update source.`
+	if ( records.length === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'list-group-item bg-dark text-body-secondary border-secondary'
+		empty.textContent = 'No matching unsupported-source Vault mods to review.'
+		list.append(empty)
+	} else {
+		for ( const record of records ) { list.append(noSourceReviewRow(record)) }
+	}
+	if ( !dialog.open ) { dialog.showModal() }
+}
+
 function cardFor(candidate) {
 	const card = document.createElement('div')
 	card.className = 'card mb-3 bg-dark border-secondary vault-update-card'
@@ -760,6 +1003,9 @@ function cardFor(candidate) {
 	const sourceBadges = document.createElement('div')
 	sourceBadges.className = 'mb-2'
 	addBadge(sourceBadges, sourceBadgeLabel(candidate), 'text-bg-info')
+	if ( candidate.packageMismatch !== null && typeof candidate.packageMismatch === 'object' ) {
+		addBadge(sourceBadges, 'Package mismatch', 'text-bg-danger')
+	}
 	for ( const tag of (candidate.autoTags ?? []).slice(0, 6) ) {
 		addBadge(sourceBadges, tag.label, 'text-bg-secondary')
 	}
@@ -783,8 +1029,10 @@ function cardFor(candidate) {
 	}
 
 	const updateStatus = document.createElement('div')
-	updateStatus.className = 'text-warning mb-3'
-	updateStatus.textContent = 'Update may be available'
+	updateStatus.className = candidate.packageMismatch === null ? 'text-warning mb-3' : 'text-danger mb-3'
+	updateStatus.textContent = candidate.packageMismatch === null
+		? 'Update may be available'
+		: packageMismatchMessage(candidate.packageMismatch, candidate.remoteVersion)
 	actionColumn.append(updateStatus)
 
 	const availability = document.createElement('div')
@@ -822,27 +1070,45 @@ function setAllSelections(selected) {
 	updateSelectionText()
 }
 
+function selectReadyUpdates() {
+	for ( const candidate of visibleCandidates() ) {
+		if ( candidateUpdateState(candidate) === 'ready' ) { selectedKeys.add(candidate.key) }
+	}
+	syncSelectionCheckboxes()
+	updateSelectionText()
+}
+
 function updateSelectionText() {
 	const candidateKeys = new Set(candidates.map((candidate) => candidate.key))
 	selectedKeys = new Set([...selectedKeys].filter((key) => candidateKeys.has(key)))
 	syncSelectionCheckboxes()
-	const visibleCount = visibleCandidates().length
-	const selectedCount = selectedCandidates().length
-	const selectedDownloadableCount = selectedCandidates().filter((candidate) => candidate.downloadURL).length
-	const manualCount = selectedCount - selectedDownloadableCount
+	const visible = visibleCandidates()
+	const selected = selectedCandidates()
+	const visibleCount = visible.length
+	const selectedCount = selected.length
+	const selectedDownloadableCount = selected.filter((candidate) => candidate.downloadURL).length
+	const selectedStateCounts = candidateStateCounts(selected)
+	const stateSummary = byID('vaultUpdateStateSummary')
 
 	byID('vaultUpdateSelectionControls').classList.toggle('d-none', candidates.length === 0)
+	if ( stateSummary !== null ) {
+		stateSummary.textContent = stateSummaryText(visible)
+	}
 	byID('vaultUpdatesSelectedCount').textContent = `Selected: ${selectedCount}`
 	if ( selectedCount === 0 ) {
 		byID('vaultUpdateSelection').textContent = '0 updates selected. Downloads are stored in the Vault only.'
-	} else if ( manualCount === 0 ) {
-		byID('vaultUpdateSelection').textContent = `${selectedCount} update(s) selected. ${selectedDownloadableCount} can be downloaded to the Vault.`
 	} else {
-		byID('vaultUpdateSelection').textContent = `${selectedCount} update(s) selected. ${selectedDownloadableCount} can be downloaded to the Vault; ${manualCount} require manual download.`
+		const parts = [`${selectedCount} selected`, `${selectedDownloadableCount} downloadable`]
+		if ( selectedStateCounts.ready > 0 ) { parts.push(`${selectedStateCounts.ready} ready`) }
+		if ( selectedStateCounts.review > 0 ) { parts.push(`${selectedStateCounts.review} need review`) }
+		if ( selectedStateCounts.manual > 0 ) { parts.push(`${selectedStateCounts.manual} manual only`) }
+		if ( selectedStateCounts.packageMismatch > 0 ) { parts.push(`${selectedStateCounts.packageMismatch} package mismatch`) }
+		byID('vaultUpdateSelection').textContent = `${parts.join(' | ')}. Downloads are stored in the Vault only.`
 	}
 	byID('vaultUpdatesDownloadSelected').disabled = isBusy || selectedDownloadableCount === 0
 	byID('vaultUpdatesOpenSelected').disabled = isBusy || selectedCount === 0
 	byID('vaultUpdatesSelectAll').disabled = isBusy || visibleCount === 0
+	byID('vaultUpdatesSelectReady').disabled = isBusy || visible.filter((candidate) => candidateUpdateState(candidate) === 'ready').length === 0
 	byID('vaultUpdatesSelectNone').disabled = isBusy || selectedCount === 0
 }
 
@@ -874,6 +1140,127 @@ function renderReadyToScan(sourceGroupsLength) {
 	prompt.className = 'alert alert-info'
 	prompt.textContent = `Ready to scan ${sourceGroupsLength} filtered Vault update candidate${sourceGroupsLength === 1 ? '' : 's'}. Press Start update scan when you want remote checks to begin.`
 	list.append(prompt)
+}
+
+function clearDownloadResults() {
+	byID('vaultDownloadResults').replaceChildren()
+	byID('vaultDownloadResults').classList.add('d-none')
+}
+
+function downloadResultCandidate(result) {
+	if ( typeof result?.candidateKey === 'string' ) {
+		const candidate = candidates.find((item) => item.key === result.candidateKey)
+		if ( candidate !== undefined ) { return candidate }
+	}
+	return candidates.find((candidate) =>
+		canonicalVaultModName(candidate.modName).toLocaleLowerCase() ===
+		canonicalVaultModName(result?.modName ?? '').toLocaleLowerCase()
+	) ?? null
+}
+
+// eslint-disable-next-line complexity
+function appendDownloadResultItem(parent, result, statusClass) {
+	const candidate = downloadResultCandidate(result)
+	const item = document.createElement('li')
+	item.className = 'mb-2'
+	const title = document.createElement('div')
+	title.className = 'fw-bold'
+	title.textContent = result?.modName || candidate?.modName || 'Unknown mod'
+	item.append(title)
+
+	const detail = document.createElement('div')
+	detail.className = 'small text-body-secondary'
+	const sourceText = sourceLabel(result?.sourceType ?? candidate?.sourceType ?? '')
+	const version = result?.version || candidate?.remoteVersion || ''
+	const fileName = result?.fileName || candidate?.assetName || candidate?.fileName || ''
+	detail.textContent = `${sourceText}${version === '' ? '' : ` ${version}`}${fileName === '' ? '' : ` | ${fileName}`}`
+	item.append(detail)
+
+	if ( result?.error ) {
+		const error = document.createElement('div')
+		error.className = statusClass
+		error.textContent = result.errorCode === 'package-mismatch'
+			? packageMismatchMessage(result, result.expectedVersion ?? candidate?.remoteVersion ?? 'unknown')
+			: result.error
+		item.append(error)
+	}
+	parent.append(item)
+}
+
+function renderDownloadResults(results = []) {
+	const panel = byID('vaultDownloadResults')
+	panel.replaceChildren()
+	const failures = results.filter((result) => !result?.ok)
+	const successes = results.filter((result) => result?.ok)
+	if ( failures.length === 0 && successes.length === 0 ) {
+		panel.classList.add('d-none')
+		return
+	}
+	panel.className = `mx-2 mb-3 alert ${failures.length === 0 ? 'alert-success' : 'alert-danger'}`
+
+	const heading = document.createElement('div')
+	heading.className = 'fw-bold mb-2'
+	heading.textContent = failures.length === 0
+		? `Vault download complete: ${successes.length} stored.`
+		: `Vault download issues: ${failures.length} failed, ${successes.length} stored.`
+	panel.append(heading)
+
+	if ( failures.length !== 0 ) {
+		const failedTitle = document.createElement('div')
+		failedTitle.className = 'fw-bold'
+		failedTitle.textContent = 'Failed downloads'
+		panel.append(failedTitle)
+		const failedList = document.createElement('ul')
+		failedList.className = 'mb-2'
+		for ( const result of failures ) { appendDownloadResultItem(failedList, result, 'small text-warning') }
+		panel.append(failedList)
+	}
+
+	if ( successes.length !== 0 ) {
+		const successTitle = document.createElement('div')
+		successTitle.className = 'fw-bold'
+		successTitle.textContent = 'Stored downloads'
+		panel.append(successTitle)
+		const successList = document.createElement('ul')
+		successList.className = 'mb-0'
+		for ( const result of successes ) { appendDownloadResultItem(successList, result, 'small text-success') }
+		panel.append(successList)
+	}
+	panel.classList.remove('d-none')
+}
+
+function updatePackageMismatchStatesFromResults(results = []) {
+	const records = packageMismatchStates()
+	let changed = false
+	for ( const result of results ) {
+		const candidate = downloadResultCandidate(result)
+		const key = packageMismatchKey(candidate)
+		if ( key === '' ) { continue }
+		if ( result?.ok ) {
+			if ( Object.hasOwn(records, key) ) {
+				delete records[key]
+				changed = true
+			}
+			candidate.packageMismatch = null
+			updateCandidateReviewState(candidate)
+			continue
+		}
+		if ( result?.errorCode !== 'package-mismatch' ) { continue }
+		const mismatch = {
+			downloadedVersion : result.downloadedVersion ?? 'unknown',
+			error             : result.error ?? '',
+			expectedVersion   : result.expectedVersion ?? candidate.remoteVersion,
+			fileName          : result.fileName ?? candidate.fileName,
+			message           : packageMismatchMessage(result, result.expectedVersion ?? candidate.remoteVersion),
+			modName           : result.modName ?? candidate.modName,
+			updatedAt         : new Date().toISOString(),
+		}
+		records[key] = mismatch
+		candidate.packageMismatch = mismatch
+		updateCandidateReviewState(candidate)
+		changed = true
+	}
+	if ( changed ) { writePackageMismatchStates(records) }
 }
 
 function removeStoredCandidates(storedResults) {
@@ -916,6 +1303,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 async function loadCandidates(force = false, runRemoteChecks = false) {
 	if ( isBusy ) { return }
 	setBusy(true, 'Loading Vault...')
+	clearDownloadResults()
 	const checkStartedAt = performance.now()
 	// A fresh update check must never inherit selection from an older result
 	// set. Only the visible ticked rows may be downloaded.
@@ -926,6 +1314,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 	try {
 		const vault = await window.vault_update_IPC.getVault()
 		const groups = new Map()
+		noSourceRecords = []
 		let collectionSkipped = 0
 		let ignoredSkipped = 0
 		let skipped = 0
@@ -963,13 +1352,19 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				continue
 			}
 			const sources = getSources(record)
-			if ( sources.length === 0 ) { skipped++; continue }
+			if ( sources.length === 0 ) {
+				skipped++
+				noSourceRecords.push(noSourceReviewRecord(record, customTags, autoTags))
+				continue
+			}
 			const modName = vaultRecordModName(record)
 			for ( const source of sources ) {
 				const key = makeGroupKey(modName, source)
 				const existing = groups.get(key) ?? {
 					autoTags      : [],
 					fileName      : record.fileName,
+					gameVersions  : [],
+					hashes        : [],
 					key,
 					localVersions : [],
 					modHubID      : source.modHubID,
@@ -981,6 +1376,8 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 					totalSize     : 0,
 					updatedTime   : 0,
 				}
+				existing.gameVersions.push(...(record.gameVersions ?? []))
+				if ( typeof record.hash === 'string' && record.hash !== '' ) { existing.hashes.push(record.hash) }
 				existing.localVersions.push(...(record.versions ?? []))
 				existing.tags.push(...customTags.filter((tag) => !existing.tags.includes(tag)))
 				existing.totalSize += record.size ?? 0
@@ -1028,6 +1425,17 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		isRemoteCheckRunning = false
 		setUpdateCheckPaused(false)
 		updateStopButton()
+		await window.vault_update_IPC.updateScanMetadata({
+			updates : remoteResults
+				.filter((result) => result !== undefined)
+				.map(({ group, remote }) => ({
+					hashes     : [...new Set(group.hashes)],
+					modHubID   : group.modHubID,
+					remote,
+					sourceType : group.sourceType,
+					sourceURL  : group.sourceURL,
+				})),
+		})
 
 		for ( const result of remoteResults ) {
 			if ( result === undefined ) { continue }
@@ -1041,6 +1449,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				downloadSource : remote.downloadSource ?? null,
 				downloadURL   : remote.hasDownload ? remote.downloadURL : null,
 				fileName      : group.fileName,
+				gameVersion   : group.gameVersions.find((value) => Number.isInteger(value)) ?? null,
 				key           : group.key,
 				localVersion,
 				modHubID      : group.modHubID,
@@ -1055,8 +1464,8 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				totalSize     : group.totalSize,
 				updatedTime   : group.updatedTime,
 			}
-			candidate.reviewReasons = reviewReasons(candidate)
-			candidate.needsReview = candidate.reviewReasons.length !== 0
+			applyPackageMismatchState(candidate)
+			updateCandidateReviewState(candidate)
 			candidates.push(candidate)
 		}
 
@@ -1089,6 +1498,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 	} finally {
 		isRemoteCheckRunning = false
 		setUpdateCheckPaused(false)
+		// eslint-disable-next-line require-atomic-updates
 		isUpdateCheckStopped = false
 		setBusy(false)
 		updateSelectionText()
@@ -1100,7 +1510,9 @@ async function downloadSelected() {
 		.filter((candidate) => selectedKeys.has(candidate.key) && candidate.downloadURL)
 	const downloads = downloadableCandidates
 		.map((candidate) => ({
+			candidateKey : candidate.key,
 			fileName   : candidate.assetName,
+			gameVersion : candidate.gameVersion,
 			modHubID   : candidate.modHubID,
 			modHubReleased : candidate.modHubReleased,
 			modName    : candidate.modName,
@@ -1112,20 +1524,31 @@ async function downloadSelected() {
 
 	if ( downloads.length === 0 ) { return }
 	const manualCount = selectedKeys.size - downloads.length
+	let refreshAfterDownload = false
 	setBusy(true, 'Saving update(s) to Vault...')
+	clearDownloadResults()
 	try {
 		const result = await window.vault_update_IPC.downloadToVaultSelected(downloads)
-		if ( !result?.ok ) { throw new Error(result?.error ?? 'Vault download failed') }
+		const results = Array.isArray(result?.results) ? result.results : []
+		updatePackageMismatchStatesFromResults(results)
+		renderCandidates(lastSkippedCount)
+		renderDownloadResults(results)
 		const manualMessage = manualCount > 0
 			? ` ${manualCount} selected update(s) require manual download and were not changed.`
 			: ''
-		removeStoredCandidates(result.results)
+		removeStoredCandidates(results)
+		if ( !result?.ok ) {
+			setStatus(`Vault download completed with issues: ${result?.error ?? 'one or more downloads failed'}${manualMessage}`, 'danger')
+			return
+		}
 		setStatus(`Stored ${result.count} update(s) in the Vault.${manualMessage} Matching collection updates will reuse these cached ZIPs when available. Use Refresh Vault update checks to rescan all sources.`, 'success')
+		refreshAfterDownload = true
 	} catch (err) {
 		setStatus(`Vault download failed: ${err.message}`, 'danger')
 	} finally {
 		setBusy(false)
 		updateSelectionText()
+		if ( refreshAfterDownload ) { await loadCandidates(false, false) }
 	}
 }
 
@@ -1147,14 +1570,22 @@ window.addEventListener('DOMContentLoaded', () => {
 	byID('vaultUpdateProfileSelect').addEventListener('change', (event) => {
 		const profileName = event.target.value
 		if ( profileName !== '' ) { applyUpdateProfile(profileName) }
+		updateProfileControls()
 	})
+	byID('vaultUpdateProfileName').addEventListener('input', updateProfileControls)
 	byID('vaultUpdateProfileSave').addEventListener('click', saveUpdateProfile)
 	byID('vaultUpdateProfileDelete').addEventListener('click', deleteUpdateProfile)
+	byID('vaultUpdateClearFilters').addEventListener('click', clearVaultUpdateFilters)
 	byID('vaultUpdateSortFilter').addEventListener('change', () => {
 		if ( candidates.length !== 0 ) { renderCandidates() }
+		if ( byID('vaultNoSourceDialog')?.open ) { reviewNoSourceRecords() }
 	})
+	byID('vaultUpdateStateFilter').addEventListener('change', applyNeedsReviewFilter)
+	byID('vaultUpdateReviewNoSource').addEventListener('click', reviewNoSourceRecords)
+	byID('vaultNoSourceClose').addEventListener('click', () => { byID('vaultNoSourceDialog').close() })
 	byID('vaultUpdatesDownloadSelected').addEventListener('click', downloadSelected)
 	byID('vaultUpdatesSelectAll').addEventListener('click', () => setAllSelections(true))
+	byID('vaultUpdatesSelectReady').addEventListener('click', selectReadyUpdates)
 	byID('vaultUpdatesSelectNone').addEventListener('click', () => setAllSelections(false))
 	byID('vaultUpdatesOpenSelected').addEventListener('click', () => {
 		for ( const candidate of selectedCandidates() ) {
