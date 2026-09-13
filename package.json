@@ -1,6 +1,6 @@
 {
   "name": "fsg-mod-assistant",
-  "version": "6.0.0-beta-8",
+  "version": "6.0.0-beta-9",
   "description": "FSG Farm Sim Mod Assistant",
   "main": "modAssist_main.js",
   "homepage": "https://github.com/FSGModding/FSG_Mod_Assistant#readme",
@@ -74,12 +74,12 @@
     ],
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ]
     },
-    "portable": {
-      "artifactName": "${productName} Portable ${version}.exe"
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
