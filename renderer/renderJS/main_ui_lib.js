@@ -29,7 +29,9 @@ class StateManager {
 	}
 	track = {
 		altClick       : null,
+		disabledOnly   : false,
 		filter_must    : new Set(),
+		filter_must_any : false,
 		filter_not     : new Set(),
 		lastID         : null,
 		lastIndex      : null,
@@ -54,6 +56,40 @@ class StateManager {
 	updateCheckCache = new Map()
 	rollbackCheckCache = new Map()
 	backgroundDisplayRefreshTimer = null
+	scrollJankLastFrame = null
+	scrollJankLastLog = 0
+	scrollJankLastScroll = 0
+	scrollJankLastScrollEvent = 0
+	scrollJankLastScrollModeLog = 0
+	scrollJankLastScrollTop = 0
+	scrollJankLastWheel = 0
+	scrollJankLastWheelDelta = 0
+	scrollJankLastWheelLatencyLog = 0
+	scrollJankPendingWheel = false
+	scrollJankScrollEndTimer = null
+	userActivityLastSent = 0
+	displayLastAt = 0
+	modIconObserver = null
+	modIconLoadQueue = []
+	modIconLoadTimer = null
+	dataRevision = 0
+	lastDisplaySignature = ''
+	lastDisplayAt = 0
+	virtualModList = {
+		active        : false,
+		bufferRows    : 36,
+		collectionKey : null,
+		lastLog       : 0,
+		prewarmIndex  : 0,
+		prewarmTimer  : null,
+		renderedEnd   : -1,
+		renderedStart : -1,
+		rerenderMargin : 12,
+		rowHeight     : 88,
+		rowIDs        : [],
+		scheduled     : false,
+		table         : null,
+	}
 
 	loader = null
 
@@ -98,6 +134,7 @@ class StateManager {
 				window.main_IPC.folder.remove(this.track.openCollection)
 			}
 		})
+		this.#startScrollJankMonitor()
 	}
 
 	#updateTracking(data) {
@@ -315,7 +352,7 @@ class StateManager {
 		}
 		this.track.selected = new Set(modIDs)
 		this.forceSelectOnly(true)
-		this.doDisplay()
+		this.doDisplay('selectModIDsInCollection')
 		this.colScroll(collectionKey)
 	}
 
@@ -446,9 +483,344 @@ class StateManager {
 		window.main_IPC.performance(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
 	}
 
+	#logInstantPerformance(label, extraDetail = '') {
+		const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+		window.main_IPC.performance(`${label}${detailText}`)
+	}
+
+	#markUserActivity(reason) {
+		const now = performance.now()
+		if ( now - this.userActivityLastSent < 750 ) { return }
+		this.userActivityLastSent = now
+		window.main_IPC.userActivity(reason)
+	}
+
+	#startScrollJankMonitor() {
+		const frameLimitMS = 120
+		const logThrottleMS = 2000
+		const scrollingNode = MA.byId('mod-collections')?.parentElement
+
+		scrollingNode?.addEventListener('wheel', (event) => {
+			this.scrollJankLastWheel = performance.now()
+			this.scrollJankLastWheelDelta = event.deltaY
+			this.scrollJankPendingWheel = true
+			this.#markUserActivity('main-list-wheel')
+		}, { passive : true })
+
+		scrollingNode?.addEventListener('scroll', () => {
+			const now = performance.now()
+			this.#markUserActivity('main-list-scroll')
+			const wheelLatency = this.scrollJankPendingWheel ? now - this.scrollJankLastWheel : 0
+			const lastScrollAt = this.scrollJankLastScroll
+			const lastScrollTop = this.scrollJankLastScrollTop
+			const scrollDelta = Math.abs(scrollingNode.scrollTop - lastScrollTop)
+			const scrollDeltaTime = lastScrollAt === 0 ? 0 : now - lastScrollAt
+			const scrollSpeed = scrollDeltaTime <= 0 ? 0 : scrollDelta / scrollDeltaTime
+			const fastScroll = scrollDelta > 1800 || scrollSpeed > 12 || Math.abs(this.scrollJankLastWheelDelta) > 2400
+			this.scrollJankLastScroll = now
+			this.scrollJankLastScrollEvent = now
+			this.scrollJankLastScrollTop = scrollingNode.scrollTop
+			this.scrollJankPendingWheel = false
+			scrollingNode.classList.toggle('main-list-scrolling', fastScroll)
+			if ( this.scrollJankScrollEndTimer !== null ) { clearTimeout(this.scrollJankScrollEndTimer) }
+			this.scrollJankScrollEndTimer = setTimeout(() => {
+				scrollingNode.classList.remove('main-list-scrolling')
+				this.scrollJankScrollEndTimer = null
+				this.#observeVisibleModIcons(scrollingNode)
+			}, 180)
+			if ( fastScroll && now - this.scrollJankLastScrollModeLog > 1000 ) {
+				this.scrollJankLastScrollModeLog = now
+				this.#logInstantPerformance('Main renderer fast scroll mode', [
+					`delta=${scrollDelta.toFixed(0)}`,
+					`speed=${scrollSpeed.toFixed(2)} px/ms`,
+					`wheelDelta=${this.scrollJankLastWheelDelta.toFixed(1)}`,
+					`displayedRows=${scrollingNode.querySelectorAll('.mod-row').length.toString()}`,
+					`scrollTop=${scrollingNode.scrollTop.toFixed(0)}`,
+				].join(' '))
+			}
+			if ( wheelLatency > 80 && now - this.scrollJankLastWheelLatencyLog > 1000 ) {
+				this.scrollJankLastWheelLatencyLog = now
+				this.#logInstantPerformance('Main renderer wheel scroll latency', [
+					`latency=${wheelLatency.toFixed(1)} ms`,
+					`deltaY=${this.scrollJankLastWheelDelta.toFixed(1)}`,
+					`openCollection=${JSON.stringify(this.track.openCollection)}`,
+					`displayedRows=${scrollingNode.querySelectorAll('.mod-row').length.toString()}`,
+					`scrollTop=${scrollingNode.scrollTop.toFixed(0)}`,
+				].join(' '))
+			}
+			this.#scheduleVirtualModRender()
+		}, { passive : true })
+
+		const monitor = (now) => {
+			if ( this.scrollJankLastFrame !== null ) {
+				const gap = now - this.scrollJankLastFrame
+				const recentScroll = now - this.scrollJankLastScroll < 2000
+				const recentDisplay = now - this.displayLastAt < 500
+				if (
+					gap > frameLimitMS &&
+					scrollingNode !== null &&
+					document.visibilityState === 'visible' &&
+					(recentScroll || recentDisplay) &&
+					now - this.scrollJankLastLog > logThrottleMS
+				) {
+					this.scrollJankLastLog = now
+					this.#logInstantPerformance('Main renderer frame delay', [
+						`gap=${gap.toFixed(1)} ms`,
+						`openCollection=${JSON.stringify(this.track.openCollection)}`,
+						`displayedRows=${scrollingNode.querySelectorAll('.mod-row').length.toString()}`,
+						`scrollTop=${scrollingNode.scrollTop.toFixed(0)}`,
+						`lastScrollTop=${this.scrollJankLastScrollTop.toFixed(0)}`,
+						`recentScroll=${recentScroll ? 'true' : 'false'}`,
+						`recentDisplay=${recentDisplay ? 'true' : 'false'}`,
+					].join(' '))
+				}
+			}
+			this.scrollJankLastFrame = now
+			window.requestAnimationFrame(monitor)
+		}
+		window.requestAnimationFrame(monitor)
+	}
+
+	#lazyModIconHTML(iconImage) {
+		const source = DATA.escapeSpecial(DATA.iconMaker(iconImage))
+		return `<img alt="" class="main-mod-icon" decoding="async" fetchpriority="low" height="64" loading="lazy" src="${source}" width="64">`
+	}
+
+	#ensureModIconObserver() {
+		if ( this.modIconObserver !== null ) { return this.modIconObserver }
+		if ( typeof IntersectionObserver === 'undefined' ) { return null }
+
+		this.modIconObserver = new IntersectionObserver((entries) => {
+			for ( const entry of entries ) {
+				if ( !entry.isIntersecting ) { continue }
+				const image = entry.target
+				this.modIconLoadQueue.push(image)
+				this.#scheduleModIconLoads()
+				this.modIconObserver.unobserve(image)
+			}
+		}, {
+			root       : MA.byId('mod-collections')?.parentElement ?? null,
+			rootMargin : '120px 0px',
+			threshold  : 0.01,
+		})
+		return this.modIconObserver
+	}
+
+	#scheduleModIconLoads() {
+		if ( this.modIconLoadTimer !== null ) { return }
+
+		const loadBatch = () => {
+			this.modIconLoadTimer = null
+			if ( performance.now() - this.scrollJankLastScroll < 220 ) {
+				this.modIconLoadTimer = setTimeout(loadBatch, 220)
+				return
+			}
+			let loaded = 0
+			while ( this.modIconLoadQueue.length !== 0 && loaded < 4 ) {
+				const image = this.modIconLoadQueue.shift()
+				if ( image?.isConnected !== true ) { continue }
+				const source = image.dataset.src
+				if ( typeof source !== 'string' || source === '' ) { continue }
+				image.src = source
+				delete image.dataset.src
+				image.classList.remove('main-mod-icon-lazy')
+				loaded++
+			}
+			if ( this.modIconLoadQueue.length !== 0 ) {
+				this.modIconLoadTimer = setTimeout(loadBatch, 80)
+			}
+		}
+
+		this.modIconLoadTimer = setTimeout(loadBatch, 120)
+	}
+
+	#observeVisibleModIcons(rootNode) {
+		const icons = rootNode.querySelectorAll('img.main-mod-icon-lazy[data-src]')
+		if ( icons.length === 0 ) { return }
+
+		const observer = this.#ensureModIconObserver()
+		if ( observer === null ) {
+			for ( const image of icons ) {
+				image.src = image.dataset.src
+				delete image.dataset.src
+				image.classList.remove('main-mod-icon-lazy')
+			}
+			return
+		}
+
+		for ( const image of icons ) { observer.observe(image) }
+	}
+
+	#makeVirtualSpacer(height) {
+		const spacer = document.createElement('tr')
+		spacer.classList.add('main-virtual-spacer')
+		spacer.setAttribute('aria-hidden', 'true')
+		spacer.innerHTML = `<td colspan="4" style="height: ${Math.max(0, height).toFixed(0)}px; padding: 0; border: 0;"></td>`
+		return spacer
+	}
+
+	#scheduleVirtualModRender() {
+		if ( !this.virtualModList.active || this.virtualModList.scheduled ) { return }
+		this.virtualModList.scheduled = true
+		requestAnimationFrame(() => {
+			this.virtualModList.scheduled = false
+			this.#renderVirtualModRows(false)
+		})
+	}
+
+	#appendVirtualModRow(frag, rowID, rowIndex) {
+		const [CKey, MKey] = rowID.split('--')
+		const modRec = this.mods[CKey]?.[MKey]
+		if ( modRec === undefined ) { return }
+		this.#ensureModRowNode(modRec)
+		modRec.node.dataset.rowIndex = rowIndex.toString()
+		modRec.node.classList.toggle(this.selectClass, this.track.selected.has(rowID))
+		frag.appendChild(modRec.node)
+	}
+
+	#renderStaticModRows(table, rowIDs) {
+		const frag = document.createDocumentFragment()
+		for ( const [rowIndex, rowID] of rowIDs.entries() ) {
+			this.#appendVirtualModRow(frag, rowID, rowIndex)
+		}
+		table.replaceChildren(frag)
+	}
+
+	#renderVirtualModRows(force = false) {
+		const renderStartedAt = performance.now()
+		const table = this.virtualModList.table
+		const rowIDs = this.virtualModList.rowIDs
+		const scrollParent = MA.byId('mod-collections')?.parentElement ?? null
+		if ( table === null || scrollParent === null ) { return }
+
+		const visibleStart = Math.max(0, Math.floor(scrollParent.scrollTop / this.virtualModList.rowHeight))
+		const visibleEnd = Math.min(rowIDs.length, visibleStart + Math.ceil(scrollParent.clientHeight / this.virtualModList.rowHeight) + 1)
+		if (
+			!force &&
+			visibleStart >= this.virtualModList.renderedStart + this.virtualModList.rerenderMargin &&
+			visibleEnd <= this.virtualModList.renderedEnd - this.virtualModList.rerenderMargin
+		) {
+			return
+		}
+
+		const start = Math.max(0, visibleStart - this.virtualModList.bufferRows)
+		const end = Math.min(rowIDs.length, visibleEnd + this.virtualModList.bufferRows)
+		if ( !force && start === this.virtualModList.renderedStart && end === this.virtualModList.renderedEnd ) { return }
+
+		const frag = document.createDocumentFragment()
+		const topHeight = start * this.virtualModList.rowHeight
+		const bottomHeight = (rowIDs.length - end) * this.virtualModList.rowHeight
+		if ( topHeight > 0 ) { frag.appendChild(this.#makeVirtualSpacer(topHeight)) }
+		for ( let i = start; i < end; i++ ) { this.#appendVirtualModRow(frag, rowIDs[i], i) }
+		if ( bottomHeight > 0 ) { frag.appendChild(this.#makeVirtualSpacer(bottomHeight)) }
+
+		table.replaceChildren(frag)
+		this.virtualModList.renderedStart = start
+		this.virtualModList.renderedEnd = end
+
+		const firstRow = table.querySelector('.mod-row')
+		if ( firstRow !== null ) {
+			const measuredHeight = firstRow.getBoundingClientRect().height
+			if ( measuredHeight > 20 ) { this.virtualModList.rowHeight = measuredHeight }
+		}
+		this.#observeVisibleModIcons(table)
+		const renderMS = performance.now() - renderStartedAt
+		if ( renderMS > 24 && performance.now() - this.virtualModList.lastLog > 1000 ) {
+			this.virtualModList.lastLog = performance.now()
+			this.#logPerformance('Main renderer virtual rows', renderStartedAt, [
+				`visible=${visibleStart.toString()}-${visibleEnd.toString()}`,
+				`rendered=${start.toString()}-${end.toString()}`,
+				`rows=${(end - start).toString()}`,
+				`scrollTop=${scrollParent.scrollTop.toFixed(0)}`,
+			].join(' '))
+		}
+	}
+
+	#stopVirtualPrewarm() {
+		if ( this.virtualModList.prewarmTimer === null ) { return }
+		if ( typeof cancelIdleCallback === 'function' ) {
+			cancelIdleCallback(this.virtualModList.prewarmTimer)
+		} else {
+			clearTimeout(this.virtualModList.prewarmTimer)
+		}
+		this.virtualModList.prewarmTimer = null
+	}
+
+	#scheduleVirtualPrewarm() {
+		this.#stopVirtualPrewarm()
+		if ( !this.virtualModList.active || this.virtualModList.rowIDs.length === 0 ) { return }
+
+		const runPrewarm = (deadline = null) => {
+			this.virtualModList.prewarmTimer = null
+			if ( !this.virtualModList.active ) { return }
+			if ( performance.now() - this.scrollJankLastScroll < 400 ) {
+				this.virtualModList.prewarmTimer = setTimeout(() => runPrewarm(), 450)
+				return
+			}
+
+			const startedAt = performance.now()
+			let warmed = 0
+			while ( this.virtualModList.prewarmIndex < this.virtualModList.rowIDs.length ) {
+				const rowID = this.virtualModList.rowIDs[this.virtualModList.prewarmIndex]
+				this.virtualModList.prewarmIndex++
+				const [CKey, MKey] = rowID.split('--')
+				const modRec = this.mods[CKey]?.[MKey]
+				if ( modRec !== undefined && modRec.node === null ) {
+					this.#ensureModRowNode(modRec)
+					warmed++
+				}
+				const timeRemaining = typeof deadline?.timeRemaining === 'function' ? deadline.timeRemaining() : 0
+				if ( warmed >= 8 || performance.now() - startedAt > 12 || timeRemaining < 4 ) { break }
+			}
+
+			if ( this.virtualModList.prewarmIndex < this.virtualModList.rowIDs.length ) {
+				if ( typeof requestIdleCallback === 'function' ) {
+					this.virtualModList.prewarmTimer = requestIdleCallback(runPrewarm, { timeout : 700 })
+				} else {
+					this.virtualModList.prewarmTimer = setTimeout(() => runPrewarm(), 80)
+				}
+			}
+		}
+
+		if ( typeof requestIdleCallback === 'function' ) {
+			this.virtualModList.prewarmTimer = requestIdleCallback(runPrewarm, { timeout : 700 })
+		} else {
+			this.virtualModList.prewarmTimer = setTimeout(() => runPrewarm(), 120)
+		}
+	}
+
+	#renderModRowSet(table, collectionKey, rowIDs) {
+		this.#stopVirtualPrewarm()
+		this.virtualModList.collectionKey = collectionKey
+		this.virtualModList.rowIDs = rowIDs
+		this.virtualModList.table = table
+		this.virtualModList.prewarmIndex = 0
+		this.virtualModList.renderedStart = -1
+		this.virtualModList.renderedEnd = -1
+		this.virtualModList.scheduled = false
+		if ( rowIDs.length <= 120 ) {
+			this.virtualModList.active = false
+			this.#renderStaticModRows(table, rowIDs)
+			return
+		}
+		this.virtualModList.active = true
+		this.#renderVirtualModRows(true)
+		this.#scheduleVirtualPrewarm()
+	}
+
+	#ensureOpenCollection() {
+		if ( this.flag.folderEdit ) { return }
+		if ( this.track.openCollection !== null && typeof this.collections[this.track.openCollection] !== 'undefined' ) { return }
+		this.track.openCollection = this.flag.activeCollect !== null && typeof this.collections[this.flag.activeCollect] !== 'undefined' ?
+			this.flag.activeCollect :
+			this.orderMap.keys.find((CKey) => typeof this.collections[CKey] !== 'undefined') ?? null
+	}
+
 	// MARK: process data
 	async updateFromData(data) {
 		const updateStartedAt = performance.now()
+		this.#markUserActivity('main-updateFromData')
+		this.dataRevision++
 		const updateStats = {
 			addCollectionsMS    : 0,
 			addModsMS           : 0,
@@ -549,6 +921,7 @@ class StateManager {
 		const editLoopMS = performance.now() - editLoopStartedAt
 
 		const finalUiStartedAt = performance.now()
+		this.#ensureOpenCollection()
 		const finalUpdateVerStartedAt = performance.now()
 		this.updateVerPick(data)
 		updateStats.finalUpdateVerMS = performance.now() - finalUpdateVerStartedAt
@@ -565,7 +938,7 @@ class StateManager {
 		this.prefs.forceUpdate()
 		updateStats.finalPrefsMS = performance.now() - finalPrefsStartedAt
 		const finalDisplayStartedAt = performance.now()
-		this.doDisplay()
+		this.doDisplay('updateFromData')
 		updateStats.finalDisplayMS = performance.now() - finalDisplayStartedAt
 		const finalUiMS = performance.now() - finalUiStartedAt
 
@@ -712,7 +1085,6 @@ class StateManager {
 		MA.byId('topBar-mini').clsOrGate(this.flag.miniMode, 'text-info', null)
 		MA.byId('topBar-update').clsShow(this.flag.updateReady)
 		MA.byId('dirty_folders').clsShow(this.flag.folderDirty)
-		MA.byId('moveButton_ver').clsOrGate(this.flag.versionTool, 'btn-danger', 'btn-success')
 		MA.byId('folderEditButton').clsOrGate(this.flag.folderEdit, 'btn-primary', 'btn-outline-primary')
 
 		const optList = []
@@ -720,8 +1092,89 @@ class StateManager {
 			optList.push(DATA.optionFromArray([value, text], this.flag.activeCollect))
 		}
 		MA.byIdHTML('collectionSelect', optList.join(''))
+		this.#renderRailCollections()
 
 		this.updateI18NDrops()
+	}
+
+	#renderRailCollections() {
+		const list = MA.byId('railCollectionList')
+		const count = MA.byId('railCollectionCount')
+		if ( list === null || count === null ) { return }
+
+		const collectionKeys = this.orderMap.keys.filter((CKey) => typeof this.collections[CKey] !== 'undefined')
+		count.textContent = collectionKeys.length.toString()
+		if ( collectionKeys.length === 0 ) {
+			list.innerHTML = '<div class="small text-body-secondary">No collections loaded.</div>'
+			return
+		}
+
+		const fragment = document.createDocumentFragment()
+		for ( const CKey of collectionKeys ) {
+			const collection = this.collections[CKey]
+			const modCount = collection.data?.alphaSort?.length ?? 0
+			const sizeText = collection.online ? this.#bytesToHR(collection.data?.folderSize ?? 0) : I18N.defer('removable_offline', false)
+			const row = document.createElement('button')
+			row.type = 'button'
+			row.classList.add('rail-collection-row')
+			row.classList.toggle('collection-selected', this.track.openCollection === CKey)
+			row.dataset.collectionKey = CKey
+			row.dataset.active = (this.flag.activeCollect === CKey).toString()
+			row.dataset.selected = (this.track.openCollection === CKey).toString()
+			row.title = `Show mods in ${collection.data?.name ?? CKey}`
+			row.innerHTML = [
+				`<span class="collection-icon" aria-hidden="true">${this.#railCollectionIconHTML(CKey)}</span>`,
+				'<div>',
+				`<div class="collection-name">${DATA.escapeSpecial(collection.data?.name ?? CKey)}</div>`,
+				`<div class="collection-meta">${modCount.toLocaleString()} mod${modCount === 1 ? '' : 's'} · ${DATA.escapeSpecial(sizeText)}</div>`,
+				'</div>',
+				this.flag.activeCollect === CKey ? '<span class="badge text-bg-success rail-active-badge">Active</span>' : ''
+			].join('')
+			row.addEventListener('click', () => { this.colToggle(CKey, true) })
+			row.addEventListener('contextmenu', (event) => {
+				event.preventDefault()
+				this.colContext(CKey)
+			})
+			fragment.appendChild(row)
+		}
+
+		list.innerHTML = ''
+		list.appendChild(fragment)
+	}
+
+	#railCollectionIconHTML(CKey) {
+		const collection = this.collections[CKey]
+		if ( typeof collection === 'undefined' ) { return '' }
+		return DATA.makeFolderIcon(
+			this.track.openCollection === CKey,
+			collection.notes.notes_favorite,
+			this.flag.activeCollect === CKey,
+			collection.notes.notes_holding,
+			collection.notes.notes_color
+		)
+	}
+
+	#syncRailCollectionState() {
+		const list = MA.byId('railCollectionList')
+		if ( list === null ) { return }
+		for ( const row of list.querySelectorAll('.rail-collection-row') ) {
+			const CKey = row.dataset.collectionKey
+			const selected = (this.track.openCollection === CKey).toString()
+			const active = (this.flag.activeCollect === CKey).toString()
+			row.classList.toggle('collection-selected', selected === 'true')
+			if ( row.dataset.selected !== selected || row.dataset.active !== active ) {
+				row.dataset.selected = selected
+				row.dataset.active = active
+				const icon = row.querySelector('.collection-icon')
+				if ( icon !== null ) { icon.innerHTML = this.#railCollectionIconHTML(CKey) }
+				const activeBadge = row.querySelector('.rail-active-badge')
+				if ( active === 'true' && activeBadge === null ) {
+					row.insertAdjacentHTML('beforeend', '<span class="badge text-bg-success rail-active-badge">Active</span>')
+				} else if ( active === 'false' && activeBadge !== null ) {
+					activeBadge.remove()
+				}
+			}
+		}
 	}
 
 	// MARK: translated UI selects
@@ -745,34 +1198,120 @@ class StateManager {
 
 	// MARK: update sideBar
 	doSideBar() {
-		MA.byId('moveButton_move').clsDisable(this.track.selected.size === 0)
-		MA.byId('moveButton_copy').clsDisable(this.track.selected.size === 0)
-		MA.byId('moveButton_delete').clsDisable(this.track.selected.size === 0)
-		MA.byId('moveButton_disable').clsDisable(this.track.selected.size === 0)
-		MA.byId('moveButton_zip').clsDisable(this.track.selected.size === 0)
-		MA.byId('moveButton_disabled').clsDisable(this.track.openCollection === null)
-		MA.byId('moveButton_logIssues').clsDisable(this.track.openCollection === null)
-
-		MA.byId('moveButton_open').clsEnable(this.track.selected.size === 1 || this.track.altClick !== null)
-
-		if ( this.track.selected.size !== 1 && this.track.altClick === null ) {
-			MA.byId('moveButton_hub').clsDisable()
-			MA.byId('moveButton_site').clsDisable()
-		} else {
-			const singleModID = this.track.altClick !== null ? this.track.altClick : [...this.track.selected][0]
-			const element = MA.byId(singleModID)
-			MA.byId('moveButton_hub').clsEnable(element !== null && element.classList.contains('has-hash'))
-			MA.byId('moveButton_site').clsEnable(element !== null && element.classList.contains('has-ext-site'))
-		}
+		this.#updateBatchModButtons()
+		this.#updateDisabledOnlyButton()
 		this.select.count()
 	}
 
+	#updateDisabledOnlyButton() {
+		const button = MA.byId('disabledOnlyToggle')
+		button.classList.toggle('active', this.track.disabledOnly)
+		button.classList.toggle('btn-info', this.track.disabledOnly)
+		button.classList.toggle('btn-outline-info', !this.track.disabledOnly)
+		button.setAttribute('aria-pressed', this.track.disabledOnly ? 'true' : 'false')
+	}
+
+	#selectedModRecords() {
+		const records = []
+		for ( const modID of this.track.selected ) {
+			const [collectionKey, modKey] = modID.split('--')
+			const mod = this.mods?.[collectionKey]?.[modKey]
+			if ( typeof mod === 'undefined' ) { continue }
+			records.push({ collectionKey, mod, modID })
+		}
+		return records
+	}
+
+	#isZipModRecord(mod) {
+		const fullPath = mod?.fileDetail?.fullPath
+		return mod?.fileDetail?.isFolder !== true &&
+			typeof fullPath === 'string' &&
+			fullPath.toLowerCase().endsWith('.zip')
+	}
+
+	#selectedEnabledZipModRecords() {
+		return this.#selectedModRecords()
+			.filter(({ mod }) => this.#isZipModRecord(mod) && mod.fileDetail?.isDisabled !== true)
+	}
+
+	#selectedEnabledZipModIDs() {
+		return this.#selectedEnabledZipModRecords()
+			.map(({ modID }) => modID)
+	}
+
+	#selectedDisabledZipModRecords() {
+		return this.#selectedModRecords()
+			.filter(({ mod }) => this.#isZipModRecord(mod) && mod.fileDetail?.isDisabled === true)
+	}
+
+	#selectedDisabledZipFilesByCollection() {
+		const filesByCollection = new Map()
+		for ( const { collectionKey, mod } of this.#selectedDisabledZipModRecords() ) {
+			const fileName = mod.fileDetail.fullPath.split(/[/\\]/u).pop()
+			if ( typeof fileName !== 'string' || fileName === '' ) { continue }
+			if ( !filesByCollection.has(collectionKey) ) { filesByCollection.set(collectionKey, []) }
+			filesByCollection.get(collectionKey).push(fileName)
+		}
+		return filesByCollection
+	}
+
+	#modStatusLabel(mod) {
+		const title = this.doL10N(mod?.l10n?.title)
+		if ( title !== '--' ) { return title }
+		return mod?.fileDetail?.shortName ?? mod?.fileDetail?.fullPath?.split(/[/\\]/u).pop() ?? 'Selected mod'
+	}
+
+	#updateBatchModButtons() {
+		const disableCount = this.#selectedEnabledZipModIDs().length
+		const enableCount = [...this.#selectedDisabledZipFilesByCollection().values()].reduce((total, files) => total + files.length, 0)
+		const disableButton = MA.byId('batchDisableSelected')
+		const enableButton = MA.byId('batchEnableSelected')
+		disableButton.disabled = disableCount === 0
+		enableButton.disabled = enableCount === 0
+		disableButton.title = disableCount === 0 ?
+			'Check one or more enabled ZIP mods to disable them.' :
+			`Disable ${disableCount} checked ZIP mod${disableCount === 1 ? '' : 's'}.`
+		enableButton.title = enableCount === 0 ?
+			'Check one or more disabled ZIP mods to re-enable them.' :
+			`Re-enable ${enableCount} checked disabled ZIP mod${enableCount === 1 ? '' : 's'}.`
+	}
+
 	// MARK: update display
-	doDisplay() {
+	doDisplay(source = 'unspecified') {
 		const displayStartedAt = performance.now()
+		const displaySignature = [
+			this.dataRevision,
+			this.track.openCollection,
+			this.flag.folderEdit,
+			this.track.disabledOnly,
+			this.track.selectedOnly,
+			this.track.searchString,
+			this.track.searchType,
+			this.track.sortOrder,
+			[...this.track.filter_must].sort().join(','),
+			this.track.filter_must_any,
+			[...this.track.filter_not].sort().join(','),
+			this.track.selected.size,
+		].join('|')
+		if ( displaySignature === this.lastDisplaySignature && displayStartedAt - this.lastDisplayAt < 250 ) {
+			this.#logInstantPerformance('Main renderer doDisplay skipped', `source=${source} reason=duplicate signature=${JSON.stringify(displaySignature)}`)
+			return
+		}
+		this.lastDisplaySignature = displaySignature
+		this.lastDisplayAt = displayStartedAt
+		this.displayLastAt = displayStartedAt
+		let filterBuildMS = 0
+		let collectionLoopMS = 0
+		let domCommitMS = 0
+		let sideBarMS = 0
+		let refreshSelectedMS = 0
+		let railCollectionsMS = 0
 		const scrollFrag = document.createDocumentFragment()
 		const docFrag    = document.createDocumentFragment()
 		let displayedMods = 0
+		this.modIconObserver?.disconnect()
+		this.modIconObserver = null
+		this.modIconLoadQueue = []
 
 		if ( this.flag.folderEdit ) {
 			const editNode = document.createElement('tr')
@@ -783,27 +1322,34 @@ class StateManager {
 			})
 			docFrag.appendChild(editNode)
 		} else {
+			const filterBuildStartedAt = performance.now()
 			this.filter.build()
+			filterBuildMS = performance.now() - filterBuildStartedAt
 		}
 
+		const collectionLoopStartedAt = performance.now()
 		for ( const CKey of this.orderMap.keys ) {
 			const thisCol = this.collections[CKey]
-			thisCol.nodeIcon.innerHTML = DATA.makeFolderIcon(
-				this.track.openCollection === CKey,
-				thisCol.notes.notes_favorite,
-				this.flag.activeCollect === CKey,
-				thisCol.notes.notes_holding,
-				thisCol.notes.notes_color
-			)
 
-			scrollFrag.appendChild(thisCol.scroll)
-			docFrag.appendChild(thisCol.node)
+			if ( this.flag.folderEdit ) {
+				thisCol.nodeIcon.innerHTML = DATA.makeFolderIcon(
+					this.track.openCollection === CKey,
+					thisCol.notes.notes_favorite,
+					this.flag.activeCollect === CKey,
+					thisCol.notes.notes_holding,
+					thisCol.notes.notes_color
+				)
+				scrollFrag.appendChild(thisCol.scroll)
+				docFrag.appendChild(thisCol.node)
+			}
 
 			if ( ! this.flag.folderEdit && this.track.openCollection === CKey ) {
-				thisCol.modNodePoint.innerHTML = ''
+				thisCol.modNode.classList.remove('d-none')
+				const displayRowIDs = []
 				for ( const MKey of thisCol[this.track.sortOrder] ) {
 					const modRec = this.mods[CKey][MKey]
 					const modKey = `${CKey}--${MKey}`
+					if ( this.track.disabledOnly && modRec.fileDetail?.isDisabled !== true ) { continue }
 					if ( ! this.track.selected.has(modKey) ) {
 						if ( this.doesSearchExclude(modRec) ) { continue }
 						if ( this.doesTagExclude(modRec)    ) { continue }
@@ -811,28 +1357,65 @@ class StateManager {
 					}
 
 					this.#applyModUpdateBadge(modRec)
-					thisCol.modNodePoint.appendChild(modRec.node)
 					scrollFrag.appendChild(modRec.scroll)
+					displayRowIDs.push(modKey)
 					displayedMods++
 				}
+				this.#renderModRowSet(thisCol.modNodePoint, CKey, displayRowIDs)
+				docFrag.appendChild(thisCol.modNode)
 			}
 
-			docFrag.appendChild(thisCol.modNode)
+			if ( this.flag.folderEdit ) {
+				docFrag.appendChild(thisCol.modNode)
+			}
 		}
+		collectionLoopMS = performance.now() - collectionLoopStartedAt
+		const domCommitStartedAt = performance.now()
 		MA.byId('mod-collections').innerHTML = ''
 		MA.byId('mod-collections').appendChild(docFrag)
+		this.#observeVisibleModIcons(MA.byId('mod-collections'))
 		MA.byId('scroll-bar-fake').innerHTML = ''
 		MA.byId('scroll-bar-fake').appendChild(scrollFrag)
+		domCommitMS = performance.now() - domCommitStartedAt
+		const sideBarStartedAt = performance.now()
 		this.doSideBar()
+		sideBarMS = performance.now() - sideBarStartedAt
+		const refreshSelectedStartedAt = performance.now()
 		this.refreshSelected()
-		this.#logPerformance('Main renderer doDisplay', displayStartedAt, `collections=${this.orderMap.keys.length.toString()} displayedMods=${displayedMods.toString()} folderEdit=${this.flag.folderEdit.toString()}`)
+		refreshSelectedMS = performance.now() - refreshSelectedStartedAt
+		const railCollectionsStartedAt = performance.now()
+		this.#syncRailCollectionState()
+		railCollectionsMS = performance.now() - railCollectionsStartedAt
+		this.#logPerformance('Main renderer doDisplay', displayStartedAt, [
+			`collections=${this.orderMap.keys.length.toString()}`,
+			`source=${source}`,
+			`openCollection=${JSON.stringify(this.track.openCollection)}`,
+			`displayedMods=${displayedMods.toString()}`,
+			`selected=${this.track.selected.size.toString()}`,
+			`folderEdit=${this.flag.folderEdit.toString()}`,
+			`filterBuild=${filterBuildMS.toFixed(1)} ms`,
+			`collectionLoop=${collectionLoopMS.toFixed(1)} ms`,
+			`domCommit=${domCommitMS.toFixed(1)} ms`,
+			`sideBar=${sideBarMS.toFixed(1)} ms`,
+			`refreshSelected=${refreshSelectedMS.toFixed(1)} ms`,
+			`railCollections=${railCollectionsMS.toFixed(1)} ms`,
+		].join(' '))
 	}
 
-	#scheduleBackgroundDisplayRefresh() {
+	#scheduleBackgroundDisplayRefresh(reason = 'background', changedFilter = null) {
+		const filterDependsOnChange = changedFilter !== null && (
+			this.track.filter_must.has(changedFilter) ||
+			this.track.filter_not.has(changedFilter) ||
+			(this.track.searchString.length >= 2 && changedFilter.includes(this.track.searchString))
+		)
+		if ( changedFilter !== null && !filterDependsOnChange ) {
+			this.#logInstantPerformance('Main renderer background refresh skipped', `reason=${reason} changedFilter=${changedFilter}`)
+			return
+		}
 		if ( this.backgroundDisplayRefreshTimer !== null ) { return }
 		this.backgroundDisplayRefreshTimer = setTimeout(() => {
 			this.backgroundDisplayRefreshTimer = null
-			this.doDisplay()
+			this.doDisplay(`background:${reason}`)
 		}, 100)
 	}
 
@@ -879,6 +1462,15 @@ class StateManager {
 
 		for ( const excludeTag of this.track.filter_not ) {
 			if ( mod.filters.has(excludeTag) ) { return true }
+		}
+
+		if ( this.track.filter_must.size === 0 ) { return false }
+
+		if ( this.track.filter_must_any ) {
+			for ( const mustTag of this.track.filter_must ) {
+				if ( mod.filters.has(mustTag) ) { return false }
+			}
+			return true
 		}
 
 		for ( const mustTag of this.track.filter_must ) {
@@ -1109,35 +1701,65 @@ class StateManager {
 	#renderModRow({
 		authorCat,
 		brandTitle,
-		fileDate,
 		fileSize,
-		fileTime,
 		folderIcon,
 		iconImage,
-		shortName,
+		modName,
+		rowActionLabel,
 		version,
 	}) {
+		const brandLine = brandTitle === '' ? '' : `<br><small class="ps-2">${brandTitle}</small>`
 		return [
 			'<td style="width: 4.6rem; height: 4.6rem; white-space: nowrap">',
 			iconImage,
 			folderIcon,
 			'</td>',
 			'<td><div class="d-flex flex-row"><div>',
-			`<span class="mod-short-name">${shortName}</span><br>`,
-			`<small class="ps-2">${brandTitle}</small><br>`,
+			`<span class="mod-short-name">${modName}</span>`,
+			brandLine,
+			'<br>',
 			`<small class="text-body-tertiary ps-2">${authorCat}</small>`,
 			'</div><div class="issue_badges fs-5 flex-grow-1 text-end"></div></div></td>',
 			'<td class="text-end" style="width: 100px; line-height: 1.25;">',
-			`${version}<br><em class="ex-small px-0">${fileDate}<br>${fileTime}</em><br><em class="small px-0">${fileSize}</em>`,
+			`${version}<br><em class="small px-0">${fileSize}</em>`,
+			'</td>',
+			'<td class="main-mod-row-actions text-end">',
+			'<div class="d-inline-flex gap-2" role="group" aria-label="Mod actions">',
+			'<button type="button" class="btn btn-sm mod-detail-row">Details</button>',
+			`<button type="button" class="btn btn-sm mod-disable-row">${rowActionLabel}</button>`,
+			'</div>',
 			'</td>'
 		].join('')
 	}
+
+	#isVisibleRowBadge(badge) {
+		const name = badge?.name ?? ''
+		if ( name === `fs${this.flag.currentVersion}` ) { return false }
+		if ( name.startsWith('fs') ) { return true }
+		return [
+			'broken',
+			'depend',
+			'keys_bad',
+			'malware',
+			'problem',
+			'update',
+		].includes(name)
+	}
+
 	// MARK: addMod
-	/* eslint-disable-next-line complexity */
-	#addMod(thisMod, overBadges = null, isHolding = false) {
+	#addMod(thisMod, overBadges = null, _isHolding = false) {
+		const isDisabledMod = thisMod.fileDetail?.isDisabled === true
 		const mod = {
-			filters : new Set(thisMod?.displayBadges?.map?.((x) => x.name) || []),
-			node    : document.createElement('tr'),
+			currentCollection : thisMod.currentCollection,
+			fileDetail : thisMod.fileDetail,
+			filters : new Set([
+				...(thisMod?.displayBadges?.map?.((x) => x.name) || []),
+				...(isDisabledMod ? ['disabled'] : []),
+			]),
+			modDesc : thisMod.modDesc,
+			node    : null,
+			overBadges,
+			raw     : thisMod,
 			rollbackCheck : {
 				hasRollback : false,
 				isComplete  : false,
@@ -1160,13 +1782,24 @@ class StateManager {
 		mod.search.find_all = Object.values(mod.search).join(' ')
 
 		mod.scroll.id  = `${thisMod.colUUID}--scroller`
+		this.#refreshModUpdateBadge(thisMod, mod)
+		this.#refreshModRollbackBadge(thisMod, mod)
 
+		return mod
+	}
+
+	/* eslint-disable-next-line complexity */
+	#ensureModRowNode(mod) {
+		if ( mod.node !== null ) { return }
+		const thisMod = mod.raw
+		const isDisabledMod = thisMod.fileDetail?.isDisabled === true
+		mod.node = document.createElement('tr')
 		mod.node.classList.add(...[
 			'mod-row',
 			'border-bottom',
 			this.extSites[thisMod.fileDetail.shortName] ? 'has-ext-site' : null,
 			thisMod.modHub.id ? 'has-hash' : null,
-			...( thisMod.canNotUse === true || this.flag.currentVersion !== thisMod.gameVersion ) ?
+			...( isDisabledMod || thisMod.canNotUse === true || this.flag.currentVersion !== thisMod.gameVersion ) ?
 				['mod-disabled', 'bg-secondary-subtle', 'bg-opacity-25'] :
 				[]
 		].filter((x) => x !== null))
@@ -1174,27 +1807,33 @@ class StateManager {
 		mod.node.id = thisMod.colUUID
 		// mod.node.setAttribute('draggable', true)
 	
-		mod.node.addEventListener('contextmenu', () => { this.modContext(thisMod.colUUID) })
+		mod.node.addEventListener('contextmenu', () => {
+			this.#markUserActivity('main-list-context')
+			this.modContext(thisMod.colUUID)
+		})
 		// mod.node.addEventListener('dragstart',   (e) => { this.modDrag(e, thisMod.colUUID) })
 		mod.node.addEventListener('click',       (e) => { this.modClick(e, thisMod.colUUID) })
 
-		if ( ! thisMod.badgeArray.includes('notmod') && ! thisMod.badgeArray.includes('savegame') ) {
+		if ( !thisMod.badgeArray.includes('notmod') && !thisMod.badgeArray.includes('savegame') ) {
 			mod.node.addEventListener('dblclick',  () => {
+				const detailStartedAt = performance.now()
+				this.#markUserActivity('main-detail-doubleClick')
+				this.#logInstantPerformance('Main renderer detail open request', `source=doubleClick id=${JSON.stringify(thisMod.colUUID)} shortName=${JSON.stringify(thisMod.fileDetail.shortName)}`)
 				if ( thisMod.badgeArray.includes('log') ) {
 					window.main_IPC.dispatchLog(thisMod.fileDetail.fullPath)
 				} else {
 					window.main_IPC.dispatchDetail(thisMod.colUUID)
 				}
+				this.#logPerformance('Main renderer detail dispatch', detailStartedAt, `source=doubleClick id=${JSON.stringify(thisMod.colUUID)}`)
 			})
 		}
 
 		const fixCat   = [...new Set(thisMod.has_cats.map((x) => x.split(' ')).flat())].sort()
 		const fixBrand = [...new Set(thisMod.has_brands.map((x) => x.split(' ')).flat())].sort()
+		const modTitle = this.doL10N(thisMod.l10n.title)
 
 		const brandTitle = [
 			fixBrand.length !== 0 ? `<strong>${this.#addExtraInfo(fixBrand)}</strong>` : null,
-			fixBrand.length !== 0 ? '--' : null,
-			this.doL10N(thisMod.l10n.title)
 		]
 		const authorCat = [
 			DATA.escapeSpecial(thisMod.modDesc.author),
@@ -1205,34 +1844,60 @@ class StateManager {
 		mod.node.innerHTML = this.#renderModRow({
 			authorCat  : authorCat.filter((x) => x !== null).join(' '),
 			brandTitle : brandTitle.filter((x) => x !== null).join(' '),
-			fileDate   : thisMod.fileDetail.fileDate.slice(0, 10),
 			fileSize   : this.#bytesToHR(thisMod.fileDetail.fileSize),
-			fileTime   : thisMod.fileDetail.fileDate.slice(11, 16),
 			folderIcon : thisMod.badgeArray.includes('folder') ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
-			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(thisMod.modDesc.iconImage)}">`,
-			shortName  : thisMod.fileDetail.shortName,
+			iconImage  : this.#lazyModIconHTML(thisMod.modDesc.iconImage),
+			modName    : modTitle !== '--' ? modTitle : DATA.escapeSpecial(thisMod.fileDetail.shortName),
+			rowActionLabel : isDisabledMod ? 'Enable' : 'Disable',
 			version    : DATA.escapeSpecial(thisMod.modDesc.version),
 		})
 
 		const badgeContain = mod.node.querySelector('.issue_badges')
 
-		if ( overBadges !== null ) {
-			badgeContain.innerHTML = overBadges
+		if ( mod.overBadges !== null ) {
+			badgeContain.innerHTML = mod.overBadges
 		} else {
-			for ( const badge of thisMod?.displayBadges?.filter?.((x) => isHolding || x.name !== `fs${this.flag.currentVersion}`) || [] ) {
+			for ( const badge of thisMod?.displayBadges?.filter?.((x) => this.#isVisibleRowBadge(x)) || [] ) {
 				badgeContain.appendChild(I18N.buildBadgeMod(badge))
 			}
 		}
+		if ( isDisabledMod ) { badgeContain.appendChild(this.#buildDisabledBadge()) }
+		this.#wireModRowActions(mod.node, thisMod, isDisabledMod)
 		const modHubUpdateBadge = badgeContain.querySelector('.badge-mod-update')
 		if ( modHubUpdateBadge !== null ) {
 			modHubUpdateBadge.removeAttribute('data-key')
 			modHubUpdateBadge.textContent = 'ModHub update'
 			modHubUpdateBadge.title = 'A newer version is available from the official ModHub catalogue'
 		}
-		this.#refreshModUpdateBadge(thisMod, mod)
-		this.#refreshModRollbackBadge(thisMod, mod)
+		this.#applyModUpdateBadge(mod)
+		this.#applyModRollbackBadge(mod)
+	}
 
-		return mod
+	#wireModRowActions(node, thisMod, isDisabledMod) {
+		const stopAndRun = (selector, callback) => {
+			const button = node.querySelector(selector)
+			if ( button === null ) { return }
+			button.addEventListener('click', (event) => {
+				event.preventDefault()
+				event.stopPropagation()
+				callback(button)
+			})
+		}
+
+		stopAndRun('.mod-detail-row', () => {
+			const detailStartedAt = performance.now()
+			this.#markUserActivity('main-detail-button')
+			this.#logInstantPerformance('Main renderer detail open request', `source=button id=${JSON.stringify(thisMod.colUUID)} shortName=${JSON.stringify(thisMod.fileDetail.shortName)}`)
+			window.main_IPC.dispatchDetail(thisMod.colUUID)
+			this.#logPerformance('Main renderer detail dispatch', detailStartedAt, `source=button id=${JSON.stringify(thisMod.colUUID)}`)
+		})
+		stopAndRun('.mod-disable-row', (button) => {
+			if ( isDisabledMod ) {
+				void this.action.enableSingleMod(thisMod, button)
+			} else {
+				void this.action.disableSingleMod(thisMod.colUUID, button)
+			}
+		})
 	}
 
 	#refreshModRollbackBadge(thisMod, modRec) {
@@ -1264,7 +1929,7 @@ class StateManager {
 
 			this.#applyModRollbackBadge(modRec)
 
-			if ( hadRollback !== hasRollback ) { this.#scheduleBackgroundDisplayRefresh() }
+			if ( hadRollback !== hasRollback ) { this.#scheduleBackgroundDisplayRefresh('rollbackCheck', 'rollback_available') }
 		})
 	}
 
@@ -1302,11 +1967,12 @@ class StateManager {
 
 			this.#applyModUpdateBadge(modRec)
 
-			if ( hadUpdate !== hasUpdate ) { this.#scheduleBackgroundDisplayRefresh() }
+			if ( hadUpdate !== hasUpdate ) { this.#scheduleBackgroundDisplayRefresh('githubUpdateCheck', 'github_update') }
 		})
 	}
 
 	#applyModUpdateBadge(modRec) {
+		if ( modRec.node === null ) { return }
 		const badgeContain = modRec.node.querySelector('.issue_badges')
 		if ( badgeContain === null ) { return }
 
@@ -1319,6 +1985,7 @@ class StateManager {
 	}
 
 	#applyModRollbackBadge(modRec) {
+		if ( modRec.node === null ) { return }
 		const badgeContain = modRec.node.querySelector('.issue_badges')
 		if ( badgeContain === null ) { return }
 
@@ -1346,6 +2013,14 @@ class StateManager {
 		return badgeNode
 	}
 
+	#buildDisabledBadge() {
+		const badgeNode = document.createElement('span')
+		badgeNode.classList.add('badge', 'border', 'border-2', 'text-bg-secondary', 'border-secondary', 'badge-mod-disabled')
+		badgeNode.title = 'This mod is disabled in the collection'
+		badgeNode.textContent = 'Disabled'
+		return badgeNode
+	}
+
 	#isGitHubURL(sourceURL) {
 		try {
 			return new URL(sourceURL).hostname.toLowerCase() === 'github.com'
@@ -1356,12 +2031,44 @@ class StateManager {
 
 	// MARK: col actions
 	colToggle(id, stayOpen = false) {
+		const toggleStartedAt = performance.now()
+		this.#markUserActivity('collection-toggle')
+		const previousCollection = this.track.openCollection
+		const selectedBefore = this.track.selected.size
 		this.track.lastID    = null
 		this.track.lastIndex = null
 		this.track.altClick  = null
 
+		const clearSelectionStartedAt = performance.now()
 		for ( const selected of this.track.selected ) {
 			this.modToggle(selected, false)
+		}
+		const clearSelectionMS = performance.now() - clearSelectionStartedAt
+
+		if ( stayOpen && this.track.openCollection === id ) {
+			const refreshStartedAt = performance.now()
+			this.refreshSelected()
+			const refreshMS = performance.now() - refreshStartedAt
+			const sideBarStartedAt = performance.now()
+			this.doSideBar()
+			const sideBarMS = performance.now() - sideBarStartedAt
+			const railStartedAt = performance.now()
+			this.#syncRailCollectionState()
+			const railMS = performance.now() - railStartedAt
+			this.#logPerformance('Main renderer collection toggle', toggleStartedAt, [
+				`from=${JSON.stringify(previousCollection)}`,
+				`to=${JSON.stringify(this.track.openCollection)}`,
+				`clicked=${JSON.stringify(id)}`,
+				`stayOpen=${stayOpen.toString()}`,
+				`selectedBefore=${selectedBefore.toString()}`,
+				`selectedAfter=${this.track.selected.size.toString()}`,
+				`clearSelection=${clearSelectionMS.toFixed(1)} ms`,
+				`refreshSelected=${refreshMS.toFixed(1)} ms`,
+				`sideBar=${sideBarMS.toFixed(1)} ms`,
+				`railCollections=${railMS.toFixed(1)} ms`,
+				'display=skipped',
+			].join(' '))
+			return
 		}
 
 		if ( this.track.openCollection !== null ) {
@@ -1379,7 +2086,18 @@ class StateManager {
 			this.track.openCollection = id
 			this.collections[id].modNode.classList.remove('d-none')
 		}
-		this.doDisplay()
+		const displayStartedAt = performance.now()
+		this.doDisplay('collectionToggle')
+		this.#logPerformance('Main renderer collection toggle', toggleStartedAt, [
+			`from=${JSON.stringify(previousCollection)}`,
+			`to=${JSON.stringify(this.track.openCollection)}`,
+			`clicked=${JSON.stringify(id)}`,
+			`stayOpen=${stayOpen.toString()}`,
+			`selectedBefore=${selectedBefore.toString()}`,
+			`selectedAfter=${this.track.selected.size.toString()}`,
+			`clearSelection=${clearSelectionMS.toFixed(1)} ms`,
+			`display=${(performance.now() - displayStartedAt).toFixed(1)} ms`,
+		].join(' '))
 	}
 
 	colScroll(id) {
@@ -1396,37 +2114,89 @@ class StateManager {
 	}
 
 	modClick(e, id) {
+		const clickStartedAt = performance.now()
+		this.#markUserActivity('main-mod-click')
+		const selectedBefore = this.track.selected.size
+		const thisRow   = e.target.closest('.mod-row')
+		const theTable  = thisRow.closest('table')
+		const rowIndexFromDataset = Number.parseInt(thisRow.dataset.rowIndex ?? '', 10)
+		const thisIndex = Number.isNaN(rowIndexFromDataset) ? [...theTable.children].indexOf(thisRow) : rowIndexFromDataset
+		const visibleRowIDs = this.virtualModList.collectionKey === this.track.openCollection ? this.virtualModList.rowIDs : []
+
 		if ( e.altKey ) {
+			const refreshStartedAt = performance.now()
 			this.track.altClick = id
+			this.track.lastIndex = thisIndex
+			this.track.lastID    = id
+			this.track.selected.clear()
+			this.track.selected.add(id)
+			this.refreshSelected()
+			const refreshMS = performance.now() - refreshStartedAt
+			const sideBarStartedAt = performance.now()
 			this.doSideBar()
+			this.#logPerformance('Main renderer mod click selection', clickStartedAt, [
+				'mode=alt',
+				`id=${JSON.stringify(id)}`,
+				`rowIndex=${thisIndex.toString()}`,
+				`selectedBefore=${selectedBefore.toString()}`,
+				`selectedAfter=${this.track.selected.size.toString()}`,
+				`refreshSelected=${refreshMS.toFixed(1)} ms`,
+				`sideBar=${(performance.now() - sideBarStartedAt).toFixed(1)} ms`,
+			].join(' '))
 			return
 		}
 
 		this.track.altClick = null
-
-		const thisRow   = e.target.closest('.mod-row')
-		const theTable  = thisRow.closest('table')
-		const thisIndex = [...theTable.children].indexOf(thisRow)
-
-		if ( !e.shiftKey || this.track.lastIndex === null || thisIndex === this.track.lastIndex ) {
-			this.track.lastIndex = thisIndex
-			this.track.lastID    = id
-			this.modToggle(id)
-			this.doSideBar()
+		if ( !e.ctrlKey && !e.shiftKey ) {
+			this.#logPerformance('Main renderer mod click selection', clickStartedAt, [
+				'mode=plain',
+				`id=${JSON.stringify(id)}`,
+				`rowIndex=${thisIndex.toString()}`,
+				`selectedBefore=${selectedBefore.toString()}`,
+				`selectedAfter=${this.track.selected.size.toString()}`,
+			].join(' '))
 			return
 		}
 
-		const shiftOn     = this.track.selected.has(this.track.lastID)
+		if ( e.ctrlKey || this.track.lastIndex === null || thisIndex === this.track.lastIndex ) {
+			this.track.lastIndex = thisIndex
+			this.track.lastID    = id
+			this.modToggle(id)
+			const sideBarStartedAt = performance.now()
+			this.doSideBar()
+			this.#logPerformance('Main renderer mod click selection', clickStartedAt, [
+				`mode=${e.ctrlKey ? 'ctrl' : 'shift-single'}`,
+				`id=${JSON.stringify(id)}`,
+				`rowIndex=${thisIndex.toString()}`,
+				`selectedBefore=${selectedBefore.toString()}`,
+				`selectedAfter=${this.track.selected.size.toString()}`,
+				`sideBar=${(performance.now() - sideBarStartedAt).toFixed(1)} ms`,
+			].join(' '))
+			return
+		}
+
 		const index_start = Math.min(thisIndex, this.track.lastIndex)
 		const index_end   = Math.max(thisIndex, this.track.lastIndex)
+		const rangeSize = index_end - index_start + 1
 
 		for ( let i = index_start; i <= index_end; i++ ) {
-			this.modToggle(theTable.children[i].id, shiftOn)
+			const rowID = visibleRowIDs[i] ?? theTable.children[i]?.id ?? null
+			if ( rowID !== null ) { this.modToggle(rowID, true) }
 		}
 
 		this.track.lastIndex = thisIndex
 		this.track.lastID    = id
+		const sideBarStartedAt = performance.now()
 		this.doSideBar()
+		this.#logPerformance('Main renderer mod click selection', clickStartedAt, [
+			'mode=shift-range',
+			`id=${JSON.stringify(id)}`,
+			`rowIndex=${thisIndex.toString()}`,
+			`rangeSize=${rangeSize.toString()}`,
+			`selectedBefore=${selectedBefore.toString()}`,
+			`selectedAfter=${this.track.selected.size.toString()}`,
+			`sideBar=${(performance.now() - sideBarStartedAt).toFixed(1)} ms`,
+		].join(' '))
 	}
 
 	modToggle(id, force = null) {
@@ -1460,15 +2230,23 @@ class StateManager {
 
 	// MARK: safe refresh
 	refreshSelected() {
+		const refreshStartedAt = performance.now()
+		const selectedBefore = this.track.selected.size
+		let visibleSelectedRows = 0
+		let visibleScrollerRows = 0
+		let staleSelection = 0
 		for ( const element of MA.query(`.mod-row.${this.selectClass}`) ) {
+			visibleSelectedRows++
 			element.classList.remove(this.selectClass)
 		}
 		for ( const element of MA.query('scroller-item.bg-success') ) {
+			visibleScrollerRows++
 			element.classList.remove('bg-success')
 		}
 
 		for ( const id of this.track.selected ) {
 			if ( !id.startsWith(this.track.openCollection) ) {
+				staleSelection++
 				this.track.selected.delete(id)
 			} else {
 				MA.safeClsAdd(id, this.selectClass)
@@ -1476,22 +2254,60 @@ class StateManager {
 			}
 		}
 		this.select.count()
+		this.#logPerformance('Main renderer refreshSelected', refreshStartedAt, [
+			`openCollection=${JSON.stringify(this.track.openCollection)}`,
+			`selectedBefore=${selectedBefore.toString()}`,
+			`selectedAfter=${this.track.selected.size.toString()}`,
+			`visibleSelectedRows=${visibleSelectedRows.toString()}`,
+			`visibleScrollerRows=${visibleScrollerRows.toString()}`,
+			`staleSelection=${staleSelection.toString()}`,
+		].join(' '))
 	}
 
 	// MARK: selection toggles
 	forceSelectOnly(nv = true) {
-		MA.byId('modFilter_selected').checked = nv
+		const selectedOnlyToggle = MA.byId('modFilter_selected')
+		if ( selectedOnlyToggle !== null ) { selectedOnlyToggle.checked = nv }
 		this.track.selectedOnly = nv
 	}
 
 	toggleSelectOnly() {
 		this.track.selectedOnly = MA.byIdCheck('modFilter_selected')
-		this.doDisplay()
+		this.doDisplay('toggleSelectOnly')
+	}
+
+	toggleDisabledOnly() {
+		this.track.disabledOnly = !this.track.disabledOnly
+		this.doDisplay('toggleDisabledOnly')
+	}
+
+	toggleAdvancedFilters(force = null) {
+		const panel = MA.byId('advancedFilterPanel')
+		const button = MA.byId('advancedFilterToggle')
+		if ( panel === null || button === null ) { return }
+		const show = force === null ? panel.classList.contains('d-none') : force === true
+		panel.clsShow(show)
+		button.classList.toggle('btn-secondary', show)
+		button.classList.toggle('btn-outline-secondary', !show)
+		button.setAttribute('aria-expanded', show ? 'true' : 'false')
+	}
+
+	toggleTagFilterHelp(force = null) {
+		const panel = MA.byId('tagFilterHelpPanel')
+		if ( panel === null ) { return }
+		const show = force === null ? panel.classList.contains('d-none') : force === true
+		panel.clsShow(show)
+	}
+
+	toggleRequiredTagMode() {
+		this.track.filter_must_any = MA.byIdCheck('tagRequiredAnyToggle')
+		this.filter.updateModeDisplay()
+		this.doDisplay('toggleRequiredTagMode')
 	}
 
 	changeSort() {
 		this.track.sortOrder = MA.byIdValue('modSortOrder')
-		this.doDisplay()
+		this.doDisplay('changeSort')
 	}
 
 	startFile(mode) {
@@ -1502,6 +2318,7 @@ class StateManager {
 	filter = {
 		build : () => {
 			MA.byIdText('tag_filter_full_count', this.track.filter_must.size + this.track.filter_not.size)
+			this.filter.updateModeDisplay()
 			const dropNode = document.createDocumentFragment()
 			const textNode = document.createElement('i18n-text')
 			textNode.classList.add('text-center', 'd-block', 'pb-1')
@@ -1532,7 +2349,7 @@ class StateManager {
 			resetNode.addEventListener('click', () => {
 				this.track.filter_must.clear()
 				this.track.filter_not.clear()
-				this.doDisplay()
+				this.doDisplay('tagFilterReset')
 			})
 			dropNode.appendChild(resetNode)
 
@@ -1542,7 +2359,6 @@ class StateManager {
 		buildTag : (tag) => {
 			const must    = this.track.filter_must.has(tag)
 			const mustNot = this.track.filter_not.has(tag)
-			const may     = !must && !mustNot
 			
 			const tagNode    = document.createDocumentFragment()
 			const tagNodeTag = document.createElement('div')
@@ -1551,6 +2367,8 @@ class StateManager {
 				tagNodeTag.appendChild(this.#buildGitHubUpdateBadge())
 			} else if ( tag === 'rollback_available' ) {
 				tagNodeTag.appendChild(this.#buildRollbackBadge())
+			} else if ( tag === 'disabled' ) {
+				tagNodeTag.appendChild(this.#buildDisabledBadge())
 			} else {
 				tagNodeTag.appendChild(I18N.buildBadgeMod({name : tag, class : []}))
 			}
@@ -1559,38 +2377,44 @@ class StateManager {
 			const tagNodeBtn = document.createElement('div')
 			tagNodeBtn.classList.add('col-3', 'py-1')
 			tagNodeBtn.innerHTML = [
-				`<input type="radio" class="btn-check" name="tag_filters__${tag}" id="tag_filters__${tag}__may" value="may" autocomplete="off" ${may ? 'checked' : ''}>`,
-				`<label for="tag_filters__${tag}__may" class="btn btn-sm btn-outline-success rounded-0 rounded-start"><i18n-text data-key="tag_filter__show"></i18n-text></label>`,
-				`<input type="radio" class="btn-check" name="tag_filters__${tag}" id="tag_filters__${tag}__not" value="not" autocomplete="off" ${mustNot ? 'checked' : ''}>`,
-				`<label for="tag_filters__${tag}__not" class="btn btn-sm btn-outline-warning rounded-0"><i18n-text data-key="tag_filter__hide"></i18n-text></label>`,
-				`<input type="radio" class="btn-check" name="tag_filters__${tag}" id="tag_filters__${tag}__must" value="must" autocomplete="off" ${must ? 'checked' : ''}>`,
-				`<label for="tag_filters__${tag}__must" class="btn btn-sm btn-outline-danger rounded-0 rounded-end"><i18n-text data-key="tag_filter__exclusive"></i18n-text></label>`,
+				'<div class="btn-group btn-group-sm" role="group">',
+				`<button type="button" class="btn ${mustNot ? 'btn-warning' : 'btn-outline-warning'} rounded-0 rounded-start" data-tag-mode="not" title="Mod MUST NOT have this tag. Click again to clear this tag filter."><i class="bi bi-eye-slash"></i></button>`,
+				`<button type="button" class="btn ${must ? 'btn-danger' : 'btn-outline-danger'} rounded-0 rounded-end" data-tag-mode="must" title="Mod MUST have this tag. Click again to clear this tag filter."><i class="bi bi-pin-angle"></i></button>`,
+				'</div>',
 			].join('')
-			for ( const element of tagNodeBtn.querySelectorAll('input') ) {
-				element.addEventListener('change', (e) => {
-					const value = e.target.value
-					if ( value === 'may' ) {
-						this.track.filter_must.delete(tag)
-						this.track.filter_not.delete(tag)
-					} else if ( value === 'must') {
+			for ( const element of tagNodeBtn.querySelectorAll('button') ) {
+				element.addEventListener('click', (e) => {
+					const value = e.currentTarget.dataset.tagMode
+					if ( value === 'must' && !must ) {
 						this.track.filter_must.add(tag)
 						this.track.filter_not.delete(tag)
-					} else {
+					} else if ( value === 'not' && !mustNot ) {
 						this.track.filter_must.delete(tag)
 						this.track.filter_not.add(tag)
+					} else {
+						this.track.filter_must.delete(tag)
+						this.track.filter_not.delete(tag)
 					}
-					this.doDisplay()
+					this.doDisplay('tagFilterChange')
 				})
 			}
 			tagNode.appendChild(tagNodeBtn)
 
 			return tagNode
 		},
+		updateModeDisplay : () => {
+			const toggle = MA.byId('tagRequiredAnyToggle')
+			const label = MA.byId('tagRequiredModeLabel')
+			if ( toggle !== null ) { toggle.checked = this.track.filter_must_any }
+			if ( label !== null ) {
+				label.textContent = this.track.filter_must_any ? 'Match any required tag' : 'Match all required tags'
+			}
+		},
 
 		findClear : () => {
 			MA.byIdValue('filter_input', '')
 			this.track.searchString = ''
-			this.doDisplay()
+			this.doDisplay('findClear')
 		},
 		findForce : (text) => {
 			MA.byIdValue('filter_input', text)
@@ -1604,11 +2428,11 @@ class StateManager {
 			this.track.searchString = MA.byIdValueLC('filter_input')
 			MA.byId('filter_clear').clsHide(this.track.searchString.length === 0)
 	
-			if ( needsUpdate ) { this.doDisplay() }
+			if ( needsUpdate ) { this.doDisplay('findTerm') }
 		},
 		findType : () => {
 			this.track.searchType = MA.byIdValue('modFindType')
-			this.doDisplay()
+			this.doDisplay('findType')
 		},
 	}
 
@@ -1739,19 +2563,76 @@ class StateManager {
 			}
 		},
 		disableSelectedMods : async () => {
-			const modIDs = [...this.track.selected]
-			if ( modIDs.length === 0 ) { return }
-			MA.byId('moveButton_disable').clsDisable()
+			const selectedRecords = this.#selectedEnabledZipModRecords()
+			const modIDs = selectedRecords.map(({ modID }) => modID)
+			if ( selectedRecords.length === 0 ) { return }
+			MA.byId('batchDisableSelected').disabled = true
+			this.track.pendingSearchFocus = true
+			await this.files.runProgressOperation({
+				detail     : `Disabling ${selectedRecords.length} selected mod${selectedRecords.length === 1 ? '' : 's'}...`,
+				failureText : (result) => `Disabled ${result.disabled ?? 0}; ${result.failed ?? 0} failed.`,
+				items      : selectedRecords.map(({ mod }) => this.#modStatusLabel(mod)),
+				run        : (operationId) => window.main_IPC.files.disableSelected(modIDs, operationId),
+				successText : (result) => `Disabled ${result.disabled ?? selectedRecords.length} selected mod${selectedRecords.length === 1 ? '' : 's'}.`,
+				title      : 'Disabling selected mods',
+			})
+			this.#updateBatchModButtons()
+		},
+		disableSingleMod : async (modID, button = null) => {
+			if ( typeof modID !== 'string' || modID === '' ) { return }
+			if ( button !== null ) { button.disabled = true }
 			this.track.pendingSearchFocus = true
 			try {
-				const result = await window.main_IPC.files.disableSelected(modIDs)
-				MA.alert(`Disabled ${result.disabled} mod(s); ${result.failed} could not be disabled.`)
-				this.track.selected.clear()
-				this.forceSelectOnly(false)
+				const result = await window.main_IPC.files.disableSelected([modID])
+				if ( result.failed > 0 ) { MA.alert(`${result.failed} mod(s) could not be disabled.`) }
 			} catch (err) {
 				this.track.pendingSearchFocus = false
 				MA.alert(`Disable failed: ${err.message}`)
-				this.doSideBar()
+				if ( button !== null ) { button.disabled = false }
+			}
+		},
+		enableSelectedMods : async () => {
+			const selectedRecords = this.#selectedDisabledZipModRecords()
+			const filesByCollection = this.#selectedDisabledZipFilesByCollection()
+			const fileCount = [...filesByCollection.values()].reduce((total, files) => total + files.length, 0)
+			if ( fileCount === 0 ) { return }
+			MA.byId('batchEnableSelected').disabled = true
+			this.track.pendingSearchFocus = true
+			await this.files.runProgressOperation({
+				detail     : `Re-enabling ${fileCount} selected mod${fileCount === 1 ? '' : 's'}...`,
+				failureText : (result) => `Re-enabled ${result.restored ?? 0}; ${result.failed ?? 0} failed.`,
+				items      : selectedRecords.map(({ mod }) => this.#modStatusLabel(mod)),
+				run        : async (operationId) => {
+					let restored = 0
+					let failed = 0
+					const results = await Promise.all([...filesByCollection].map(([collectionKey, fileNames]) => (
+						window.main_IPC.files.restoreDisabled(collectionKey, fileNames, operationId)
+					)))
+					for ( const result of results ) {
+						restored += result.restored ?? 0
+						failed += result.failed ?? 0
+					}
+					return { failed, restored }
+				},
+				successText : (result) => `Re-enabled ${result.restored ?? fileCount} selected mod${fileCount === 1 ? '' : 's'}.`,
+				title      : 'Re-enabling selected mods',
+			})
+			this.#updateBatchModButtons()
+		},
+		enableSingleMod : async (thisMod, button = null) => {
+			const collectionKey = thisMod?.currentCollection
+			const filePath = thisMod?.fileDetail?.fullPath
+			const fileName = typeof filePath === 'string' ? filePath.split(/[/\\]/).pop() : null
+			if ( typeof collectionKey !== 'string' || collectionKey === '' || typeof fileName !== 'string' || fileName === '' ) { return }
+			if ( button !== null ) { button.disabled = true }
+			this.track.pendingSearchFocus = true
+			try {
+				const result = await window.main_IPC.files.restoreDisabled(collectionKey, [fileName])
+				if ( result.failed > 0 ) { MA.alert(`${result.failed} mod(s) could not be enabled.`) }
+			} catch (err) {
+				this.track.pendingSearchFocus = false
+				MA.alert(`Enable failed: ${err.message}`)
+				if ( button !== null ) { button.disabled = false }
 			}
 		},
 		launchGame() {
@@ -1806,7 +2687,6 @@ class StateManager {
 				const result = await window.main_IPC.files.restoreDisabled(collectionKey, selectedFiles)
 				MA.alert(`Restored ${result.restored} mod(s); ${result.failed} could not be restored.`)
 				await this.#openDisabledMods(collectionKey)
-				window.main_IPC.folder.reload()
 			} catch (err) {
 				MA.alert(`Restore failed: ${err.message}`)
 				MA.byId('disabledModsRestoreSelected').disabled = false
@@ -2726,6 +3606,16 @@ class FileLib {
 	}
 
 	lastPayload  = null
+	statusStartedAt = 0
+	statusOperationId = null
+	statusLast = {
+		current : 0,
+		currentText : '',
+		detail : '',
+		percent : 0,
+		title : '',
+		total : 0,
+	}
 	selectedDest = new Set()
 	buttonDest   = new Map()
 	selectedMods = {}
@@ -2734,11 +3624,18 @@ class FileLib {
 		this.overlayDiv = MA.byId('fileOpCanvas')
 		this.overlay.show = () => {
 			this.overlayDiv.clsShow()
+			MA.byId('fileOpMini').clsHide()
 			this.overlayDiv.querySelector('.fileOpCanvas-body').scrollTop = 0
 		}
 		this.overlay.hide = () => {
 			this.overlayDiv.clsHide()
+			MA.byId('fileOpMini').clsHide()
 			this.stop()
+		}
+		this.overlay.collapse = () => {
+			this.overlayDiv.clsHide()
+			this.updateMiniStatus()
+			MA.byId('fileOpMini').clsShow(this.flags.isRunning === true)
 		}
 
 		this.infoData = MA.byId('file_op_display')
@@ -2746,21 +3643,31 @@ class FileLib {
 
 		MA.byId('fileOpCanvas-button').addEventListener('click', () => { this.process() })
 		MA.byId('fileOpCanvas-button-close').addEventListener('click', () => {
-			this.overlay.hide() // File Canvas
+			if ( this.flags.isRunning === true && this.feedback.classList.contains('d-none') === false ) {
+				this.overlay.collapse()
+			} else {
+				this.overlay.hide() // File Canvas
+			}
 		})
+		MA.byId('fileOpMini').addEventListener('click', () => { this.overlay.show() })
 
 		window.main_IPC.receive('files:operation', (mode, mods) => {
 			this.start_external(mode, mods)
+		})
+		window.main_IPC.receive('files:batchStatus', (progress) => {
+			this.updateStatusProgress(progress)
 		})
 	}
 
 	// MARK: start (ext module)
 	start_external(mode, mods) {
+		if ( mods === null ) { return }
 		this.flags.operation = mode
 		this.flags.isRunning = true
 
 		this.selectedDest.clear()
 		this.buttonDest.clear()
+		this.selectedMods = {}
 		this.lastPayload = null
 
 		this.display(mode, mods)
@@ -2778,16 +3685,14 @@ class FileLib {
 
 		this.selectedDest.clear()
 		this.buttonDest.clear()
+		this.selectedMods = {}
 		this.lastPayload = null
 
 		switch (mode) {
 			case 'favs' :
 				window.main_IPC.files.listFavs().then((files) => {
 					if ( files === null ) {
-						MA.byId('moveButton_fav').classList.add('btn-shake')
-						setTimeout(() => {
-							MA.byId('moveButton_fav').classList.remove('btn-shake')
-						}, 1500)
+						MA.alert('No favorite mods were found.')
 					} else {
 						this.display(mode, files)
 					}
@@ -2906,7 +3811,7 @@ class FileLib {
 	showMod_known(mod) {
 		return DATA.templateEngine('file_op_mod', {
 			folderIcon : mod.fileDetail.isFolder ? '<i class="bi bi-folder2-open mod-folder-overlay"></i>' : '',
-			iconImage  : `<img alt="" class="img-fluid" src="${DATA.iconMaker(mod.modDesc.iconImage)}">`,
+			iconImage  : `<img alt="" class="main-mod-icon" decoding="async" fetchpriority="low" height="64" loading="lazy" src="${DATA.iconMaker(mod.modDesc.iconImage)}" width="64">`,
 			shortname  : mod.fileDetail.shortName,
 			title      : window.state.doL10N(mod.l10n.title),
 		})
@@ -3009,7 +3914,12 @@ class FileLib {
 
 	// MARK: prepare display
 	display(mode, mods) {
+		if ( mods === null ) {
+			this.stop()
+			return
+		}
 		this.lastPayload = mods
+		this.selectedMods = {}
 
 		const lookupOp = mods.multiDestination ? `multi${this.flags.operation.slice(0, 1).toUpperCase()}${this.flags.operation.slice(1)}` : this.flags.operation
 
@@ -3093,8 +4003,23 @@ class FileLib {
 		MA.byId('fileOpSuccess').clsHide()
 		MA.byId('fileOpDanger').clsHide()
 		MA.byId('badFileFeedback').clsHide()
+		const lookupOp = this.lastPayload.multiDestination ? `multi${this.flags.operation.slice(0, 1).toUpperCase()}${this.flags.operation.slice(1)}` : this.flags.operation
+		const operationId = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		this.statusOperationId = operationId
+		this.statusStartedAt = performance.now()
+		MA.byIdText('fileOpStatusTitle', I18N.defer(this.l10n_title[lookupOp], false))
+		MA.byIdText('fileOpStatusDetail', `Processing ${filePayload.length} selected item${filePayload.length === 1 ? '' : 's'}...`)
+		MA.byIdHTML('fileOpStatusList', '')
+		this.resetStatusProgress(filePayload.length)
+		this.setStatusProgress({
+			current : 0,
+			currentText : '',
+			detail : `Processing ${filePayload.length} selected item${filePayload.length === 1 ? '' : 's'}...`,
+			title : I18N.defer(this.l10n_title[lookupOp], false),
+			total : filePayload.length,
+		})
 
-		window.main_IPC.files.process(filePayload).then((opResult) => {
+		window.main_IPC.files.process(filePayload, operationId).then((opResult) => {
 			const didFail = opResult.some((x) => x.status === false )
 			if ( didFail ) {
 				MA.byId('fileOpDanger').clsShow()
@@ -3113,6 +4038,13 @@ class FileLib {
 				MA.byId('fileOpSuccess').clsShow()
 				MA.byId('fileOpWorking').clsHide()
 			}
+			this.setStatusProgress({
+				current : filePayload.length,
+				currentText : '',
+				detail : didFail ? 'Finished with issues.' : 'Finished.',
+				title : didFail ? 'Finished with issues' : 'Finished',
+				total : filePayload.length,
+			})
 
 			setTimeout(() => {
 				this.overlay.hide() // File Canvas
@@ -3121,7 +4053,209 @@ class FileLib {
 					window.main_IPC.folder.reload()
 				}, 250)
 			}, didFail ? 5000 : 1500)
+		}).catch((err) => {
+			MA.byId('fileOpWorking').clsHide()
+			MA.byId('fileOpSuccess').clsHide()
+			MA.byId('fileOpDanger').clsShow()
+			MA.byIdText('fileOpStatusTitle', 'Operation failed')
+			MA.byIdText('fileOpStatusDetail', err.message)
+			this.statusLast.title = 'Operation failed'
+			this.statusLast.detail = err.message
+			this.updateMiniStatus()
+			setTimeout(() => {
+				this.overlay.hide()
+			}, 5000)
 		})
+	}
+
+	formatStatusDuration(ms) {
+		if ( !Number.isFinite(ms) || ms <= 0 ) { return 'calculating' }
+		const totalSeconds = Math.max(1, Math.round(ms / 1000))
+		const minutes = Math.floor(totalSeconds / 60)
+		const seconds = totalSeconds % 60
+		if ( minutes === 0 ) { return `${seconds}s` }
+		return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
+	}
+
+	setStatusProgress({
+		current = 0,
+		currentText = '',
+		detail = null,
+		title = null,
+		total = 0,
+	} = {}) {
+		const safeTotal = Math.max(1, Number(total) || 1)
+		const safeCurrent = Math.max(0, Math.min(safeTotal, Number(current) || 0))
+		const percent = Math.round((safeCurrent / safeTotal) * 100)
+		const elapsed = performance.now() - this.statusStartedAt
+		const eta = safeCurrent > 0 && safeCurrent < safeTotal ? (elapsed / safeCurrent) * (safeTotal - safeCurrent) : null
+		const etaText = eta === null ? '' : `, about ${this.formatStatusDuration(eta)} remaining`
+		const label = `${safeCurrent} / ${safeTotal}${etaText}`
+
+		this.statusLast = {
+			current : safeCurrent,
+			currentText,
+			detail : detail ?? this.statusLast.detail,
+			percent,
+			title  : title ?? this.statusLast.title,
+			total  : safeTotal,
+		}
+
+		MA.byId('fileOpStatusProgressInner').style.width = `${percent}%`
+		MA.byId('fileOpStatusProgressInner').setAttribute('aria-valuenow', percent.toString())
+		MA.byIdText('fileOpStatusProgressLabel', label)
+		MA.byIdText('fileOpStatusCurrent', currentText)
+		this.updateMiniStatus(label)
+	}
+
+	updateMiniStatus(label = null) {
+		const progressLabel = label ?? `${this.statusLast.current} / ${Math.max(1, this.statusLast.total)}`
+		MA.byIdText('fileOpMiniTitle', this.statusLast.title || 'File operation running')
+		MA.byIdText('fileOpMiniDetail', this.statusLast.detail || 'Working...')
+		MA.byId('fileOpMiniProgressInner').style.width = `${this.statusLast.percent}%`
+		MA.byId('fileOpMiniProgressInner').setAttribute('aria-valuenow', this.statusLast.percent.toString())
+		MA.byIdText('fileOpMiniProgressLabel', progressLabel)
+		MA.byIdText('fileOpMiniCurrent', this.statusLast.currentText)
+	}
+
+	resetStatusProgress(total = 0) {
+		MA.byId('fileOpStatusProgressWrap').clsShow()
+		MA.byId('fileOpStatusProgressInner').style.width = '0%'
+		MA.byId('fileOpStatusProgressInner').setAttribute('aria-valuenow', '0')
+		MA.byIdText('fileOpStatusProgressLabel', `0 / ${total}`)
+		MA.byIdText('fileOpStatusCurrent', '')
+		this.statusLast = {
+			current : 0,
+			currentText : '',
+			detail : this.statusLast.detail,
+			percent : 0,
+			title : this.statusLast.title,
+			total,
+		}
+		this.updateMiniStatus()
+	}
+
+	updateStatusProgress(progress) {
+		if ( this.statusOperationId === null || progress?.operationId !== this.statusOperationId ) { return }
+		const verb = {
+			copy    : 'Copied',
+			delete  : 'Deleted',
+			disable : 'Disabled',
+			enable  : 'Re-enabled',
+			favs    : 'Copied',
+			file    : 'Processed',
+			move    : 'Moved',
+			unzip   : 'Imported',
+		}[progress.operation] ?? 'Processed'
+		const currentName = progress.modName ?? progress.fileName ?? ''
+		this.setStatusProgress({
+			current : progress.current,
+			currentText : currentName === '' ? '' : `${verb}: ${currentName}`,
+			total : progress.total,
+		})
+	}
+
+	async runProgressOperation(options = {}) {
+		const operationId = `status-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		this.statusOperationId = operationId
+		this.statusStartedAt = performance.now()
+		this.resetStatusProgress(options.items?.length ?? 0)
+		MA.byId('fileOpWorking').clsHide()
+		return this.runStatusOperation({
+			...options,
+			operationId,
+			progress : true,
+		})
+	}
+
+	/* eslint-disable-next-line complexity */
+	async runStatusOperation({
+		detail = '',
+		failureText = null,
+		items = [],
+		operationId = null,
+		progress = false,
+		run,
+		successText = null,
+		title = 'Working...',
+	} = {}) {
+		if ( typeof run !== 'function' ) { return null }
+
+		this.flags.operation = 'status'
+		this.flags.isRunning = true
+		this.lastPayload = null
+		this.selectedMods = {}
+		this.selectedDest.clear()
+		this.buttonDest.clear()
+
+		if ( operationId !== null ) {
+			this.statusOperationId = operationId
+			this.statusStartedAt = performance.now()
+		} else {
+			this.statusOperationId = null
+		}
+		MA.byIdText('fileOpStatusTitle', title)
+		MA.byIdText('fileOpStatusDetail', detail)
+		this.statusLast.title = title
+		this.statusLast.detail = detail
+		MA.byId('fileOpStatusProgressWrap').clsShow(progress === true)
+		MA.byIdText('fileOpStatusCurrent', '')
+		if ( progress === true ) { this.resetStatusProgress(items.length) }
+		MA.byIdHTML('fileOpStatusList', items.length === 0 ? '' : [
+			'<ul class="mb-0">',
+			...items.slice(0, 12).map((item) => `<li>${DATA.escapeSpecial(item)}</li>`),
+			items.length > 12 ? `<li>and ${items.length - 12} more...</li>` : '',
+			'</ul>',
+		].join(''))
+		MA.byId('fileOpWorking').clsShow(progress !== true)
+		MA.byId('fileOpSuccess').clsHide()
+		MA.byId('fileOpDanger').clsHide()
+		MA.byId('badFileFeedback').clsHide()
+		this.feedback.clsShow()
+		this.infoData.clsHide()
+		this.overlay.show()
+
+		try {
+			const result = await run(operationId)
+			const failed = result?.failed ?? 0
+			const didFail = failed > 0
+			MA.byId('fileOpWorking').clsHide()
+			MA.byId('fileOpSuccess').clsShow(!didFail)
+			MA.byId('fileOpDanger').clsShow(didFail)
+			if ( progress === true ) {
+				const total = items.length
+				this.setStatusProgress({
+					current : total,
+					currentText : '',
+					detail : didFail ? 'Finished with issues.' : 'Finished.',
+					title : didFail ? 'Finished with issues' : 'Finished',
+					total,
+				})
+			}
+			MA.byIdText('fileOpStatusTitle', didFail ? 'Finished with issues' : 'Finished')
+			MA.byIdText(
+				'fileOpStatusDetail',
+				didFail ?
+					(typeof failureText === 'function' ? failureText(result) : failureText ?? 'Some selected mods could not be processed.') :
+					(typeof successText === 'function' ? successText(result) : successText ?? 'Selected mods processed.')
+			)
+			if ( !didFail ) { window.state.select.none() }
+			setTimeout(() => { this.overlay.hide() }, didFail ? 5000 : 1800)
+			this.statusOperationId = null
+			return result
+		} catch (err) {
+			MA.byId('fileOpWorking').clsHide()
+			MA.byId('fileOpSuccess').clsHide()
+			MA.byId('fileOpDanger').clsShow()
+			MA.byIdText('fileOpStatusTitle', 'Operation failed')
+			MA.byIdText('fileOpStatusDetail', err.message)
+			this.statusLast.title = 'Operation failed'
+			this.statusLast.detail = err.message
+			this.updateMiniStatus()
+			setTimeout(() => { this.overlay.hide() }, 5000)
+			this.statusOperationId = null
+			return null
+		}
 	}
 	
 	// MARK: keyboard interaction
@@ -3156,8 +4290,18 @@ class FileLib {
 		this.flags.isRunning = false
 		this.flags.operation = null
 		this.lastPayload     = null
+		this.statusOperationId = null
+		this.statusLast = {
+			current : 0,
+			currentText : '',
+			detail : '',
+			percent : 0,
+			title : '',
+			total : 0,
+		}
 		this.selectedMods    = {}
 		this.selectedDest.clear()
 		this.buttonDest.clear()
+		MA.byId('fileOpMini').clsHide()
 	}
 }

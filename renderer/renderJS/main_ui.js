@@ -6,13 +6,40 @@
 
 // Main Window UI
 
-/* global MA, StateManager */
+/* global bootstrap, MA, StateManager */
 
 const rendererStartupStartedAt = performance.now()
+let pendingModListPayload = null
+let modListProcessTimer = null
+let modListProcessPromise = null
 
 function logRendererPerformance(label, startedAt, extraDetail = '') {
 	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
 	window.main_IPC.performance(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms${detailText}`)
+}
+
+function scheduleModListProcess() {
+	if ( modListProcessTimer !== null || modListProcessPromise !== null ) { return }
+
+	modListProcessTimer = setTimeout(() => {
+		modListProcessTimer = null
+		const modCollect = pendingModListPayload
+		pendingModListPayload = null
+		if ( modCollect === null ) { return }
+
+		const startedAt = performance.now()
+		modListProcessPromise = window.state.updateFromData(modCollect)
+			.then(() => {
+				logRendererPerformance('Main renderer mods:list', startedAt)
+			})
+			.catch((err) => {
+				window.main_IPC.performance(`Main renderer mods:list failed ${err.message}`)
+			})
+			.finally(() => {
+				modListProcessPromise = null
+				if ( pendingModListPayload !== null ) { scheduleModListProcess() }
+			})
+	}, 75)
 }
 
 // MARK: async events
@@ -36,7 +63,7 @@ window.main_IPC.receive('select:list', (list) => {
 	window.state.colToggle(tableID, true)
 	window.state.track.selected = new Set(list)
 	window.state.forceSelectOnly()
-	window.state.doDisplay()
+	window.state.doDisplay('select:list')
 	window.state.colScroll(tableID)
 })
 
@@ -49,15 +76,84 @@ window.main_IPC.receive('select:withText', (list, text) => {
 })
 
 window.main_IPC.receive('mods:list', (modCollect) => {
-	const startedAt = performance.now()
-	window.state.updateFromData(modCollect).then(() => {
-		logRendererPerformance('Main renderer mods:list', startedAt)
-	}).catch((err) => {
-		window.main_IPC.performance(`Main renderer mods:list failed ${err.message}`)
-	})
+	pendingModListPayload = modCollect
+	scheduleModListProcess()
 })
 window.main_IPC.receive('mods:site', (mod) => {
 	window.state.action.openModInfo(mod)
+})
+
+window.main_IPC.receive('app:closeBlocked', (payload = {}) => {
+	const modalNode = MA.byId('app_close_guard_modal')
+	const blockerList = MA.byId('appCloseGuardBlockers')
+	const closeButton = MA.byId('appCloseGuardCloseAnyway')
+	if ( modalNode === null || blockerList === null || closeButton === null ) { return }
+
+	const blockers = Array.isArray(payload.blockers) && payload.blockers.length !== 0 ? payload.blockers : ['Background task']
+	blockerList.replaceChildren()
+	for ( const blocker of blockers ) {
+		const item = document.createElement('li')
+		item.textContent = blocker
+		blockerList.appendChild(item)
+	}
+
+	closeButton.disabled = false
+	closeButton.onclick = async () => {
+		closeButton.disabled = true
+		try {
+			await window.main_IPC.closeApplicationAnyway()
+		} catch (err) {
+			window.main_IPC.performance(`Close anyway failed ${err.message}`)
+			closeButton.disabled = false
+		}
+	}
+	bootstrap.Modal.getOrCreateInstance(modalNode, { backdrop : 'static' }).show()
+})
+
+window.main_IPC.receive('app:confirmRequest', (payload = {}) => {
+	const modalNode = MA.byId('app_confirm_modal')
+	const titleNode = MA.byId('appConfirmTitle')
+	const subtitleNode = MA.byId('appConfirmSubtitle')
+	const messageNode = MA.byId('appConfirmMessage')
+	const okButton = MA.byId('appConfirmOk')
+	const cancelButton = MA.byId('appConfirmCancel')
+	const closeButton = MA.byId('appConfirmClose')
+	if ( modalNode === null || titleNode === null || subtitleNode === null || messageNode === null || okButton === null || cancelButton === null || closeButton === null ) { return }
+
+	const requestID = typeof payload.id === 'string' ? payload.id : ''
+	const modal = bootstrap.Modal.getOrCreateInstance(modalNode, { backdrop : 'static' })
+	const respond = async (confirmed) => {
+		okButton.disabled = true
+		cancelButton.disabled = true
+		closeButton.disabled = true
+		try {
+			await window.main_IPC.confirmResponse({ confirmed, id : requestID })
+		} finally {
+			modal.hide()
+		}
+	}
+
+	titleNode.textContent = payload.title ?? 'Confirm action'
+	subtitleNode.textContent = payload.subtitle ?? 'FSG Mod Assistant'
+	messageNode.textContent = payload.message ?? ''
+	okButton.textContent = payload.okText ?? 'OK'
+	cancelButton.textContent = payload.cancelText ?? 'Cancel'
+	cancelButton.hidden = payload.hideCancel === true
+	okButton.className = `btn btn-lg ${payload.okClass ?? 'btn-primary'}`
+	okButton.disabled = false
+	cancelButton.disabled = false
+	closeButton.disabled = false
+	okButton.onclick = () => { void respond(true) }
+	cancelButton.onclick = () => { void respond(false) }
+	closeButton.onclick = () => { void respond(false) }
+	modalNode.addEventListener('hidden.bs.modal', () => {
+		okButton.onclick = null
+		cancelButton.onclick = null
+		closeButton.onclick = null
+		cancelButton.hidden = false
+	}, { once : true })
+	modal.show()
+	okButton.focus({ preventScroll : true })
 })
 
 // MARK: Loader Overlay
@@ -87,34 +183,34 @@ function topBarHandlers() {
 	MA.byIdEventIfExists('topBar-update',      () => { window.main_IPC.updateApplication() })
 	MA.byIdEventIfExists('appVersionLink',     () => { window.main_IPC.openReleasePage() })
 }
+
+function openModManagementMenu() {
+	bootstrap.Offcanvas.getOrCreateInstance(MA.byId('modManagementCanvas')).show()
+}
+
+function dispatchModManagementWindow(windowName) {
+	const canvas = MA.byId('modManagementCanvas')
+	const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(canvas)
+	const dispatchWindow = () => { window.main_IPC.dispatch(windowName) }
+	if ( canvas.classList.contains('show') ) {
+		canvas.addEventListener('hidden.bs.offcanvas', dispatchWindow, { once : true })
+		offcanvas.hide()
+		return
+	}
+	dispatchWindow()
+}
+
 //MARK: side bar event
 function sideBarHandlers() {
-	MA.byIdEventIfExists('moveButton_ver', () => { window.main_IPC.dispatch('version') })
-	MA.byIdEventIfExists('moveButton_updateList', () => { window.main_IPC.dispatch('update') })
-	MA.byIdEventIfExists('moveButton_fav', () => { window.state.startFile('favs') })
-
-	MA.byIdEventIfExists('moveButton_move',   () => { window.state.startFile('move') })
-	MA.byIdEventIfExists('moveButton_copy',   () => { window.state.startFile('copy') })
-	MA.byIdEventIfExists('moveButton_delete', () => { window.state.startFile('delete') })
-	MA.byIdEventIfExists('moveButton_disable', () => { window.state.action.disableSelectedMods() })
-	MA.byIdEventIfExists('moveButton_zip',    () => { window.state.startFile('zip') })
-
-	MA.byIdEventIfExists('moveButton_open', () => { window.state.startFile('openMods') })
-	MA.byIdEventIfExists('moveButton_hub',  () => { window.state.startFile('openHub') })
-	MA.byIdEventIfExists('moveButton_site', () => { window.state.startFile('openExt') })
-	MA.byIdEventIfExists('moveButton_disabled', () => { window.state.action.openDisabledMods() })
-	MA.byIdEventIfExists('moveButton_logIssues', () => { window.state.action.openGameLogIssues() })
+	MA.byIdEventIfExists('mainModManagementButton', openModManagementMenu)
+	for ( const button of document.querySelectorAll('.mod-management-menu-action') ) {
+		button.addEventListener('click', () => { dispatchModManagementWindow(button.dataset.dispatchWindow) })
+	}
 }
 // MARK: top UI event
 function topUIHandlers() {
-	MA.byIdEventIfExists('selectButtonNone',   () => { window.state.select.none() })
-	MA.byIdEventIfExists('selectButtonAll',    () => { window.state.select.all() })
-	MA.byIdEventIfExists('selectButtonInvert', () => { window.state.select.invert() })
-	MA.byIdEventIfExists('selectButtonUpdates', () => { window.state.select.updates() })
-
 	MA.byIdEventIfExists('modSortOrder', () => { window.state.changeSort() }, 'change')
 	MA.byIdEventIfExists('modFindType',  () => { window.state.filter.findType()}, 'change')
-	MA.byIdEventIfExists('modFilter_selected', () => { window.state.toggleSelectOnly()}, 'change')
 	MA.byIdEventIfExists('filter_input', () => { window.main_IPC.contextInput() }, 'contextmenu')
 	MA.byIdEventIfExists('filter_input', () => { window.state.filter.findTerm() }, 'keyup')
 	MA.byIdEventIfExists('filter_input', () => { window.state.filter.findTerm() }, 'blur')
@@ -123,6 +219,13 @@ function topUIHandlers() {
 	MA.byIdEventIfExists('folderAddButton',    () => { window.main_IPC.folder.add() })
 	MA.byIdEventIfExists('folderEditButton',   () => { window.main_IPC.folder.edit() })
 	MA.byIdEventIfExists('folderReloadButton', () => { window.main_IPC.folder.reload() })
+	MA.byIdEventIfExists('batchDisableSelected', () => { window.state.action.disableSelectedMods() })
+	MA.byIdEventIfExists('batchEnableSelected',  () => { window.state.action.enableSelectedMods() })
+	MA.byIdEventIfExists('disabledOnlyToggle',   () => { window.state.toggleDisabledOnly() })
+	MA.byIdEventIfExists('advancedFilterToggle', () => { window.state.toggleAdvancedFilters() })
+	MA.byIdEventIfExists('advancedFilterClose',  () => { window.state.toggleAdvancedFilters(false) })
+	MA.byIdEventIfExists('tagRequiredAnyToggle', () => { window.state.toggleRequiredTagMode() }, 'change')
+	MA.byIdEventIfExists('tagFilterHelpToggle',  () => { window.state.toggleTagFilterHelp() })
 
 	MA.byIdEventIfExists('collectButtonActive',   () => { window.state.action.collectActive() })
 	MA.byIdEventIfExists('collectButtonInActive', () => { window.state.action.collectInActive() })
@@ -173,7 +276,11 @@ window.addEventListener('beforeunload', (e) => {
 		window.state.prefs.overlay.hide()
 		e.preventDefault()
 	} else if ( MA.byId('fileOpCanvas').classList.contains('show') ) {
-		window.state.files.overlay.hide()
+		if ( window.state.files.flags.isRunning === true && window.state.files.feedback.classList.contains('d-none') === false ) {
+			window.state.files.overlay.collapse()
+		} else {
+			window.state.files.overlay.hide()
+		}
 		e.preventDefault()
 	}
 })

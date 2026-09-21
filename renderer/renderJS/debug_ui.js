@@ -11,7 +11,8 @@
 window.operations.receive('select:all', () => {
 	const selection = window.getSelection()
 	const range     = document.createRange()
-	range.selectNodeContents(MA.byId('debug_log'))
+	const target = MA.byId('debugPanelPerformance').classList.contains('d-none') ? MA.byId('debug_log') : MA.byId('debugPanelPerformance')
+	range.selectNodeContents(target)
 	selection.removeAllRanges()
 	selection.addRange(range)
 })
@@ -56,7 +57,69 @@ class windowState {
 
 		MA.byId('debug_reset').addEventListener('click', () => { this.resetViewRules() })
 		MA.byId('debug_log').addEventListener('contextmenu', window.debug_IPC.context)
+		MA.byId('performanceRefresh').addEventListener('click', () => { this.loadPerformanceSummary() })
+		MA.byId('performanceOpenLog').addEventListener('click', () => { this.openPerformanceLog() })
+		for ( const element of MA.queryA('input.debug_view') ) {
+			element.addEventListener('change', () => { this.setView(element.value) })
+		}
 		this.getAll()
+		this.loadPerformanceSummary()
+	}
+
+	setView(view) {
+		const isPerformance = view === 'performance'
+		MA.byId('debugPanelLog').classList.toggle('d-none', isPerformance)
+		MA.byId('debugPanelPerformance').classList.toggle('d-none', !isPerformance)
+		MA.queryF('.debug-toolbar-log').classList.toggle('d-none', isPerformance)
+		if ( isPerformance ) { this.loadPerformanceSummary() }
+	}
+
+	performanceText(metric) {
+		if ( metric === null || typeof metric === 'undefined' || !Number.isFinite(metric.ms) ) {
+			return 'not recorded'
+		}
+		return `${metric.ms.toFixed(1)} ms`
+	}
+
+	async loadPerformanceSummary() {
+		const status = MA.byId('performanceStatus')
+		status.className = 'col-12 small text-info'
+		status.textContent = 'Reading performance log...'
+
+		try {
+			const summary = await window.debug_IPC.performanceSummary()
+			MA.byIdText('performanceMainVisible', this.performanceText(summary.metrics?.mainVisible))
+			MA.byIdText('performanceFolderScan', this.performanceText(summary.metrics?.modFolderScan))
+			MA.byIdText('performanceRendererUpdate', this.performanceText(summary.metrics?.rendererUpdate))
+			MA.byIdText('performanceVaultIndex', this.performanceText(summary.metrics?.vaultIndex))
+			MA.byIdText('performanceVaultCopy', this.performanceText(summary.metrics?.vaultCopy))
+			MA.byIdText('performanceVaultCopyPreview', this.performanceText(summary.metrics?.vaultCopyPreview))
+			MA.byIdText('performanceVaultBulkCopy', this.performanceText(summary.metrics?.vaultBulkCopy))
+			MA.byIdText('performanceModHubRefresh', this.performanceText(summary.metrics?.modHubRefresh))
+			MA.byIdText('performanceLogPath', `Log file: ${summary.logPath ?? '--'}`)
+			status.className = summary.ok ? 'col-12 small text-success' : 'col-12 small text-warning'
+			status.textContent = summary.status ?? 'Performance summary refreshed.'
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Performance summary failed: ${err.message}`
+		}
+	}
+
+	async openPerformanceLog() {
+		const status = MA.byId('performanceStatus')
+		try {
+			const result = await window.debug_IPC.openPerformanceLog()
+			if ( result !== '' ) {
+				status.className = 'col-12 small text-warning'
+				status.textContent = `Could not open performance log: ${result}`
+				return
+			}
+			status.className = 'col-12 small text-success'
+			status.textContent = 'Performance log opened.'
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Could not open performance log: ${err.message}`
+		}
 	}
 
 	// MARK: OUTPUT BUILD

@@ -1288,7 +1288,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 		while ( nextIndex < items.length && !isUpdateCheckStopped ) {
 			// eslint-disable-next-line no-await-in-loop
 			await waitWhileUpdateCheckPaused()
-			if ( isUpdateCheckStopped ) { return }
+			if ( isUpdateCheckStopped || nextIndex >= items.length ) { return }
 			const index = nextIndex
 			nextIndex++
 			// eslint-disable-next-line no-await-in-loop
@@ -1409,19 +1409,51 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 			return
 		}
 		let checked = 0
+		let active = 0
+		const sources = Object.fromEntries(['modhub', 'github'].map((source) => [source, {
+			cacheHits : 0, failures : 0, fresh : 0, freshMS : 0,
+			http403or429 : 0, httpErrors : 0, maxMS : 0, parseMS : 0, requestMS : 0, requests : 0, requestTimeouts : 0, shared : 0, timeouts : 0,
+		}]))
+		const updateCheckProgress = () => setProgress(Math.round((checked / Math.max(sourceGroups.length, 1)) * 90), `Checked ${checked} of ${sourceGroups.length} - ${active} active`)
 		isUpdateCheckStopped = false
 		isRemoteCheckRunning = true
 		updatePauseButton()
 		updateStopButton()
 		const remoteResults = await mapWithConcurrency(sourceGroups, REMOTE_CHECK_CONCURRENCY, async (group) => {
-			const remote = await (group.sourceType === 'modhub'
-				? window.vault_update_IPC.getModHub(group.modHubID, force)
-				: window.vault_update_IPC.getGitHub(group.sourceURL, force))
-			checked++
-			setProgress(Math.round((checked / Math.max(sourceGroups.length, 1)) * 90), `Checking ${checked} of ${sourceGroups.length}`)
-			return { group, remote }
+			active++
+			updateCheckProgress()
+			const startedAt = performance.now()
+			try {
+				const remote = await (group.sourceType === 'modhub'
+					? window.vault_update_IPC.getModHub(group.modHubID, force)
+					: window.vault_update_IPC.getGitHub(group.sourceURL, force))
+				const stats = sources[group.sourceType]
+				const diagnostics = remote.checkDiagnostics
+				for ( const key of ['requests', 'requestMS', 'requestTimeouts', 'httpErrors', 'http403or429', 'parseMS'] ) {
+					stats[key] += diagnostics?.[key] ?? 0
+				}
+				const durationMS = diagnostics?.durationMS ?? performance.now() - startedAt
+				if ( diagnostics?.cache === 'hit' ) { stats.cacheHits++ }
+				else if ( diagnostics?.cache === 'shared' ) { stats.shared++ }
+				else { stats.fresh++; stats.freshMS += durationMS }
+				stats.maxMS = Math.max(stats.maxMS, durationMS)
+				if ( remote.ok !== true ) { stats.failures++ }
+				if ( /timed?\s*out|timeout/iu.test(remote.error ?? '') ) { stats.timeouts++ }
+				return { group, remote }
+			} finally {
+				active--
+				checked++
+				updateCheckProgress()
+			}
 		})
 		const wasStopped = isUpdateCheckStopped
+		const reportRows = sourceGroups.map((group, index) => {
+			const remote = remoteResults[index]?.remote
+			const status = remote === undefined ? 'Not checked' : remote.ok !== true ? 'Failed' : compareVersions(remote.version, newestVersion(group.localVersions)) > 0 ? 'Update available' : 'No newer version'
+			return { detail : remote === undefined ? 'Scan stopped before this check.' : remote.ok !== true ? window.UpdateRunReport.error(remote.error) : `Local: ${group.localVersions.join(', ')}; online: ${remote.version}`, name : group.modName, source : group.sourceType, status }
+		})
+		for ( const record of noSourceRecords ) { reportRows.push({ detail : 'No supported update source.', name : record.modName ?? record.fileName, source : '', status : 'Skipped' }) }
+		window.UpdateRunReport.show('vaultUpdateStatus', wasStopped ? 'Vault check report (stopped)' : 'Vault check report', reportRows, `${ignoredSkipped + tagSkipped + collectionSkipped} Vault records excluded by filters or Ignore Updates.`)
 		isRemoteCheckRunning = false
 		setUpdateCheckPaused(false)
 		updateStopButton()
@@ -1454,6 +1486,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				localVersion,
 				modHubID      : group.modHubID,
 				modHubReleased : remote.released ?? null,
+				modHubScreenshots : Array.isArray(remote.screenshots) ? remote.screenshots : [],
 				modIcon       : group.modIcon,
 				modName       : group.modName,
 				pageURL       : remote.url ?? group.sourceURL,
@@ -1484,7 +1517,9 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 			const filterText = filterParts.length === 0 ? '' : ` for ${filterParts.join(' and ')}`
 			const ignoredText = ignoredSkipped === 0 ? '' : ` ${ignoredSkipped} item(s) hidden by Ignore Updates.`
 			const tagText = tagSkipped + collectionSkipped === 0 ? '' : ` ${tagSkipped + collectionSkipped} Vault item(s) skipped by filter.`
-			setStatus(`${candidates.length} Vault update(s) found${filterText}.${ignoredText}${tagText}${skipped > 0 ? ` ${skipped} matching item(s) skipped because they have no supported update source.` : ''}`, candidates.length !== 0 ? 'warning' : 'success')
+			const failedChecks = sources.modhub.failures + sources.github.failures
+			const failureText = failedChecks === 0 ? '' : ` ${failedChecks} source checks failed; update results are incomplete. Run another scan after 5 minutes to retry temporary failures.`
+			setStatus(`${candidates.length} Vault update(s) found${filterText}.${ignoredText}${tagText}${skipped > 0 ? ` ${skipped} matching item(s) skipped because they have no supported update source.` : ''}${failureText}`, candidates.length !== 0 || failedChecks !== 0 ? 'warning' : 'success')
 		}
 		void window.vault_update_IPC.logPerformance({
 			candidates : candidates.length,
@@ -1492,9 +1527,11 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 			force,
 			groups : sourceGroups.length,
 			skipped : skipped + tagSkipped + ignoredSkipped + collectionSkipped,
+			sources,
 		})
 	} catch (err) {
 		setStatus(`Vault update check failed: ${err.message}`, 'danger')
+		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault check report', [{ name : 'Scan', status : 'Failed', detail : err.message }])
 	} finally {
 		isRemoteCheckRunning = false
 		setUpdateCheckPaused(false)
@@ -1515,6 +1552,7 @@ async function downloadSelected() {
 			gameVersion : candidate.gameVersion,
 			modHubID   : candidate.modHubID,
 			modHubReleased : candidate.modHubReleased,
+			modHubScreenshots : candidate.modHubScreenshots ?? [],
 			modName    : candidate.modName,
 			sourceType : candidate.sourceType,
 			sourceURL  : candidate.sourceURL,
@@ -1530,6 +1568,7 @@ async function downloadSelected() {
 	try {
 		const result = await window.vault_update_IPC.downloadToVaultSelected(downloads)
 		const results = Array.isArray(result?.results) ? result.results : []
+		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault update report', results.map((item) => ({ detail : item.ok ? `Version ${item.version ?? ''}` : window.UpdateRunReport.error(item.error), name : item.modName, source : item.sourceType, status : item.ok ? 'Stored in Vault' : 'Failed' })), `${manualCount} selected items require manual download.${result?.error ? ` ${result.error}` : ''}`)
 		updatePackageMismatchStatesFromResults(results)
 		renderCandidates(lastSkippedCount)
 		renderDownloadResults(results)
@@ -1545,6 +1584,7 @@ async function downloadSelected() {
 		refreshAfterDownload = true
 	} catch (err) {
 		setStatus(`Vault download failed: ${err.message}`, 'danger')
+		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault update report', downloads.map((item) => ({ detail : err.message, name : item.modName, source : item.sourceType, status : 'Unconfirmed' })))
 	} finally {
 		setBusy(false)
 		updateSelectionText()

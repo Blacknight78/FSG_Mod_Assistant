@@ -777,7 +777,7 @@
 	"wizard_step_1_blurb"                   : "This section allows you to set some basic display preferences for Mod Assistant",
 	"wizard_step_2"                         : "Step 2 - Current Farming Simulator",
 	"wizard_step_2_blurb"                   : "This section is the basic settings for your installation of Farming Simulator 2022 & 2025",
-	"wizard_step_3"                         : "Step 3 - Pre-Existing Collections",
+	"wizard_step_3"                         : "Vault Location Setup",
 	"wizard_step_3_blurb"                   : "This sections contains details of the collections Mod Assistant thinks it found",
 	"wizard_step_4"                         : "Step 4 - Older Farming Simulator Versions",
 	"wizard_step_4_blurb"                   : "This section contains information of the other versions of Farming Simulator detected - you can manage them as well!",

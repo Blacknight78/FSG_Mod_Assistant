@@ -14,9 +14,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
 class PrefLib {
 	currentDev = null
+	currentStep = 1
 	overlay    = null
 	folders    = null
 	gameManagement = []
+	vaultMoveLockDepth = 0
+	vaultMoveLockedControls = []
+	totalSteps = 1
+	vault      = null
 	wizard     = null
 
 	inputs = {
@@ -96,20 +101,44 @@ class PrefLib {
 
 		this.update.push(
 			() => { this.#doFolders() },
-			() => { this.#renderGameManagement() }
+			() => { this.#renderGameManagement() },
+			() => { this.#renderVaultLocation() }
 		)
 		MA.byId('scanGameInstallations')?.addEventListener('click', () => { this.#scanGameInstallations() })
-		MA.byId('performanceRefresh')?.addEventListener('click', () => { this.#loadPerformanceSummary() })
-		MA.byId('performanceOpenLog')?.addEventListener('click', () => { this.#openPerformanceLog() })
+		MA.byId('setupVaultOpen')?.addEventListener('click', () => { this.#openVaultFolder() })
+		MA.byId('setupVaultMove')?.addEventListener('click', () => { this.#moveVaultFolder(false) })
+		MA.byId('setupVaultUseDefault')?.addEventListener('click', () => { this.#moveVaultFolder(true) })
+		window.setup_IPC.receive('setup:vaultProgress', (progress) => { this.#handleVaultMoveProgress(progress) })
+		MA.byId('wizardBack')?.addEventListener('click', () => { this.#showWizardStep(this.currentStep - 1) })
+		MA.byId('wizardNext')?.addEventListener('click', () => { this.#showWizardStep(this.currentStep + 1) })
+		MA.byId('wizardFinish')?.addEventListener('click', () => { window.operations.close() })
 
+		this.totalSteps = document.querySelectorAll('.wizard-panel').length || 1
+		this.#showWizardStep(1, false)
 		this.forceUpdate()
-		this.#loadPerformanceSummary()
+	}
+
+	#showWizardStep(step, shouldScroll = true) {
+		this.currentStep = Math.max(1, Math.min(this.totalSteps, step))
+		for ( const panel of document.querySelectorAll('.wizard-panel') ) {
+			panel.classList.toggle('active', Number.parseInt(panel.dataset.wizardStep, 10) === this.currentStep)
+		}
+
+		const isFirstStep = this.currentStep === 1
+		const isLastStep = this.currentStep === this.totalSteps
+		MA.byId('wizardBack').disabled = isFirstStep
+		MA.byId('wizardNext').classList.toggle('d-none', isLastStep)
+		MA.byId('wizardFinish').classList.toggle('d-none', !isLastStep)
+		MA.byIdText('wizardStepLabel', `Step ${this.currentStep} of ${this.totalSteps}`)
+		MA.byId('wizardProgressBar').style.width = `${(this.currentStep / this.totalSteps) * 100}%`
+		if ( shouldScroll ) { window.scrollTo({ top : 0, behavior : 'smooth' }) }
 	}
 
 	forceUpdate() {
 		window.setup_IPC.update().then((results) => {
 			this.folders = results.folders
 			this.gameManagement = results.gameManagement ?? []
+			this.vault = results.vault ?? null
 			this.wizard  = results.wizard
 
 			for ( const update of this.update ) {
@@ -198,6 +227,11 @@ class PrefLib {
 		return `<div><span class="text-body-secondary">${this.#escapeHTML(label)}:</span> <span class="user-select-text">${this.#escapeHTML(pathText)}</span> <span class="badge text-bg-${found ? 'success' : 'secondary'}">${stateText}</span></div>`
 	}
 
+	#parentFolder(targetPath) {
+		if ( typeof targetPath !== 'string' || targetPath === '' ) { return '' }
+		return targetPath.replace(/[\\/][^\\/]+$/u, '')
+	}
+
 	#detectedPathList(label, items, formatter = (item) => item) {
 		if ( items.length === 0 ) {
 			return `<div class="small text-body-secondary">${this.#escapeHTML(label)}: none detected</div>`
@@ -214,19 +248,62 @@ class PrefLib {
 		].join('')
 	}
 
-	#renderGameManagementRow(item) {
-		const node = document.createElement('div')
-		node.className = 'list-group-item'
+	#settingsChoiceButton(key, value, currentValue, label = 'Use') {
+		const button = document.createElement('button')
+		button.className = value === currentValue ? 'btn btn-sm btn-success w-100 btn-thumb-up' : 'btn btn-sm btn-outline-secondary w-100 btn-check-mark'
+		button.textContent = value === currentValue ? 'Using this' : label
+		button.type = 'button'
+		button.disabled = value === currentValue
+		button.addEventListener('click', async () => {
+			await window.settings.set(key, value)
+			this.forceUpdate()
+		})
+		return button
+	}
+
+	#settingsChoiceRow(label, key, value, currentValue, sourceLabel = '') {
+		const row = document.createElement('div')
+		row.className = 'row g-2 align-items-center border-bottom pb-2 mb-2'
+		row.innerHTML = [
+			`<div class="col-md-8"><span class="text-body-secondary">${this.#escapeHTML(label)}:</span> ${sourceLabel === '' ? '' : `<span class="badge text-bg-secondary me-1">${this.#escapeHTML(sourceLabel)}</span>`}<span class="user-select-text">${this.#escapeHTML(value)}</span></div>`,
+			'<div class="col-md-4 settings-choice-action"></div>',
+		].join('')
+		row.querySelector('.settings-choice-action').appendChild(this.#settingsChoiceButton(key, value, currentValue))
+		return row
+	}
+
+	async #setGameProfileEnabled(version, enabled) {
+		const status = MA.byId('gameManagementStatus')
+		try {
+			await window.settings.set(`game_enabled_${version}`, enabled)
+			await this.#refreshGameManagement()
+			this.#renderGameManagement()
+			status.className = 'col-12 small text-success'
+			status.textContent = `FS${version} profile ${enabled ? 'enabled' : 'disabled'}.`
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Could not update FS${version} profile: ${err.message}`
+		}
+	}
+
+	#renderGameProfileDetails(node, item) {
+		const detailWrap = node.querySelector('.game-management-details')
+		detailWrap.innerHTML = ''
+		if ( !item.enabled ) {
+			detailWrap.innerHTML = '<div class="small text-body-secondary mt-2">Enable this profile to review and configure its game folder, settings file, and mods folder.</div>'
+			return
+		}
+
+		const gamePathKey = `game_path_${item.version}`
+		const settingsPathKey = `game_settings_${item.version}`
 		const detectedGames = item.detectedGames ?? []
 		const detectedSettings = item.detectedSettings ?? []
 		const detectedSteamGames = detectedGames.filter((game) => game.source === 'Steam')
 		const detectedOtherGames = detectedGames.filter((game) => game.source !== 'Steam')
 		const trackedFolderCount = item.trackedModFolders?.length ?? 0
-		node.innerHTML = [
-			'<div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">',
-			'<div class="flex-grow-1">',
-			`<div class="fw-bold fs-5"><i class="fsico-ver-${item.version}"></i> FS${item.version} ${item.active ? '<span class="badge text-bg-info ms-1">active game</span>' : ''} ${item.enabled ? '<span class="badge text-bg-success ms-1">enabled</span>' : '<span class="badge text-bg-secondary ms-1">disabled</span>'}</div>`,
-			'<div class="row g-2 mt-1">',
+
+		detailWrap.innerHTML = [
+			'<div class="row g-3 mt-1">',
 			'<div class="col-lg-6">',
 			'<div class="small fw-semibold">Configured paths</div>',
 			`<div class="small">${this.#gamePathLine('Game folder', item.gamePath ?? '', item.gameFound === true)}</div>`,
@@ -234,24 +311,66 @@ class PrefLib {
 			`<div class="small">${this.#gamePathLine('Settings file', item.settingsPath ?? '', item.settingsFound === true)}</div>`,
 			'</div>',
 			'<div class="col-lg-6">',
-			'<div class="small fw-semibold">Detected installs</div>',
-			this.#detectedPathList('Steam', detectedSteamGames, (game) => `${game.isConfigured ? '[configured] ' : ''}${game.path}`),
-			this.#detectedPathList('Other stores', detectedOtherGames, (game) => `${game.source}: ${game.path}`),
-			'</div>',
-			'<div class="col-12">',
-			this.#detectedPathList('Detected settings', detectedSettings),
-			this.#detectedPathList('Detected mod folders', item.detectedModFolders ?? []),
+			'<div class="small fw-semibold">Detected mod folders</div>',
+			this.#detectedPathList('Available', item.detectedModFolders ?? []),
 			`<div class="small text-body-secondary">Tracked mod folders: ${trackedFolderCount} of ${(item.detectedModFolders?.length ?? 0)}</div>`,
 			'</div>',
+			'<div class="col-lg-6 detected-game-actions"></div>',
+			'<div class="col-lg-6 detected-settings-actions"></div>',
 			'</div>',
+		].join('')
+
+		const gameActions = detailWrap.querySelector('.detected-game-actions')
+		gameActions.innerHTML = '<div class="small fw-semibold mb-2">Detected game installs</div>'
+		if ( detectedGames.length === 0 ) {
+			gameActions.insertAdjacentHTML('beforeend', '<div class="small text-body-secondary">No game installs detected for this profile.</div>')
+		} else {
+			for ( const game of [...detectedSteamGames, ...detectedOtherGames] ) {
+				gameActions.appendChild(this.#settingsChoiceRow('Game folder', gamePathKey, game.path, item.gamePath, game.source))
+			}
+		}
+
+		const settingsActions = detailWrap.querySelector('.detected-settings-actions')
+		settingsActions.innerHTML = '<div class="small fw-semibold mb-2">Detected settings files</div>'
+		if ( detectedSettings.length === 0 ) {
+			settingsActions.insertAdjacentHTML('beforeend', '<div class="small text-body-secondary">No settings files detected for this profile.</div>')
+		} else {
+			for ( const setPath of detectedSettings ) {
+				settingsActions.appendChild(this.#settingsChoiceRow('Settings file', settingsPathKey, setPath, item.settingsPath))
+			}
+		}
+	}
+
+	#renderGameManagementRow(item) {
+		const node = document.createElement('div')
+		node.className = 'list-group-item'
+		node.innerHTML = [
+			'<div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">',
+			'<div class="flex-grow-1">',
+			`<div class="fw-bold fs-5"><i class="fsico-ver-${item.version}"></i> FS${item.version} ${item.active ? '<span class="badge text-bg-info ms-1">active game</span>' : ''} ${item.enabled ? '<span class="badge text-bg-success ms-1">enabled</span>' : '<span class="badge text-bg-secondary ms-1">disabled</span>'}</div>`,
+			`<div class="small text-body-secondary">${item.enabled ? 'Profile settings are shown below.' : 'Profile is off.'}</div>`,
+			'<div class="game-management-details"></div>',
 			'</div>',
-			'<div class="d-flex flex-wrap gap-2 align-content-start justify-content-end game-management-actions"></div>',
+			'<div class="d-flex flex-column gap-2 align-content-start justify-content-end game-management-actions"></div>',
 			'</div>',
 		].join('')
 		const buttonWrap = node.querySelector('.game-management-actions')
-		buttonWrap.appendChild(this.#pathButton('Open game folder', item.gameFound ? item.gamePath : '', 'outline-info'))
-		buttonWrap.appendChild(this.#pathButton('Open settings folder', item.settingsFound ? item.settingsPath.replace(/[^\\/]+$/u, '') : '', 'outline-info'))
-		buttonWrap.appendChild(this.#pathButton('Open mods folder', item.configuredModFolder ?? '', 'outline-success'))
+		const toggleWrap = document.createElement('div')
+		toggleWrap.className = 'form-switch custom-switch text-end'
+		toggleWrap.innerHTML = [
+			'<label class="form-check-label small text-body-secondary me-2">Profile enabled</label>',
+			`<input class="form-check-input" type="checkbox" role="switch" ${item.enabled ? 'checked' : ''}>`,
+		].join('')
+		toggleWrap.querySelector('input').addEventListener('change', (event) => {
+			this.#setGameProfileEnabled(item.version, event.target.checked)
+		})
+		buttonWrap.appendChild(toggleWrap)
+		if ( item.enabled ) {
+			buttonWrap.appendChild(this.#pathButton('Open game folder', item.gameFound ? this.#parentFolder(item.gamePath) : '', 'outline-info'))
+			buttonWrap.appendChild(this.#pathButton('Open settings folder', item.settingsFound ? this.#parentFolder(item.settingsPath) : '', 'outline-info'))
+			buttonWrap.appendChild(this.#pathButton('Open mods folder', item.configuredModFolder ?? '', 'outline-success'))
+		}
+		this.#renderGameProfileDetails(node, item)
 		return node
 	}
 
@@ -259,7 +378,139 @@ class PrefLib {
 		const results = await window.setup_IPC.update()
 		this.gameManagement = results.gameManagement ?? this.gameManagement
 		this.folders = results.folders ?? this.folders
+		this.vault = results.vault ?? this.vault
 		this.wizard = results.wizard ?? this.wizard
+	}
+
+	#renderVaultLocation() {
+		const folder = this.vault?.folder ?? ''
+		const defaultFolder = this.vault?.defaultFolder ?? ''
+		MA.byIdText('setupVaultFolder', folder === '' ? '--' : folder)
+		MA.byIdText('setupVaultDefaultFolder', defaultFolder === '' ? '--' : defaultFolder)
+		MA.byId('setupVaultOpen').disabled = folder === ''
+		MA.byId('setupVaultUseDefault').disabled = this.vault?.isDefault === true || defaultFolder === ''
+		const status = MA.byId('setupVaultStatus')
+		if ( status.textContent === '' && this.vault?.usingInstalledDefault === true ) {
+			status.className = 'col-12 small text-warning'
+			status.textContent = 'Using the installed-app Vault location because it already contains stored mods. Use default location when you are ready to move it to your writable app data folder.'
+		}
+	}
+
+	async #openVaultFolder() {
+		const status = MA.byId('setupVaultStatus')
+		try {
+			const result = await window.setup_IPC.openSetupPath(this.vault?.folder ?? '')
+			status.className = result === '' ? 'col-12 small text-success' : 'col-12 small text-warning'
+			status.textContent = result === '' ? 'Opened Vault folder.' : `Could not open Vault folder: ${result}`
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Could not open Vault folder: ${err.message}`
+		}
+	}
+
+	async #moveVaultFolder(useDefaultLocation) {
+		const button = MA.byId(useDefaultLocation ? 'setupVaultUseDefault' : 'setupVaultMove')
+		const status = MA.byId('setupVaultStatus')
+		const originalText = button.textContent
+		button.disabled = true
+		button.textContent = useDefaultLocation ? 'Moving...' : 'Choosing...'
+		status.className = 'col-12 small text-info'
+		status.textContent = useDefaultLocation ? 'Moving Vault to the default app data location...' : 'Choose a Vault folder to use...'
+		this.#setVaultMoveLocked(true)
+		this.#showVaultMoveLock(useDefaultLocation ? 'Preparing to move the Vault to the default app data location...' : 'Waiting for Vault folder selection...', null)
+
+		try {
+			const result = useDefaultLocation ?
+				await window.setup_IPC.useDefaultVaultFolder() :
+				await window.setup_IPC.moveVaultFolder()
+			if ( result.cancelled ) {
+				status.className = 'col-12 small text-body-secondary'
+				status.textContent = 'Vault folder change cancelled.'
+				return
+			}
+			if ( !result.ok ) {
+				status.className = 'col-12 small text-danger'
+				status.textContent = `Vault folder was not changed: ${result.error ?? 'Unknown error.'}`
+				return
+			}
+			await this.#refreshGameManagement()
+			this.#renderVaultLocation()
+			status.className = result.oldFolderDeleted === false ? 'col-12 small text-warning' : 'col-12 small text-success'
+			status.textContent = result.oldFolderDeleted === false ?
+				`Vault moved to ${result.folder}, but the old folder could not be deleted: ${result.oldFolderDeleteError}` :
+				`Vault moved to ${result.folder}.`
+		} catch (err) {
+			status.className = 'col-12 small text-danger'
+			status.textContent = `Vault folder move failed: ${err.message}`
+		} finally {
+			this.#setVaultMoveLocked(false)
+			button.disabled = false
+			button.textContent = originalText
+			this.#renderVaultLocation()
+		}
+	}
+
+	#handleVaultMoveProgress(progress = {}) {
+		const label = typeof progress.label === 'string' && progress.label !== '' ? progress.label : 'Moving Vault...'
+		const value = typeof progress.value === 'number' ? progress.value : null
+		this.#showVaultMoveLock(label, value)
+		const status = MA.byId('setupVaultStatus')
+		if ( status !== null ) {
+			status.className = 'col-12 small text-info'
+			status.textContent = label
+		}
+	}
+
+	#setVaultMoveLocked(locked) {
+		if ( locked ) {
+			this.vaultMoveLockDepth++
+			if ( this.vaultMoveLockDepth !== 1 ) { return }
+			document.body.classList.add('setup-vault-locked')
+			this.vaultMoveLockedControls = [...document.querySelectorAll('button, input, select, textarea')]
+				.map((control) => ({ control, disabled : control.disabled }))
+			for ( const { control } of this.vaultMoveLockedControls ) {
+				control.disabled = true
+			}
+			this.#showVaultMoveLock('Preparing Vault move...', null)
+			return
+		}
+
+		this.vaultMoveLockDepth = Math.max(0, this.vaultMoveLockDepth - 1)
+		if ( this.vaultMoveLockDepth !== 0 ) { return }
+		document.body.classList.remove('setup-vault-locked')
+		for ( const { control, disabled } of this.vaultMoveLockedControls ) {
+			control.disabled = disabled
+		}
+		this.vaultMoveLockedControls = []
+		this.#hideVaultMoveLock()
+	}
+
+	#showVaultMoveLock(label, value = null) {
+		const lock = MA.byId('setupVaultMoveLock')
+		const labelNode = MA.byId('setupVaultMoveLockLabel')
+		const bar = MA.byId('setupVaultMoveLockBar')
+		const progress = lock?.querySelector('.progress')
+		if ( lock === null || labelNode === null || bar === null ) { return }
+		lock.classList.add('show')
+		lock.setAttribute('aria-hidden', 'false')
+		labelNode.textContent = label
+		if ( value === null ) {
+			progress?.removeAttribute('aria-valuenow')
+			bar.style.width = '100%'
+			bar.classList.add('progress-bar-animated')
+			return
+		}
+		const safeValue = Math.max(0, Math.min(100, value))
+		progress?.setAttribute('aria-valuenow', safeValue.toString())
+		bar.style.width = `${safeValue}%`
+		bar.classList.toggle('progress-bar-animated', safeValue < 100)
+	}
+
+	#hideVaultMoveLock() {
+		const lock = MA.byId('setupVaultMoveLock')
+		if ( lock === null ) { return }
+		lock.classList.remove('show')
+		lock.setAttribute('aria-hidden', 'true')
 	}
 
 	#renderGameManagement() {
@@ -276,51 +527,6 @@ class PrefLib {
 		MA.byIdText('gameManagementActive', `Active game: ${typeof active === 'undefined' ? '--' : `FS${active.version}`}`)
 		for ( const item of this.gameManagement ) {
 			list.appendChild(this.#renderGameManagementRow(item))
-		}
-	}
-
-	#performanceText(metric) {
-		if ( metric === null || typeof metric === 'undefined' || !Number.isFinite(metric.ms) ) {
-			return 'not recorded'
-		}
-		return `${metric.ms.toFixed(1)} ms`
-	}
-
-	async #loadPerformanceSummary() {
-		const status = MA.byId('performanceStatus')
-		status.className = 'col-12 small text-info'
-		status.textContent = 'Reading performance log...'
-
-		try {
-			const summary = await window.setup_IPC.performanceSummary()
-			MA.byIdText('performanceMainVisible', this.#performanceText(summary.metrics?.mainVisible))
-			MA.byIdText('performanceFolderScan', this.#performanceText(summary.metrics?.modFolderScan))
-			MA.byIdText('performanceRendererUpdate', this.#performanceText(summary.metrics?.rendererUpdate))
-			MA.byIdText('performanceVaultIndex', this.#performanceText(summary.metrics?.vaultIndex))
-			MA.byIdText('performanceModHubRefresh', this.#performanceText(summary.metrics?.modHubRefresh))
-			MA.byIdText('performanceLogPath', `Log file: ${summary.logPath ?? '--'}`)
-			status.className = summary.ok ? 'col-12 small text-success' : 'col-12 small text-warning'
-			status.textContent = summary.status ?? 'Performance summary refreshed.'
-		} catch (err) {
-			status.className = 'col-12 small text-danger'
-			status.textContent = `Performance summary failed: ${err.message}`
-		}
-	}
-
-	async #openPerformanceLog() {
-		const status = MA.byId('performanceStatus')
-		try {
-			const result = await window.setup_IPC.openPerformanceLog()
-			if ( result !== '' ) {
-				status.className = 'col-12 small text-warning'
-				status.textContent = `Could not open performance log: ${result}`
-				return
-			}
-			status.className = 'col-12 small text-success'
-			status.textContent = 'Performance log opened.'
-		} catch (err) {
-			status.className = 'col-12 small text-danger'
-			status.textContent = `Could not open performance log: ${err.message}`
 		}
 	}
 

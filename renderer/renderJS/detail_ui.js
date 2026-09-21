@@ -8,9 +8,26 @@
 
 
 window.lookItemMap  = {}
+const detailRendererStartedAt = performance.now()
+
+function logDetailPerformance(label, startedAt, extraDetail = '') {
+	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+	logDetailInstant(`${label} took ${(performance.now() - startedAt).toFixed(1)} ms`, detailText.trim())
+}
+
+function logDetailInstant(label, extraDetail = '') {
+	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
+	const message = `${label}${detailText}`
+	if ( typeof window.main_IPC?.performance === 'function' ) {
+		window.main_IPC.performance(message)
+		return
+	}
+	window.log?.log?.('performance >>', message)
+}
 
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
+	logDetailPerformance('Detail renderer DOMContentLoaded', detailRendererStartedAt)
 	window.state = new windowState()
 })
 
@@ -36,23 +53,41 @@ class windowState {
 	storeInfo  = null
 
 	constructor() {
+		const constructStartedAt = performance.now()
 		window.lookItemMap  = {}
 
 		const urlParams = new URLSearchParams(window.location.search)
 		this.modColUUID = urlParams.get('mod')
 
+		logDetailPerformance('Detail renderer StateManager construction', constructStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 		this.getMod()
+	}
+
+	async #timedStep(label, operation) {
+		const stepStartedAt = performance.now()
+		try {
+			return await operation()
+		} finally {
+			logDetailPerformance(`Detail renderer ${label}`, stepStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
+		}
 	}
 
 	// MARK: Main logic
 	async getMod() {
+		const getModStartedAt = performance.now()
+		const settingsStartedAt = performance.now()
 		this.locale    = await window.i18n.lang()
 		this.i18nUnits = await window.settings.units()
+		logDetailPerformance('Detail renderer settings load', settingsStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 
+		const ipcStartedAt = performance.now()
 		window.detail_IPC.getMod(this.modColUUID).then(async (thisResponse) => {
+			logDetailPerformance('Detail renderer getMod IPC', ipcStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 			this.mod       = Array.isArray(thisResponse) ? thisResponse[0] : null
 			this.storeInfo = normalizeStoreInfo(Array.isArray(thisResponse) ? thisResponse[1] : null)
+			const resetStartedAt = performance.now()
 			this.#resetDynamicPage()
+			logDetailPerformance('Detail renderer reset dynamic page', resetStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 			if ( this.mod === null ) {
 				this.#showDetailError('The selected mod could not be found. Refresh the mod list and try again.')
 				return
@@ -61,24 +96,36 @@ class windowState {
 			I18N.local_entries = this.storeInfo.l10n[this.locale] || this.storeInfo.l10n.en || {}
 
 			const basicPromises = [
-				this.do_step_table(),
-				this.do_step_keyBinds(),
-				this.do_step_problems(),
-				this.do_step_badges(),
-				this.do_step_crops(),
+				this.#timedStep('table step', () => this.do_step_table()),
+				this.#timedStep('keybinds step', () => this.do_step_keyBinds()),
+				this.#timedStep('problems step', () => this.do_step_problems()),
+				this.#timedStep('badges step', () => this.do_step_badges()),
+				this.#timedStep('crops step', () => this.do_step_crops()),
 			]
 
 			if ( this.mod.modDesc.mapImage !== null ) {
+				const mapStartedAt = performance.now()
 				MA.byId('map_image_div').clsShow()
 				MA.byId('map_image').src = this.mod.modDesc.mapImage
+				logDetailPerformance('Detail renderer map image setup', mapStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 			}
 
 			
 			MA.byIdHTML('storeitems', '')
 			MA.byId('store_div').clsShow(Object.keys(this.storeInfo.vehicles).length !== 0 || Object.keys(this.storeInfo.placeables).length !== 0)
+			const previewStartedAt = performance.now()
 			this.#renderStoreItemPreview()
+			this.#renderModHubScreenshots()
+			logDetailPerformance('Detail renderer preview setup', previewStartedAt, [
+				`id=${JSON.stringify(this.modColUUID)}`,
+				`vehicles=${Object.keys(this.storeInfo.vehicles).length.toString()}`,
+				`placeables=${Object.keys(this.storeInfo.placeables).length.toString()}`,
+			].join(' '))
 
 			try {
+				const storeItemsStartedAt = performance.now()
+				let renderedVehicles = 0
+				let renderedPlaceables = 0
 				for ( const storeItemFile of Object.keys(this.storeInfo.vehicles).sort() ) {
 					const thisItem    = this.storeInfo.vehicles[storeItemFile]
 					const thisVehicle = new client_BuilderVehicle(
@@ -96,6 +143,7 @@ class windowState {
 
 					MA.byIdAppend('storeitems', thisVehicle.HTML)
 					thisVehicle.doCharts(this.i18nUnits)
+					renderedVehicles++
 				}
 
 				for ( const storeItemFile of Object.keys(this.storeInfo.placeables).sort() ) {
@@ -106,26 +154,39 @@ class windowState {
 						this.mod.gameVersion
 					)
 					MA.byIdAppend('storeitems', thisPlace.HTML)
+					renderedPlaceables++
 				}
+				logDetailPerformance('Detail renderer store items render', storeItemsStartedAt, [
+					`id=${JSON.stringify(this.modColUUID)}`,
+					`vehicles=${renderedVehicles.toString()}`,
+					`placeables=${renderedPlaceables.toString()}`,
+				].join(' '))
 			} finally {
+				const basicStartedAt = performance.now()
 				Promise.allSettled(basicPromises).then((results) => {
 					for ( const thisResult of results ) {
 						if ( thisResult.status === 'rejected' ) {
 							window.log.log('Issue with page build', thisResult.reason.toString(), thisResult.reason?.stack)
 						}
 					}
+					logDetailPerformance('Detail renderer basic steps settled', basicStartedAt, `id=${JSON.stringify(this.modColUUID)} rejected=${results.filter((result) => result.status === 'rejected').length.toString()}`)
+					const replaceStartedAt = performance.now()
 					ft_doReplace()
 					MA.byId('loading-spinner').clsHide()
+					logDetailPerformance('Detail renderer first render complete', getModStartedAt, `id=${JSON.stringify(this.modColUUID)} replace=${(performance.now() - replaceStartedAt).toFixed(1)} ms`)
 				})
 			}
 		}).catch((err) => {
+			logDetailInstant('Detail renderer getMod failed', `id=${JSON.stringify(this.modColUUID)} error=${JSON.stringify(err.message)}`)
 			this.#showDetailError(`The selected mod details could not be loaded: ${err.message}`)
 			window.log.error('page build error',  err.message, `\n${err.stack}`)
 		})
 
+		const bindStartedAt = performance.now()
 		for ( const element of MA.query('.inset-block-header-show-hide i18n-text') ) {
 			element.addEventListener('click', this.showHideClicker)
 		}
+		logDetailPerformance('Detail renderer show-hide binding', bindStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
 	}
 
 	#resetDynamicPage() {
@@ -143,6 +204,8 @@ class windowState {
 		MA.byId('store_div')?.clsHide()
 		MA.byId('store_preview_div')?.clsHide()
 		MA.byIdHTML('store_preview_items', '')
+		MA.byId('modhub_screenshots_div')?.clsHide()
+		MA.byIdHTML('modhub_screenshots', '')
 		MA.byId('map_image_div')?.clsHide()
 		MA.byId('malware-found')?.clsHide()
 		MA.byId('download_latest_update')?.clsHide()
@@ -203,8 +266,33 @@ class windowState {
 				badges.map((x) => {
 					MA.byId('badges').appendChild(x.value)
 				})
+				this.#renderDetailInfoBadges(theseBadges)
 			})
 		})
+	}
+
+	#renderDetailInfoBadges(badges) {
+		const detailTags = MA.byId('detail_tags')
+		if ( detailTags === null ) { return }
+		detailTags.innerHTML = ''
+		if ( badges.length === 0 ) {
+			detailTags.innerHTML = `<em>${I18N.defer('mh_unknown', false)}</em>`
+			return
+		}
+		for ( const badge of badges ) {
+			const tag = I18N.buildBadgeMod(badge)
+			tag.classList.add('ms-1', 'mb-1')
+			detailTags.appendChild(tag)
+		}
+	}
+
+	#detailListHTML(values) {
+		const cleanValues = [...new Set((values ?? [])
+			.flatMap((value) => String(value ?? '').split(' '))
+			.map((value) => value.trim())
+			.filter((value) => value !== ''))].sort(Intl.Collator().compare)
+		if ( cleanValues.length === 0 ) { return `<em>${I18N.defer('mh_unknown', false)}</em>` }
+		return cleanValues.map((value) => `<span class="badge text-bg-secondary ms-1 mb-1">${DATA.escapeSpecial(value)}</span>`).join('')
 	}
 
 	// MARK: problems
@@ -262,6 +350,8 @@ class windowState {
 
 		const idMap = {
 			description    : this.#doL10N(this.mod.l10n.description),
+			detail_brands  : this.#detailListHTML(this.mod.has_brands),
+			detail_categories : this.#detailListHTML(this.mod.has_cats),
 			file_date      : (new Date(Date.parse(this.mod.fileDetail.fileDate))).toLocaleString(this.locale, {timeZoneName : 'short'}),
 			filesize       : await DATA.bytesToHR(this.mod.fileDetail.fileSize),
 			github_version : this.#isGitHubURL(sourceURL) ? I18N.defer('update_status_checking', false) : `<em>${I18N.defer('update_source_not_configured', false )}</em>`,
@@ -366,11 +456,17 @@ class windowState {
 		previewItems.innerHTML = ''
 		previewDiv.clsShow(previews.length !== 0)
 		for ( const preview of previews ) {
+			const button = document.createElement('button')
+			button.type = 'button'
+			button.className = 'modhub-screenshot-button'
+			button.title = `Open ${preview.name || 'store item preview'}`
+			button.addEventListener('click', () => window.DetailImagePreview.open(previews, previews.indexOf(preview)))
 			const image = document.createElement('img')
 			image.alt = ''
 			image.src = DATA.iconMaker(preview.icon)
 			image.title = preview.name
-			previewItems.appendChild(image)
+			button.appendChild(image)
+			previewItems.appendChild(button)
 		}
 	}
 
@@ -460,6 +556,46 @@ class windowState {
 			return { label : 'Manual', type : 'manual' }
 		} catch {
 			return { label : 'Manual', type : 'manual' }
+		}
+	}
+
+	#modHubScreenshots(limit = 12) {
+		const screenshots = []
+		const seenURLs = new Set()
+		const addScreenshot = (screenshot) => {
+			if ( screenshots.length >= limit || typeof screenshot?.url !== 'string' || screenshot.url === '' || seenURLs.has(screenshot.url) ) { return }
+			seenURLs.add(screenshot.url)
+			screenshots.push({
+				name : typeof screenshot.name === 'string' && screenshot.name !== '' ? screenshot.name : 'ModHub screenshot',
+				url  : screenshot.url,
+			})
+		}
+		for ( const screenshot of this.mod.detailContext?.modHubScreenshots ?? [] ) { addScreenshot(screenshot) }
+		for ( const screenshot of this.mod.modHub?.screenshots ?? [] ) { addScreenshot(screenshot) }
+		return screenshots
+	}
+
+	#renderModHubScreenshots(screenshots = this.#modHubScreenshots()) {
+		const screenshotDiv = MA.byId('modhub_screenshots_div')
+		const screenshotItems = MA.byId('modhub_screenshots')
+		if ( screenshotDiv === null || screenshotItems === null ) { return }
+
+		screenshotItems.innerHTML = ''
+		screenshotDiv.clsShow(screenshots.length !== 0)
+		for ( const screenshot of screenshots ) {
+			const button = document.createElement('button')
+			button.className = 'modhub-screenshot-button'
+			button.type = 'button'
+			button.title = `Open ${screenshot.name}`
+			button.addEventListener('click', () => window.DetailImagePreview.open(screenshots, screenshots.indexOf(screenshot)))
+
+			const image = document.createElement('img')
+			image.alt = ''
+			image.decoding = 'async'
+			image.src = screenshot.url
+			image.title = screenshot.name
+			button.appendChild(image)
+			screenshotItems.appendChild(button)
 		}
 	}
 
@@ -597,6 +733,7 @@ class windowState {
 			MA.byIdHTML('mh_version', `<a href="${DATA.escapeSpecial(result.url)}" target="_BLANK">${DATA.escapeSpecial(result.version)}</a>`)
 			MA.byIdHTML('modhub_status', this.#versionStatusHTML(this.mod.modDesc.version, result.version, hasRollbackBackup))
 			MA.byIdHTML('update_status', this.#versionStatusHTML(this.mod.modDesc.version, result.version, hasRollbackBackup))
+			if ( Array.isArray(result.screenshots) ) { this.#renderModHubScreenshots(result.screenshots) }
 			this.#refreshDownloadButton(result, updatePointer)
 			this.#refreshRollbackButton(updatePointer, hasRollbackBackup)
 			this.#refreshRollbackVersions(updatePointer, hasRollbackBackup)
@@ -644,6 +781,7 @@ class windowState {
 					collectionName : collectionName,
 					fileName       : result.assetName,
 					modHubID       : updatePointer.modHubID,
+					modHubScreenshots : result.screenshots ?? [],
 					modName         : updatePointer.modName,
 					sourceType      : updatePointer.sourceType,
 					sourceURL       : updatePointer.sourceURL,

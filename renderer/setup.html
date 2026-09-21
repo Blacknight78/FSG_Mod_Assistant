@@ -16,6 +16,46 @@
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/setup_ui.js"></script>
+	<style>
+		.wizard-panel {
+			display: none;
+		}
+		.wizard-panel.active {
+			display: block;
+		}
+		.wizard-progress {
+			-webkit-app-region: no-drag;
+		}
+		body.setup-vault-locked > .container-fluid {
+			pointer-events: none;
+			filter: blur(1px);
+			opacity: 0.55;
+		}
+		.setup-vault-lock {
+			position: fixed;
+			inset: 0;
+			z-index: 3000;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 1.25rem;
+			background: rgba(0, 0, 0, 0.62);
+			-webkit-app-region: no-drag;
+		}
+		.setup-vault-lock.show {
+			display: flex;
+		}
+		.setup-vault-lock-card {
+			width: min(42rem, calc(100vw - 2.5rem));
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.35rem;
+			background: var(--bs-body-bg);
+			box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.55);
+		}
+		.setup-vault-lock .progress {
+			height: 1rem;
+		}
+	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
 	<div class="container-fluid px-1">
@@ -27,13 +67,22 @@
 				<div class="col-5 pt-4">
 					<i18n-text class="badge bg-primary mx-auto w-100 d-block rounded-3 h4 fs-5" data-key="user_pref_title_wizard"></i18n-text>
 				</div>
+				<div class="col-12 wizard-progress mt-3">
+					<div class="d-flex justify-content-between align-items-center gap-3 px-3">
+						<div class="small text-body-secondary" id="wizardStepLabel">Step 1 of 4</div>
+						<div class="progress flex-grow-1" role="progressbar" aria-label="Setup progress">
+							<div class="progress-bar" id="wizardProgressBar" style="width: 25%"></div>
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 
 		<div class="row gx-3 gy-5 mx-3 mb-3">
-			<div class="col-12 px-3 display-7"><i18n-text data-key="wizard_overview"></i18n-text></div>
+			<div class="col-12 wizard-panel active" data-wizard-step="1"><div class="row gx-3 gy-5">
+				<div class="col-12 px-3 display-7"><i18n-text data-key="wizard_overview"></i18n-text></div>
 
-			<div class="col-12 inset-block"><div>  <!-- step 1 -->
+				<div class="col-12 inset-block"><div>  <!-- step 1 -->
 				<i18n-text class="inset-block-header" data-key="wizard_step_1"></i18n-text>
 				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_1_blurb"></i18n-text>
 				<div class="row gx-3 gy-4">
@@ -53,9 +102,10 @@
 						<page-replace data-type="switch-input" data-name="show_tooltips"></page-replace>
 					</div>
 				</div>
+				</div></div>
 			</div></div>
 
-			<div class="col-12 inset-block"><div>  <!-- step 2 -->
+			<div class="col-12 wizard-panel inset-block" data-wizard-step="2"><div>  <!-- step 2 -->
 				<i18n-text class="inset-block-header" data-key="wizard_step_2"></i18n-text>
 				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_2_blurb"></i18n-text>
 				<div class="row gx-3 gy-2 mt-3">
@@ -83,166 +133,68 @@
 					</div>
 					<div class="col-12 small" id="gameManagementStatus" role="status"></div>
 				</div>
-
-				<div class="col-12 inset-block mt-5"><div>  <!-- step 2 -->
-					<span class="inset-block-header"><i class="fsico-ver-25 fs-1"></i></span>
-					<div class="row gx-3 gy-4 mt-1">
-						<div class="col-12 inset-block"><!-- game enable - 25 -->
-							<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_25"></page-replace>
-						</div>
-
-						<div class="col-12 inset-block"><!-- game settings - 25 -->
-							<page-replace data-type="settings-input" data-name="25"></page-replace>
-						</div>
-
-						<div class="col-12 inset-block"><!-- game path - 25 -->
-							<page-replace data-type="path-input" data-name="25"></page-replace>
-						</div>
-					</div></div>
-				</div>
-				
-				<div class="col-12 inset-block"><div>  <!-- step 2 -->
-					<span class="inset-block-header"><i class="fsico-ver-22 fs-1"></i></span>
-					<div class="row gx-3 gy-4 mt-1">
-						<div class="col-12 inset-block"><!-- game enable - 22 -->
-							<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_22"></page-replace>
-						</div>
-
-						<div class="col-12 inset-block"><!-- game settings - 22 -->
-							<page-replace data-type="settings-input" data-name="22"></page-replace>
-						</div>
-
-						<div class="col-12 inset-block"><!-- game path - 22 -->
-							<page-replace data-type="path-input" data-name="22"></page-replace>
-						</div>
-					</div></div>
-				</div>
-
-				
 			</div></div>
 
-			<div class="col-12 inset-block"><div>  <!-- step 3 -->
+			<div class="col-12 wizard-panel inset-block" data-wizard-step="3"><div>  <!-- step 3 -->
 				<i18n-text class="inset-block-header" data-key="wizard_step_3"></i18n-text>
-				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_3_blurb"></i18n-text>
 				<div id="step_3_folders"></div>
-			</div></div>
-
-			<div class="col-12 inset-block"><div>  <!-- step 4 -->
-				<i18n-text class="inset-block-header" data-key="wizard_step_4"></i18n-text>
-				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_4_blurb"></i18n-text>
-				<div class="row gx-3 gy-5">
-					<div class="col-12 inset-block mt-5"><div>  <!-- 19 -->
-						<span class="inset-block-header"><i class="fsico-ver-19 fs-1"></i></span>
-						<div class="row gx-3 gy-4 mt-1">
-							<div class="col-12 inset-block"><!-- game enable -->
-								<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_19"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game settings -->
-								<page-replace data-type="settings-input" data-name="19"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game path -->
-								<page-replace data-type="path-input" data-name="19"></page-replace>
-							</div>
-						</div></div>
-					</div>
-					
-					<div class="col-12 inset-block mt-5"><div>  <!-- 17 -->
-						<span class="inset-block-header"><i class="fsico-ver-17 fs-1"></i></span>
-						<div class="row gx-3 gy-4 mt-1">
-							<div class="col-12 inset-block"><!-- game enable -->
-								<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_17"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game settings -->
-								<page-replace data-type="settings-input" data-name="17"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game path -->
-								<page-replace data-type="path-input" data-name="17"></page-replace>
-							</div>
-						</div></div>
-					</div>
-
-					<div class="col-12 inset-block mt-5"><div>  <!-- 15 -->
-						<span class="inset-block-header"><i class="fsico-ver-15 fs-1"></i></span>
-						<div class="row gx-3 gy-4 mt-1">
-							<div class="col-12 inset-block"><!-- game enable -->
-								<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_15"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game settings -->
-								<page-replace data-type="settings-input" data-name="15"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game path -->
-								<page-replace data-type="path-input" data-name="15"></page-replace>
-							</div>
-						</div></div>
-					</div>
-
-					<div class="col-12 inset-block mt-5"><div>  <!-- 13 -->
-						<span class="inset-block-header"><i class="fsico-ver-13 fs-1"></i></span>
-						<div class="row gx-3 gy-4 mt-1">
-							<div class="col-12 inset-block"><!-- game enable -->
-								<page-replace data-type="switch-input" data-key="game_enabled" data-name="game_enabled_13"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game settings -->
-								<page-replace data-type="settings-input" data-name="13"></page-replace>
-							</div>
-	
-							<div class="col-12 inset-block"><!-- game path -->
-								<page-replace data-type="path-input" data-name="13"></page-replace>
-							</div>
-						</div></div>
+				<div class="col-12 inset-block mt-4">
+					<span class="inset-block-header">Vault storage location</span>
+					<span class="inset-block-blurb-section">Choose where the Mod Vault stores ZIP backups, indexes, notes, and tag metadata. The default location is a writable mod-library folder in your app data.</span>
+					<div class="row gx-3 gy-3 mt-1">
+						<div class="col-12">
+							<div class="small text-body-secondary">Current Vault folder</div>
+							<div class="user-select-text small" id="setupVaultFolder">--</div>
+						</div>
+						<div class="col-12">
+							<div class="small text-body-secondary">Default location</div>
+							<div class="user-select-text small" id="setupVaultDefaultFolder">--</div>
+						</div>
+						<div class="col-md-4">
+							<button class="btn btn-sm btn-outline-info w-100" id="setupVaultOpen" type="button">Open Vault folder</button>
+						</div>
+						<div class="col-md-4">
+							<button class="btn btn-sm btn-outline-warning w-100" id="setupVaultMove" type="button">Choose Vault folder</button>
+						</div>
+						<div class="col-md-4">
+							<button class="btn btn-sm btn-outline-success w-100" id="setupVaultUseDefault" type="button">Use default location</button>
+						</div>
+						<div class="col-12 small" id="setupVaultStatus" role="status"></div>
 					</div>
 				</div>
 			</div></div>
 
-			<div class="col-12 inset-block"><div>  <!-- step 5 -->
+			<div class="col-12 wizard-panel inset-block" data-wizard-step="4"><div>  <!-- step 4 -->
 				<i18n-text class="inset-block-header" data-key="wizard_step_5"></i18n-text>
 				<i18n-text class="inset-block-blurb-section" data-key="wizard_step_5_blurb"></i18n-text>
 				<a class="btn btn-primary btn-sm w-75 mx-auto d-block btn-thumb-up" href="https://fsgmodding.github.io/FSG_Mod_Assistant/" target="_blank"><i18n-text data-key="help_button__title">Docs</i18n-text></a>
 			</div></div>
 
-			<div class="col-12 inset-block"><div>
-				<span class="inset-block-header">Performance</span>
-				<span class="inset-block-blurb-section">Review recent startup, scan, render, and Vault timing from the app log.</span>
-				<div class="row gx-3 gy-3 mt-1">
-					<div class="col-sm-6 col-xl">
-						<div class="small text-body-secondary">Main window visible</div>
-						<div class="fs-5" id="performanceMainVisible">--</div>
-					</div>
-					<div class="col-sm-6 col-xl">
-						<div class="small text-body-secondary">Folder scan</div>
-						<div class="fs-5" id="performanceFolderScan">--</div>
-					</div>
-					<div class="col-sm-6 col-xl">
-						<div class="small text-body-secondary">Renderer refresh</div>
-						<div class="fs-5" id="performanceRendererUpdate">--</div>
-					</div>
-					<div class="col-sm-6 col-xl">
-						<div class="small text-body-secondary">Vault index</div>
-						<div class="fs-5" id="performanceVaultIndex">--</div>
-					</div>
-					<div class="col-sm-6 col-xl">
-						<div class="small text-body-secondary">ModHub refresh</div>
-						<div class="fs-5" id="performanceModHubRefresh">--</div>
-					</div>
-					<div class="col-12 small text-body-secondary user-select-text" id="performanceLogPath">Log file: --</div>
-					<div class="col-md-6">
-						<button class="btn btn-sm btn-outline-info w-100" id="performanceRefresh" type="button">Refresh performance summary</button>
-					</div>
-					<div class="col-md-6">
-						<button class="btn btn-sm btn-outline-secondary w-100" id="performanceOpenLog" type="button">Open performance log</button>
-					</div>
-					<div class="col-12 small" id="performanceStatus" role="status"></div>
-				</div>
-			</div></div>
 		</div>
 
+		<div class="sticky-bottom bg-body border-top py-3 px-4 wizard-progress">
+			<div class="d-flex justify-content-between gap-3">
+				<button class="btn btn-outline-secondary" id="wizardBack" type="button">Back</button>
+				<button class="btn btn-primary" id="wizardNext" type="button">Next</button>
+				<button class="btn btn-success d-none" id="wizardFinish" type="button">Finish Setup</button>
+			</div>
+		</div>
+
+	</div>
+	<div class="setup-vault-lock" id="setupVaultMoveLock" aria-hidden="true" role="alert" aria-live="polite">
+		<div class="setup-vault-lock-card p-4">
+			<div class="d-flex align-items-center gap-3 mb-3">
+				<div class="spinner-border text-info flex-shrink-0" aria-hidden="true"></div>
+				<div>
+					<div class="h5 mb-1">Moving Mod Vault</div>
+					<div class="small text-body-secondary">Please keep the app open until this finishes.</div>
+				</div>
+			</div>
+			<div class="small mb-2" id="setupVaultMoveLockLabel">Preparing Vault move...</div>
+			<div class="progress" role="progressbar" aria-label="Vault move progress" aria-valuemin="0" aria-valuemax="100">
+				<div class="progress-bar progress-bar-striped progress-bar-animated" id="setupVaultMoveLockBar" style="width: 100%"></div>
+			</div>
+		</div>
 	</div>
 </body>
 
