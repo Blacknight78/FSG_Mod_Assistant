@@ -21,9 +21,16 @@
 	<script src="renderJS/util/key_lookup_table.js"></script>
 	<script src="renderJS/util/cropcal.js"></script>
 
+	<link rel="stylesheet" href="inc/detail_image_preview.css">
+	<script src="renderJS/detail_image_preview.js"></script>
 	<script src="renderJS/detail_ui.js"></script>
 	
 	<style>
+		img {
+			user-select: none;
+			-webkit-user-select: none;
+			-webkit-user-drag: none;
+		}
 		.crop-row-odd { background-color: #243a43 !important; height: 1.3em;}
 		.crop-row-even { background-color: #35545e !important; height: 1.3em;}
 		.crop-row-odd.crop-col-odd { background-color: #4b656c !important; }
@@ -60,7 +67,8 @@
 			margin-top: -10%;
 			width: 35%;
 		}
-		.store-preview-strip img {
+		.store-preview-strip img,
+		.modhub-screenshot-strip img {
 			width: 4rem;
 			height: 4rem;
 			object-fit: contain;
@@ -68,6 +76,11 @@
 			border: 1px solid var(--bs-border-color);
 			border-radius: 0.5rem;
 			padding: 0.25rem;
+		}
+		.modhub-screenshot-button {
+			background: transparent;
+			border: 0;
+			padding: 0;
 		}
 		.selectable-detail-title {
 			-webkit-app-region: no-drag;
@@ -144,6 +157,9 @@
 					<tr><th scope="col"><i18n-text data-key="detail_mod_has_scripts"></i18n-text></th><td class="text-end" id="has_scripts"></td></tr>
 					<tr><th scope="col"><i18n-text data-key="detail_mod_store_items"></i18n-text></th><td class="text-end" id="store_items"></td></tr>
 					<tr><th scope="col"><i18n-text data-key="detail_mod_multiplayer"></i18n-text></th><td class="text-end" id="is_multiplayer"></td></tr>
+					<tr><th scope="col">Tags</th><td class="text-end" id="detail_tags"></td></tr>
+					<tr><th scope="col">Categories</th><td class="text-end" id="detail_categories"></td></tr>
+					<tr><th scope="col">Brands</th><td class="text-end" id="detail_brands"></td></tr>
 				</table>				
 				<div class="input-group input-group-sm mt-2">
 					<span class="input-group-text">Source URL</span>
@@ -158,6 +174,10 @@
 				<div class="d-none mt-3" id="store_preview_div">
 					<div class="small text-body-secondary mb-1">Store item preview</div>
 					<div class="store-preview-strip d-flex flex-wrap gap-2" id="store_preview_items"></div>
+				</div>
+				<div class="d-none mt-3" id="modhub_screenshots_div">
+					<div class="small text-body-secondary mb-1">ModHub screenshots</div>
+					<div class="modhub-screenshot-strip d-flex flex-wrap gap-2" id="modhub_screenshots"></div>
 				</div>
 			</div>
 		</div>

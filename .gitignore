@@ -16,3 +16,5 @@ test/bgBuilder/*
 TEST_OUTPUT.md
 .deepl_key
 jsdoc_server/
+build-info.json
+tmp-video-review/

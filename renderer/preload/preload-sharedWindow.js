@@ -33,6 +33,8 @@ const pageAPI = {
 		functions : {
 			all     : () => ipcRenderer.invoke('debug:all'),
 			context : () => ipcRenderer.send('context:copy'),
+			openPerformanceLog : () => ipcRenderer.invoke('settings:openPerformanceLog'),
+			performanceSummary : () => ipcRenderer.invoke('settings:performanceSummary'),
 		},
 		validAsync : new Set(['debug:item']),
 	},
@@ -126,7 +128,7 @@ const pageAPI = {
 					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input',
 					'manifest', 'mini', 'mod_management', 'notes', 'recent_changes',
 					'resolve', 'savemanage', 'savetrack',
-					'update', 'version', 'wizard',
+					'update', 'update_candidates', 'version', 'wizard',
 					'vault', 'vault_update',
 				])
 				if ( knownWindows.has(win) ) {
@@ -139,6 +141,8 @@ const pageAPI = {
 			dispatchSave   : (CKey, file = null) => { ipcRenderer.send('dispatch:save', CKey, file) },
 	
 			cancelDownload    : () => { ipcRenderer.send('file:downloadCancel') },
+			closeApplicationAnyway : () => ipcRenderer.invoke('app:closeAnyway'),
+			confirmResponse : (payload) => ipcRenderer.invoke('app:confirmResponse', payload),
 			getGitHub         : (url) => ipcRenderer.invoke('settings:site:githubLatest', url),
 			hasRollbackBackup : (update) => ipcRenderer.invoke('update:hasRollbackBackup', update),
 			minimizeToTray    : () => { ipcRenderer.send('main:minimizeToTray') },
@@ -147,6 +151,7 @@ const pageAPI = {
 			startFarmSim      : () => { ipcRenderer.send('dispatch:game') },
 			updateApplication : () => { ipcRenderer.send('main:runUpdateInstall') },
 			updateState       : () => ipcRenderer.invoke('state:all'),
+			userActivity      : (reason) => { ipcRenderer.send('main:userActivity', reason) },
 	
 			contextCol   : (CKey)         => { ipcRenderer.send('context:collection', CKey) },
 			contextInput : ()             => ipcRenderer.send('context:cutCopyPaste'),
@@ -168,7 +173,7 @@ const pageAPI = {
 			},
 
 			files : {
-				disableSelected : (modIDs)      => ipcRenderer.invoke('files:disableSelected', { modIDs }),
+				disableSelected : (modIDs, operationId = null) => ipcRenderer.invoke('files:disableSelected', { modIDs, operationId }),
 				disabledList    : (collectionKey) => ipcRenderer.invoke('files:disabledList', { collectionKey }),
 				drop        : (files)      => ipcRenderer.invoke('files:drop', Object.values(files).map((x) => webUtils.getPathForFile(x)) ),
 				exportZIP   : (MKey_s)     => { ipcRenderer.send('file:exportZIP', MKey_s) },
@@ -177,8 +182,8 @@ const pageAPI = {
 				openExplore : (MKey_s)     => { ipcRenderer.send('files:openExplore', MKey_s) },
 				openExtSite : (MKey_s)     => { ipcRenderer.send('files:openExtSite', MKey_s) },
 				openModHub  : (MKey_s)     => { ipcRenderer.send('files:openModHub', MKey_s) },
-				process     : ( object )   => ipcRenderer.invoke('file:operation', object),
-				restoreDisabled : (collectionKey, fileNames) => ipcRenderer.invoke('files:restoreDisabled', { collectionKey, fileNames }),
+				process     : ( object, operationId = null ) => ipcRenderer.invoke('file:operation', { operationId, operations : object }),
+				restoreDisabled : (collectionKey, fileNames, operationId = null) => ipcRenderer.invoke('files:restoreDisabled', { collectionKey, fileNames, operationId }),
 			},
 	
 			folder : {
@@ -198,6 +203,7 @@ const pageAPI = {
 		},
 		validAsync : new Set([
 			'files:deleteTrigger',
+			'files:batchStatus',
 			'files:operation',
 			'loading:current',
 			'loading:download',
@@ -206,6 +212,8 @@ const pageAPI = {
 			'loading:show',
 			'loading:titles',
 			'loading:total',
+			'app:closeBlocked',
+			'app:confirmRequest',
 			'mods:list',
 			'mods:site',
 			'select:list',
@@ -280,13 +288,13 @@ const pageAPI = {
 	'setup' : {
 		functions : {
 			addFolder : ( folder, version ) => { ipcRenderer.send('folders:addDirect', folder, version) },
+			moveVaultFolder : () => ipcRenderer.invoke('wizard:moveVaultFolder'),
 			openSetupPath : (targetPath) => ipcRenderer.invoke('settings:openSetupPath', targetPath),
-			openPerformanceLog : () => ipcRenderer.invoke('settings:openPerformanceLog'),
-			performanceSummary : () => ipcRenderer.invoke('settings:performanceSummary'),
 			scanGames : () => ipcRenderer.invoke('wizard:scanGames'),
+			useDefaultVaultFolder : () => ipcRenderer.invoke('wizard:useDefaultVaultFolder'),
 			update    : () => ipcRenderer.invoke('wizard:update'),
 		},
-		validAsync : new Set(['mods:list']),
+		validAsync : new Set(['mods:list', 'setup:vaultProgress']),
 	},
 	'update' : {
 		functions : {
@@ -373,23 +381,33 @@ const pageAPI = {
 			cleanupUnused : (payload) => ipcRenderer.invoke('vault:cleanupUnused', payload),
 			collections : () => ipcRenderer.invoke('vault:collections'),
 			context    : (payload) => ipcRenderer.send('context:vault', payload),
+			copyBatchToCollection : (payload) => ipcRenderer.invoke('vault:copyBatchToCollection', payload),
 			copyPreview : (payload) => ipcRenderer.invoke('vault:copyPreview', payload),
 			copyToCollection : (payload) => ipcRenderer.invoke('vault:copyToCollection', payload),
 			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
+			exportRecoveryManifest : () => ipcRenderer.invoke('vault:exportRecoveryManifest'),
+			finishDeferredCopyScan : (payload) => ipcRenderer.invoke('vault:finishDeferredCopyScan', payload),
 			importCollections : () => ipcRenderer.invoke('vault:importCollections'),
+			importFolder : (payload) => ipcRenderer.invoke('vault:importFolder', payload),
+			importLinks : (text) => ipcRenderer.invoke('vault:importLinks', text),
+			importRecoveryManifest : () => ipcRenderer.invoke('vault:importRecoveryManifest'),
+			importRun : (selected) => ipcRenderer.invoke('vault:importRun', selected),
+			importCancel : () => ipcRenderer.invoke('vault:importCancel'),
 			moveFolder : () => ipcRenderer.invoke('vault:moveFolder'),
 			openDetail : (payload) => ipcRenderer.invoke('vault:openDetail', payload),
 			openFolder : () => ipcRenderer.invoke('vault:openFolder'),
 			refreshModHub : () => ipcRenderer.invoke('vault:refreshModHub'),
 			saveNote   : (payload) => ipcRenderer.invoke('vault:saveNote', payload),
 			saveTags   : (payload) => ipcRenderer.invoke('vault:saveTags', payload),
+			setBusy    : (busy) => ipcRenderer.send('vault:setBusy', busy === true),
 			setKeepPinned : (payload) => ipcRenderer.invoke('vault:setKeepPinned', payload),
 			setRetentionCount : (payload) => ipcRenderer.invoke('vault:setRetentionCount', payload),
 			textContext : () => ipcRenderer.send('context:copy'),
+			userActivity : (reason) => { ipcRenderer.send('main:userActivity', reason) },
 			wipeForTesting : () => ipcRenderer.invoke('vault:wipeForTesting'),
 		},
-		validAsync : new Set(['vault:contextResult', 'vault:progress']),
+		validAsync : new Set(['vault:closeBlocked', 'vault:contextResult', 'vault:progress', 'vault:refresh', 'vault:importProgress']),
 	},
 	'version' : {
 		functions : {

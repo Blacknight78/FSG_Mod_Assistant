@@ -55,11 +55,6 @@
 
 		.scroll_col, .scroll_mod { width: 6px; }
 
-		/* #display_mod_container { margin-top: 10.9rem; } */
-		/* #moveButtons {
-			position: fixed;
-		} */
-
 		.issue_badges .badge {
 			font-weight: 400;
 			font-size: 70%!important;
@@ -143,6 +138,267 @@
 			outline         : none;
 			text-decoration : underline;
 		}
+		.app-confirm-message {
+			white-space: pre-wrap;
+		}
+		.main-app-shell {
+			background: var(--bs-body-bg);
+		}
+		.main-topbar {
+			-webkit-app-region : drag;
+			align-items        : center;
+			background         : color-mix(in srgb, var(--bs-body-bg) 88%, var(--bs-primary) 12%);
+			border-bottom      : var(--bs-border-width) solid var(--bs-border-color);
+			display           : grid;
+			grid-template-columns: minmax(18rem, 1fr) auto;
+			gap               : 1rem;
+			min-height        : 5.4rem;
+			padding           : .75rem 1rem;
+		}
+		.main-topbar-actions {
+			-webkit-app-region : no-drag;
+			align-items        : center;
+			display            : flex;
+			flex-wrap          : wrap;
+			gap                : .35rem;
+			justify-content    : end;
+			padding-right      : 12.5rem;
+		}
+		.main-topbar-actions .btn {
+			border-color : rgba(var(--bs-secondary-rgb), .35);
+			min-height   : 2.25rem;
+		}
+		.main-workspace {
+			display               : grid;
+			gap                   : .75rem;
+			grid-template-columns : 17rem minmax(0, 1fr);
+			min-height            : 0;
+			padding               : .75rem;
+		}
+		.main-action-rail,
+		.main-content-panel {
+			background    : color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-secondary-bg) 8%);
+			border        : var(--bs-border-width) solid var(--bs-border-color);
+			border-radius : .5rem;
+			min-height    : 0;
+		}
+		.main-action-rail {
+			display        : flex;
+			flex-direction : column;
+			gap            : .75rem;
+			overflow       : hidden;
+			padding        : .75rem;
+		}
+		.main-game-badge {
+			align-items     : center;
+			border-bottom   : var(--bs-border-width) solid var(--bs-border-color);
+			display         : flex;
+			gap             : .75rem;
+			justify-content : center;
+			padding-bottom  : .75rem;
+		}
+		.main-game-badge#multi_version_button {
+			cursor : pointer;
+		}
+		.main-rail-section {
+			display        : flex;
+			flex-direction : column;
+			gap            : .5rem;
+		}
+		.main-rail-section-collections {
+			flex       : 1 1 auto;
+			min-height : 0;
+		}
+		.main-rail-button {
+			align-items     : center;
+			display         : flex;
+			gap             : .55rem;
+			justify-content : flex-start;
+			min-height      : 2.75rem;
+			text-align      : left;
+			width           : 100%;
+		}
+		.main-rail-button i {
+			font-size : 1.25rem;
+			width     : 1.5rem;
+		}
+		.main-content-panel {
+			display        : flex;
+			flex-direction : column;
+			overflow       : hidden;
+		}
+		.main-list-toolbar {
+			border-bottom : var(--bs-border-width) solid var(--bs-border-color);
+			padding       : .75rem;
+		}
+		.main-folder-toolbar {
+			align-items           : center;
+			display               : grid;
+			gap                   : .6rem;
+			grid-template-columns : repeat(3, minmax(9rem, 1fr));
+			margin-bottom         : .75rem;
+		}
+		.main-folder-toolbar .btn {
+			align-items     : center;
+			display         : flex;
+			gap             : .55rem;
+			justify-content : center;
+			min-height      : 2.5rem;
+		}
+		.main-folder-toolbar .btn i {
+			font-size : 1.15rem;
+		}
+		.main-filter-strip {
+			align-items           : center;
+			display               : grid;
+			gap                   : .6rem;
+			grid-template-columns : minmax(14rem, 1fr) auto auto auto;
+		}
+		.main-advanced-filter-panel {
+			background    : var(--bs-tertiary-bg);
+			border        : var(--bs-border-width) solid var(--bs-border-color);
+			border-radius : var(--bs-border-radius);
+			grid-column   : 1 / -1;
+			padding       : .75rem;
+		}
+		.main-advanced-filter-header {
+			align-items     : flex-start;
+			border-bottom   : var(--bs-border-width) solid var(--bs-border-color);
+			display         : flex;
+			gap             : 1rem;
+			justify-content : space-between;
+			margin-bottom   : .65rem;
+			padding-bottom  : .65rem;
+		}
+		.main-tag-filter-help {
+			background    : var(--bs-body-bg);
+			border        : var(--bs-border-width) solid var(--bs-border-color);
+			border-radius : var(--bs-border-radius);
+			margin-bottom : .65rem;
+			padding       : .65rem .75rem;
+		}
+		.main-selected-summary {
+			min-width : 9rem;
+		}
+		.main-mod-list {
+			flex       : 1 1 auto;
+			min-height : 0;
+			overflow-anchor : none;
+			padding    : .5rem;
+		}
+		.main-mod-list #mod-collections {
+			border-color : var(--bs-border-color)!important;
+			margin       : 0!important;
+			overflow-anchor : none;
+		}
+		.main-mod-list .mod-row {
+			content-visibility    : auto;
+			contain-intrinsic-size : auto 5.25rem;
+			overflow-anchor       : none;
+		}
+		.main-virtual-spacer {
+			overflow-anchor : none;
+		}
+		.main-mod-row-actions {
+			min-width : 12rem;
+			width     : 12rem;
+		}
+		.main-mod-row-actions .btn {
+			--bs-btn-bg              : #22384f;
+			--bs-btn-border-color    : #3f5872;
+			--bs-btn-color           : #f1f5f9;
+			--bs-btn-hover-bg        : #2d4964;
+			--bs-btn-hover-border-color : #5a7896;
+			--bs-btn-hover-color     : #fff;
+			--bs-btn-active-bg       : #1d3146;
+			--bs-btn-active-border-color : #6c8aaa;
+			--bs-btn-active-color    : #fff;
+			box-shadow               : inset 0 0 0 1px rgba(255,255,255,.04), 0 0 0 .08rem rgba(80,120,160,.16);
+			min-width                : 5.5rem;
+		}
+		.mod-row.mod-disabled {
+			opacity : .55;
+		}
+		.main-mod-icon {
+			aspect-ratio : 1 / 1;
+			height       : 4rem;
+			object-fit    : contain;
+			width        : 4rem;
+		}
+		.main-mod-icon-lazy {
+			background : var(--bs-tertiary-bg);
+			opacity    : .55;
+		}
+		.main-mod-list.main-list-scrolling .issue_badges,
+		.main-mod-list.main-list-scrolling .main-mod-row-actions {
+			visibility : hidden;
+		}
+		.main-side-title {
+			border-bottom  : var(--bs-border-width) solid var(--bs-border-color);
+			color          : var(--bs-secondary-color);
+			font-size      : .82rem;
+			font-weight    : 700;
+			letter-spacing : .02em;
+			padding-bottom : .5rem;
+			text-transform : uppercase;
+		}
+		.rail-collection-list {
+			display        : flex;
+			flex-direction : column;
+			gap            : .35rem;
+			flex           : 1 1 auto;
+			min-height     : 0;
+			overflow-y     : auto;
+			padding-right   : .15rem;
+		}
+		.rail-collection-row {
+			align-items           : center;
+			background            : transparent;
+			border                : var(--bs-border-width) solid var(--bs-border-color);
+			border-radius         : .35rem;
+			color                 : var(--bs-body-color);
+			cursor                : pointer;
+			display               : grid;
+			gap                   : .5rem;
+			grid-template-columns : auto minmax(0, 1fr) auto;
+			padding               : .55rem .6rem;
+			text-align            : left;
+			width                 : 100%;
+		}
+		.rail-collection-row:hover {
+			border-color : var(--bs-info);
+		}
+		.rail-collection-row.collection-selected {
+			background   : rgba(var(--bs-info-rgb), 0.08);
+			border-color : var(--bs-info);
+			box-shadow   : inset 0.25rem 0 0 var(--bs-info);
+		}
+		.rail-collection-row .collection-icon {
+			flex   : 0 0 2.35rem;
+			height : 2.35rem;
+			width  : 2.35rem;
+		}
+		.rail-collection-row .collection-icon svg {
+			display : block;
+			height  : 100%;
+			width   : 100%;
+		}
+		.rail-collection-row .collection-name {
+			font-weight   : 600;
+			overflow      : hidden;
+			text-overflow : ellipsis;
+			white-space   : nowrap;
+		}
+		.rail-collection-row .collection-meta {
+			color         : var(--bs-secondary-color);
+			font-size     : .82rem;
+			overflow      : hidden;
+			text-overflow : ellipsis;
+			white-space   : nowrap;
+		}
+		.main-footer-compact {
+			min-height : 2.75rem;
+		}
 
 		@media screen and (max-width: 1019px) {
 			body[data-i18n="es"] .ex-small_es { font-size: .75em; }
@@ -205,18 +461,6 @@
 			--bs-btn-disabled-border-color: #6c757d;
 			--bs-btn-padding-y: 0.175rem;
 		}
-		#moveButtons i18n-text {
-			--bs-text-opacity      : 1;
-			border-radius          : var(--bs-border-radius-lg)!important;
-			color                  : rgba(var(--bs-white-rgb),var(--bs-text-opacity))!important;
-			flex                   : 1 1 auto!important;
-			--bs-btn-padding-y     : 0.25rem;
-			--bs-btn-padding-x     : 0.5rem;
-			--bs-btn-font-size     : 0.875rem;
-			--bs-btn-border-radius : 0.25rem;
-			font-size              : 0.75em;
-			align-content          : space-around!important;
-		}
 		.mod-folder-overlay {
 			color     : rgb(175 165 141);
 			font-size : 18px;
@@ -237,9 +481,9 @@
 		}
 
 		.bg-mod-selected {
-			--bs-bg-opacity: 0.80;
-			background-color: rgba(var(--bs-success-rgb),var(--bs-bg-opacity))!important;
-			color: white;
+			background   : rgba(var(--bs-info-rgb), 0.08)!important;
+			border-color : var(--bs-info)!important;
+			box-shadow   : inset 0.25rem 0 0 var(--bs-info);
 		}
 
 		.pref-danger {
@@ -294,125 +538,143 @@
 			text-shadow: 0 1px 2px #000;
 			pointer-events: none;
 		}
+		.file-op-mini {
+			position: fixed;
+			right: 1.25rem;
+			bottom: 1.25rem;
+			width: min(24rem, calc(100vw - 2.5rem));
+			z-index: 1045;
+			border: 1px solid var(--bs-border-color);
+			box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.45);
+			cursor: pointer;
+			-webkit-app-region: no-drag;
+		}
+		.file-op-mini:hover {
+			border-color: rgba(var(--bs-info-rgb), 0.75);
+		}
 
 	</style>
 	
 </head>
-<body class="d-flex flex-column vh-100 fsg-back-1 std-scroll" id="background_target" data-bs-theme="dark" style="-webkit-app-region: no-drag;">
+<body class="d-flex flex-column vh-100 std-scroll main-app-shell" id="background_target" data-bs-theme="dark" style="-webkit-app-region: no-drag;">
 	<div class="container-fluid d-flex flex-column vh-100 px-0 user-select-none overflow-hidden" id="drag_target">
-		<div class="pt-0 bg-body" id="main-header">
-			<div class="row w-100 mb-1">
-				<div class="col-12 mt-2" style="-webkit-app-region: drag;">
-					<h2 class="ps-2 mastHead">
-						<i18n-text data-key="app_name"></i18n-text>
-						<button type="button" id="appVersionLink" class="ver app-version-link" title="Open this release on GitHub">
-							<i18n-text data-key="app_version"></i18n-text>
-						</button>
-					</h2>
-				</div>
-				<div class="m-0 p-0 btn-group-win_ui d-flex justify-content-end" style="position:absolute; -webkit-app-region: no-drag;">
-					<button type="button" class="btn" id="topBar-launch">
-						<i18n-text data-key="game_icon"></i18n-text>
-						<i18n-text data-key="launch_game" class="fw-semibold"></i18n-text>
-						<span class="ps-2 text-danger d-inline-flex" style="--bs-text-opacity: 0.7;" id="gameRunningBubble"><i class="align-self-center bi bi-circle-fill small"></i></span>
+		<div class="main-topbar" id="main-header">
+			<div class="min-w-0" style="-webkit-app-region: drag;">
+				<h2 class="m-0 mastHead">
+					<i18n-text data-key="app_name"></i18n-text>
+					<button type="button" id="appVersionLink" class="ver app-version-link" title="Open this release on GitHub">
+						<i18n-text data-key="app_version"></i18n-text>
 					</button>
-					<i18n-text type="button" class="btn text-info d-none" id="topBar-update" data-key="update_ready"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-basegame" data-key="base_game_data"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-savetrack" data-key="savegame_track"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-savemanage" data-key="savegame_manage"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-input" data-key="input_manage"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-find" data-key="search_all"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-gamelog" data-key="button_gamelog"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-preferences" data-key="preferences_button"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-help" data-key="help_button"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-mini" data-key="mini_mode_button"></i18n-text>
-					<i18n-text type="button" class="btn" id="topBar-tray" data-key="min_tray_button"></i18n-text>
-				</div>
+				</h2>
 			</div>
-
-			<div class="row border-bottom g-0 d-flex align-items-center">
-				<div class="col-1 p-1" id="multi_version_button" data-bs-toggle="offcanvas" data-bs-target="#offcanvas-version">
+			<div class="main-topbar-actions">
+				<button type="button" class="btn btn-sm btn-outline-secondary" id="topBar-launch">
+					<i18n-text data-key="game_icon"></i18n-text>
+					<i18n-text data-key="launch_game" class="fw-semibold"></i18n-text>
+					<span class="ps-2 text-danger d-inline-flex" style="--bs-text-opacity: 0.7;" id="gameRunningBubble"><i class="align-self-center bi bi-circle-fill small"></i></span>
+				</button>
+				<i18n-text type="button" class="btn btn-sm btn-outline-info d-none" id="topBar-update" data-key="update_ready"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-basegame" data-key="base_game_data"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-savetrack" data-key="savegame_track"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-savemanage" data-key="savegame_manage"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-input" data-key="input_manage"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-find" data-key="search_all"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-gamelog" data-key="button_gamelog"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-preferences" data-key="preferences_button"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-help" data-key="help_button"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-mini" data-key="mini_mode_button"></i18n-text>
+				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-tray" data-key="min_tray_button"></i18n-text>
+			</div>
+		</div>
+		
+		<div class="main-workspace flex-grow-1 overflow-hidden" id="display_mod_container">
+			<aside class="main-action-rail" aria-label="Collection controls">
+				<div class="main-game-badge" id="multi_version_button" data-bs-toggle="offcanvas" data-bs-target="#offcanvas-version">
 					<i18n-text data-key="game_icon_lg"></i18n-text>
+					<div>
+						<div class="fw-semibold">Game version</div>
+						<div class="small text-body-secondary">Click to change</div>
+					</div>
 				</div>
-				<div class="col">
-					<div class="row px-3 pt-1 pb-2 gx-3"><!-- collection management -->
-						<div class="col">
-							<div class="btn-group btn-group-sm d-flex h-100" role="group">
-								<button type="button" style="line-height: 1.1em" data-bs-placement="bottom" id="folderAddButton" class="btn btn-outline-success"><i class="bi bi-folder-plus"></i> <i18n-text class="small" data-key="folder_add"></i18n-text></button>
-								<button type="button" style="line-height: 1.1em" data-bs-placement="bottom" id="folderEditButton" class="btn btn-outline-primary"><i class="bi bi-folder"></i> <i18n-text class="small" data-key="folder_edit"></i18n-text></button>
-								<button type="button" style="line-height: 1.1em" data-bs-placement="bottom" id="folderReloadButton" class="btn btn-outline-secondary position-relative"><i class="bi bi-arrow-repeat"></i> <i18n-text class="small" data-key="folder_refresh"></i18n-text><span id="dirty_folders" class="d-none position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle"></span></button>
-							</div>
-						</div>
-						<div class="col">
-							<div class="input-group input-group-sm w-100 h-100">
-								<select class="form-select" id="collectionSelect"></select>
-								<i18n-text class="text-white btn btn-warning" type="button" data-bs-placement="bottom" id="collectButtonActive" data-key="list-active"></i18n-text>
-								<i18n-text class="text-white btn btn-danger" type="button" data-bs-placement="bottom" id="collectButtonInActive" data-key="list-none"></i18n-text>
-							</div>
-						</div>
-					</div><!-- end: collection management-->
 
-					<div class="row py-2 px-3 border-top gx-3"><!-- filters -->
-						<div class="col">
-							<div class="input-group input-group-sm mb-0">
-								<select class="form-select" id="modFindType"><option selected>...</option></select>
-								<input type="text" id="filter_input" class="form-control mod-row-filter rounded-end w-50">
-								<span id="filter_clear" class="form-control-clear bi bi-eraser form-control-feedback position-absolute d-none" style="right:10px; cursor:pointer; z-index:100; top:calc( 50% - 10px);"></span>
-							</div>
+				<div class="main-rail-section border-top pt-3">
+					<div class="main-side-title">Tools</div>
+					<button type="button" id="mainModManagementButton" class="btn btn-warning main-rail-button">
+						<i class="bi bi-grid-3x3-gap"></i>
+						<i18n-text class="small" data-key="update_list">Mod Management</i18n-text>
+					</button>
+				</div>
+				<div class="main-rail-section main-rail-section-collections border-top pt-3">
+					<div class="d-flex align-items-center justify-content-between">
+						<div class="main-side-title flex-grow-1 mb-0">Collections</div>
+						<span class="badge text-bg-secondary" id="railCollectionCount">0</span>
+					</div>
+					<div class="rail-collection-list" id="railCollectionList">
+						<div class="small text-body-secondary">Loading collections...</div>
+					</div>
+				</div>
+			</aside>
+
+			<main class="main-content-panel">
+				<div class="main-list-toolbar">
+					<select class="d-none" id="collectionSelect"></select>
+					<div class="main-folder-toolbar">
+						<button type="button" data-bs-placement="bottom" id="folderAddButton" class="btn btn-sm btn-outline-success"><i class="bi bi-folder-plus"></i> <i18n-text class="small" data-key="folder_add"></i18n-text></button>
+						<button type="button" data-bs-placement="bottom" id="folderEditButton" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil-fill"></i> <i18n-text class="small" data-key="folder_edit"></i18n-text></button>
+						<button type="button" data-bs-placement="bottom" id="folderReloadButton" class="btn btn-sm btn-outline-secondary position-relative"><i class="bi bi-arrow-repeat"></i> <i18n-text class="small" data-key="folder_refresh"></i18n-text><span id="dirty_folders" class="d-none position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle"></span></button>
+						<button type="button" data-bs-placement="bottom" id="batchDisableSelected" class="btn btn-sm btn-outline-warning" title="Disable every checked enabled ZIP mod in the current collection." disabled><i class="bi bi-slash-circle"></i> <span class="small">Disable checked</span></button>
+						<button type="button" data-bs-placement="bottom" id="batchEnableSelected" class="btn btn-sm btn-outline-success" title="Re-enable every checked disabled ZIP mod in the current collection." disabled><i class="bi bi-check-circle"></i> <span class="small">Enable checked</span></button>
+						<button type="button" data-bs-placement="bottom" id="disabledOnlyToggle" class="btn btn-sm btn-outline-info" title="Show only disabled mods in the current collection."><i class="bi bi-funnel"></i> <span class="small">Disabled only</span></button>
+					</div>
+					<div class="main-filter-strip"><!-- filters -->
+						<div class="input-group input-group-sm mb-0 flex-grow-1">
+							<select class="form-select" id="modFindType"><option selected>...</option></select>
+							<input type="text" id="filter_input" class="form-control mod-row-filter rounded-end w-50">
+							<span id="filter_clear" class="form-control-clear bi bi-eraser form-control-feedback position-absolute d-none" style="right:10px; cursor:pointer; z-index:100; top:calc( 50% - 10px);"></span>
 						</div>
-						<div class="col col-auto">
-							<select class="form-select form-select-sm" id="modSortOrder"><option selected>...</option></select>
+						<select class="form-select form-select-sm w-auto" id="modSortOrder"><option selected>...</option></select>
+						<button type="button" class="btn btn-sm btn-outline-secondary position-relative" id="advancedFilterToggle" aria-expanded="false" title="Show tag filters and other less common filters.">
+							<i class="bi bi-sliders"></i>
+							<span class="small">Advanced filters</span>
+							<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-body-secondary shadow text-body" id="tag_filter_full_count">0</span>
+						</button>
+						<div class="main-selected-summary input-group input-group-sm w-auto" title="Selected mods. Use Ctrl+click to toggle individual mods, Shift+click to select a range, or Alt+click to select only one mod.">
+							<span class="input-group-text bg-secondary text-light border-secondary border-opacity-25">Selected</span>
+							<span class="input-group-text bg-body-tertiary border-secondary border-opacity-25" id="select_quantity">0</span>
+							<button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#selection_help_modal" title="Explain how mod selection works."><i class="bi bi-question-circle"></i></button>
 						</div>
-						<div class="col col-auto">
-							<div class="dropdown">
-								<button type="button" class="btn btn-sm btn-outline-secondary pe-3 dropdown-toggle text-body" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
-									<i18n-text data-key="tag_filter_button"></i18n-text>
-									<span class="position-absolute top-50 start-100 translate-middle badge rounded-pill bg-body-secondary shadow text-body" id="tag_filter_full_count">0</span>
-								</button>
-								<div class="dropdown-menu dropdown-menu-end pb-0" style="min-width: 50vw">
-									<div id="filter_new_style" class="px-0 py-0"></div>
+						<div id="advancedFilterPanel" class="main-advanced-filter-panel d-none">
+							<div class="main-advanced-filter-header">
+								<div>
+									<div class="fw-semibold">Tags</div>
+									<div class="small text-body-secondary">No tag state is selected by default, so all mods show until you require or exclude a tag.</div>
+								</div>
+								<div class="d-flex align-items-center gap-2">
+									<div class="form-check form-switch mb-0" title="Off: mods must have every required tag. On: mods can have any one of the required tags. Excluded tags always stay hidden.">
+										<input class="form-check-input" type="checkbox" role="switch" id="tagRequiredAnyToggle">
+										<label class="form-check-label small" for="tagRequiredAnyToggle" id="tagRequiredModeLabel">Match all required tags</label>
+									</div>
+									<button type="button" class="btn btn-sm btn-outline-info" id="tagFilterHelpToggle" title="Explain how tag filters work."><i class="bi bi-question-circle"></i></button>
+									<button type="button" class="btn btn-sm btn-outline-secondary" id="advancedFilterClose">Close</button>
 								</div>
 							</div>
-						</div>
-						<div class="col col-auto">
-							<div class="btn-group btn-group-sm input-group input-group-sm">
-								<i18n-text class="input-group-text bg-secondary text-light border-secondary border-opacity-25" data-key="select_pick"></i18n-text>
-								<i18n-text type="button" class="btn btn-btn btn-outline-secondary border-opacity-25" id="selectButtonNone" data-key="select_none"></i18n-text>
-								<i18n-text type="button" class="btn btn-btn btn-outline-secondary border-opacity-25" id="selectButtonAll" data-key="select_all"></i18n-text>
-								<i18n-text type="button" class="btn btn-btn btn-outline-secondary border-opacity-25" id="selectButtonInvert" data-key="select_invert"></i18n-text>
-								<i18n-text type="button" class="btn btn-btn btn-outline-warning border-opacity-25" id="selectButtonUpdates" data-key="select_updates"></i18n-text>
-								<input type="checkbox" id="modFilter_selected" class="btn-check filter_tag_buttons">
-								<label class="btn btn-secondary btn-selected-mods" for="modFilter_selected"><i18n-text data-key="select_only"></i18n-text> : <span id="select_quantity">0</span></label>
+							<div id="tagFilterHelpPanel" class="main-tag-filter-help small d-none">
+								<div class="fw-semibold mb-1">How tag filters work</div>
+								<div class="mb-1">No tag button selected means that tag is ignored and all mods can show.</div>
+								<div class="mb-1"><span class="text-warning fw-semibold">Must not have</span> hides mods that have that tag.</div>
+								<div class="mb-1"><span class="text-danger fw-semibold">Must have</span> only shows mods that have that tag.</div>
+								<div><span class="fw-semibold">Match all required tags</span> means a mod needs every required tag. <span class="fw-semibold">Match any required tag</span> means a mod can have any one of the required tags. Excluded tags always apply after that.</div>
 							</div>
+							<div id="filter_new_style" class="px-0 py-0"></div>
 						</div>
 					</div><!-- end: filters -->
 				</div>
-			</div> 
-		</div>
-		
-		<div class="row overflow-hidden h-100 px-2 flex-grow-1" id="display_mod_container">
-			<div class="col-10 overflow-custom2 h-100 py-2">
-				<table id="mod-collections" class="w-100 table accordion border-top mt-0"></table><br>
-			</div>
-			<div id="scroll-bar-fake" class="position-relative d-flex flex-column p-0"></div>
-			<div class="col py-2 ps-2 d-flex flex-column justify-content-between gap-1" id="moveButtons"><!-- buttons -->
-				<i18n-text id="moveButton_move" type="button" class="btn btn-success disabled" data-key="move_to_list"></i18n-text>
-				<i18n-text id="moveButton_copy" type="button" class="btn btn-success disabled" data-key="copy_to_list"></i18n-text>
-				<i18n-text id="moveButton_delete" type="button" class="btn btn-danger disabled" data-key="remove_from_list"></i18n-text>
-				<button id="moveButton_disable" type="button" class="btn btn-outline-warning disabled">Disable selected</button>
-				<i18n-text id="moveButton_zip" type="button" class="btn btn-primary disabled" data-key="make_zip"></i18n-text>
+				<div class="main-mod-list overflow-custom2">
+					<table id="mod-collections" class="w-100 table accordion border-top mt-0"></table><br>
+				</div>
+				<div id="scroll-bar-fake" class="d-none"></div>
+			</main>
 
-				<i18n-text id="moveButton_open" type="button" class="btn btn-secondary disabled" data-key="open_from_list"></i18n-text>
-				<i18n-text id="moveButton_hub" type="button" class="btn btn-secondary disabled" data-key="open_hub"></i18n-text>
-				<i18n-text id="moveButton_site" type="button" class="btn btn-secondary disabled" data-key="context_open_website"></i18n-text>
-				<button id="moveButton_disabled" type="button" class="btn btn-outline-info disabled">Disabled Mods</button>
-				<button id="moveButton_logIssues" type="button" class="btn btn-outline-warning disabled">Log Issues</button>
-				
-				<i18n-text id="moveButton_fav" type="button" class="btn btn-warning" data-key="copy_fav_to"></i18n-text>
-				<i18n-text id="moveButton_ver" type="button" class="btn btn-success" data-key="version_check"></i18n-text>
-				<i18n-text id="moveButton_updateList" type="button" class="btn btn-warning" data-key="update_list"></i18n-text>
-			</div><!-- end: buttons-->
-			
 		</div>
 
 		<footer class="bg-body-tertiary border-top d-flex justify-content-around opacity-75 py-2" id="main-footer">
@@ -478,6 +740,45 @@
 							<i18n-text type="button" class="w-100 btn btn-success" id="mismatchLaunchFix" data-key="active_no_match_fix"></i18n-text>
 						</div>
 					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- MARK: selection help modal -->
+	<div class="modal" id="selection_help_modal" tabindex="-1">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div class="h5 modal-title">Mod selection help</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#selection_help_modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<div class="list-group list-group-flush">
+						<div class="list-group-item bg-transparent px-0">
+							<div class="fw-semibold">Plain left-click</div>
+							<div class="small text-body-secondary">Does not change selection. Use it to interact with the row without accidentally selecting mods.</div>
+						</div>
+						<div class="list-group-item bg-transparent px-0">
+							<div class="fw-semibold">Ctrl + left-click</div>
+							<div class="small text-body-secondary">Toggles one mod on or off without changing the rest of the selected mods.</div>
+						</div>
+						<div class="list-group-item bg-transparent px-0">
+							<div class="fw-semibold">Shift + left-click</div>
+							<div class="small text-body-secondary">Selects every mod between the last selected mod and the mod you clicked.</div>
+						</div>
+						<div class="list-group-item bg-transparent px-0">
+							<div class="fw-semibold">Alt + left-click</div>
+							<div class="small text-body-secondary">Clears the current selection and selects only the mod you clicked.</div>
+						</div>
+						<div class="list-group-item bg-transparent px-0">
+							<div class="fw-semibold">Double-click</div>
+							<div class="small text-body-secondary">Opens the mod details window. It does not select the mod.</div>
+						</div>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-bs-target="#selection_help_modal">Close</button>
 				</div>
 			</div>
 		</div>
@@ -754,6 +1055,60 @@
 		</div>
 	</div>
 
+	<!-- MARK: mod management menu -->
+	<div class="offcanvas offcanvas-start w-50" tabindex="-1" id="modManagementCanvas" style="-webkit-app-region: no-drag; transition: 0.5s" aria-labelledby="modManagementCanvasLabel">
+		<div class="offcanvas-header justify-content-start" style="-webkit-app-region: drag;">
+			<button id="modManagementCanvasClose" type="button" style="-webkit-app-region: no-drag; z-index: 1;" class="btn btn-secondary" data-bs-dismiss="offcanvas" aria-label="Close"><i class="bi-x-lg"></i></button>
+			<h5 class="offcanvas-title ps-3 mb-0" id="modManagementCanvasLabel">Mod Management Menu</h5>
+		</div>
+		<div class="offcanvas-body full-scroll">
+			<div class="row g-3">
+				<div class="col-12">
+					<button class="btn btn-warning w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="update_candidates" type="button">
+						<i class="bi bi-arrow-repeat me-2"></i>Check Collection Updates
+					</button>
+					<div class="small text-body-secondary mt-1">Check monitored collections and apply available updates.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-warning w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="vault_update" type="button">
+						<i class="bi bi-database-down me-2"></i>Check Vault Updates
+					</button>
+					<div class="small text-body-secondary mt-1">Check stored Vault ZIPs and save newer supported versions into the Vault.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="vault" type="button">
+						<i class="bi bi-database me-2"></i>Mod Vault
+					</button>
+					<div class="small text-body-secondary mt-1">Browse stored ZIPs, notes, categories, and cleanup tools.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-success w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="manifest" type="button">
+						<i class="bi bi-box-arrow-up-right me-2"></i>Share or Import a Collection
+					</button>
+					<div class="small text-body-secondary mt-1">Export or import a lightweight collection manifest.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="backups" type="button">
+						<i class="bi bi-archive me-2"></i>Collection Backups
+					</button>
+					<div class="small text-body-secondary mt-1">Create, compare, restore, or remove collection backup manifests.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="recent_changes" type="button">
+						<i class="bi bi-clock-history me-2"></i>Recent Collection Changes
+					</button>
+					<div class="small text-body-secondary mt-1">Review recent add, update, copy, restore, and disable activity.</div>
+				</div>
+				<div class="col-12">
+					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="history" type="button">
+						<i class="bi bi-journal-text me-2"></i><i18n-text data-key="history_window"></i18n-text>
+					</button>
+					<div class="small text-body-secondary mt-1">Review collection history and rollback entries.</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
 	<!-- MARK: file canvas -->
 	<div class="d-none bg-body z-3 top-0 left-0 position-absolute w-100 offcanvas-bottom h-100" tabindex="-1" id="fileOpCanvas" style="-webkit-app-region: no-drag; transition: 0.5s">
 		<div class="offcanvas-header justify-content-start" style="-webkit-app-region: drag;">
@@ -765,6 +1120,16 @@
 				<div>
 					<div class="position-relative text-center d-flex flex-column align-items-center justify-content-center">
 						<i18n-text class="z-2 fs-2 text-center" date-key="loading_files_title"></i18n-text>
+						<div class="z-2 text-center mt-2 px-4">
+							<div id="fileOpStatusTitle" class="fs-3">Working...</div>
+							<div id="fileOpStatusDetail" class="text-body-secondary fs-5 mt-1"></div>
+							<div id="fileOpStatusProgressWrap" class="progress progress-readable mt-3 mx-auto d-none" style="max-width: 42rem;">
+								<div id="fileOpStatusProgressInner" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+								<div id="fileOpStatusProgressLabel" class="progress-readable-label">0 / 0</div>
+							</div>
+							<div id="fileOpStatusCurrent" class="small text-body-secondary mt-2"></div>
+							<div id="fileOpStatusList" class="small text-start mt-3 mx-auto" style="max-width: 42rem;"></div>
+						</div>
 						<div id="badFileFeedback" class="d-none">
 							<i18n-text class="text-center w-100 fs-5" data-key="file_operation_failure"></i18n-text>
 							<div id="badFileList" class="text-start"></div>
@@ -828,6 +1193,20 @@
 			</div></div>
 		</div>
 	</div>
+	<div id="fileOpMini" class="file-op-mini rounded bg-body-tertiary p-3 d-none" title="Click to reopen file operation progress">
+		<div class="d-flex align-items-center justify-content-between gap-3">
+			<div class="text-truncate">
+				<div id="fileOpMiniTitle" class="fw-semibold text-truncate">File operation running</div>
+				<div id="fileOpMiniDetail" class="small text-body-secondary text-truncate">Working...</div>
+			</div>
+			<i class="bi bi-arrows-angle-expand text-info"></i>
+		</div>
+		<div class="progress progress-readable mt-2" style="height: 1.15rem;">
+			<div id="fileOpMiniProgressInner" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+			<div id="fileOpMiniProgressLabel" class="progress-readable-label small">0 / 0</div>
+		</div>
+		<div id="fileOpMiniCurrent" class="small text-body-secondary mt-1 text-truncate"></div>
+	</div>
 
 	<!-- MARK : loader -->
 	<div id="loadOverlay" class="d-none position-absolute start-0 top-0 w-100 h-100 bg-black bg-opacity-50" tabindex="-1">
@@ -855,6 +1234,54 @@
 					</div>
 				</div>
 				<div class="spinner-border position-absolute opacity-25" style="width: 200px; height: 200px; left:346px; top:56px;" role="status"></div>
+			</div>
+		</div>
+	</div>
+
+
+	<!-- MARK: app confirmation modal -->
+	<div class="modal" id="app_confirm_modal" tabindex="-1" aria-labelledby="appConfirmTitle">
+		<div class="modal-dialog modal-dialog-centered modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h4 modal-title" id="appConfirmTitle">Confirm action</div>
+						<div class="small text-body-secondary" id="appConfirmSubtitle">FSG Mod Assistant</div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#app_confirm_modal" aria-label="Cancel" id="appConfirmClose"></button>
+				</div>
+				<div class="modal-body fs-5">
+					<div class="app-confirm-message" id="appConfirmMessage"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary btn-lg" data-bs-dismiss="modal" data-bs-target="#app_confirm_modal" id="appConfirmCancel">Cancel</button>
+					<button type="button" class="btn btn-primary btn-lg" id="appConfirmOk">OK</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+
+	<!-- MARK: app close guard modal -->
+	<div class="modal" id="app_close_guard_modal" tabindex="-1" aria-labelledby="appCloseGuardTitle">
+		<div class="modal-dialog modal-dialog-centered modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h4 modal-title" id="appCloseGuardTitle">Background task in progress</div>
+						<div class="small text-body-secondary">The manager is still working in the background.</div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" data-bs-target="#app_close_guard_modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body fs-5">
+					<p>Closing now may interrupt a Vault move, file copy, update scan, or export.</p>
+					<p class="mb-2">Currently running:</p>
+					<ul class="mb-0" id="appCloseGuardBlockers"></ul>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-success btn-lg" data-bs-dismiss="modal" data-bs-target="#app_close_guard_modal" id="appCloseGuardKeepOpen">Keep app open</button>
+					<button type="button" class="btn btn-outline-danger btn-lg" id="appCloseGuardCloseAnyway">Close anyway</button>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -913,17 +1340,22 @@
 	<td>
 		<div class="d-flex flex-row">
 			<div>
-				<span class="mod-short-name"><template-var>shortname</template-var></span><br>
+				<span class="mod-short-name"><template-var>brand_title</template-var></span><br>
 				<!-- <small class="ps-2"><template-var>title</template-var> - <em><template-var>author</template-var></em></small><br> -->
 				<!-- <small class="text-body-tertiary ps-2"><template-var>brands</template-var> - <em><template-var>categories</template-var></em></small> -->
-				<small class="ps-2"><template-var>brand_title</template-var></small><br>
 				<small class="text-body-tertiary ps-2"><template-var>author_cat</template-var></small>
 			</div>
 			<div class="issue_badges fs-5 flex-grow-1 text-end"></div>
 		</div>
 	</td>
 	<td class="text-end" style="width: 100px; line-height: 1.25;">
-		<template-var class="px-0">version</template-var><br><em class="ex-small px-0"><template-var>fileDate</template-var><br><template-var>fileTime</template-var></em><br><em class="small px-0"><template-var>fileSize</template-var></em>
+		<template-var class="px-0">version</template-var><br><em class="small px-0"><template-var>fileSize</template-var></em>
+	</td>
+	<td class="main-mod-row-actions text-end">
+		<div class="d-inline-flex gap-2" role="group" aria-label="Mod actions">
+			<button type="button" class="btn btn-sm mod-detail-row">Details</button>
+			<button type="button" class="btn btn-sm mod-disable-row"><template-var>disableLabel</template-var></button>
+		</div>
 	</td>
 </template>
 

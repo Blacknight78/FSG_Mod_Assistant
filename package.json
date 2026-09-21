@@ -17,8 +17,8 @@
   "repository": "github:FSGModding/FSG_Mod_Assistant",
   "scripts": {
     "lang": "node ./test/fix-locale-files.js",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder",
+    "pack": "node ./test/write-build-info.js && electron-builder --dir",
+    "dist": "node ./test/write-build-info.js && electron-builder",
     "test": "node ./test/test.js",
     "depends": "node ./test/outdated-deps.js",
     "generate-docs": "node_modules\\.bin\\jsdoc -c .jsdoc.json"

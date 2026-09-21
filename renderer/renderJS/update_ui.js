@@ -418,6 +418,8 @@ async function downloadSelectedZIPs() {
 	beginUpdateBusy(`0 / ${downloads.length}`, 0)
 	try {
 		const result = await window.update_IPC.downloadApplySelected(downloads)
+		window.UpdateRunReport.show('updateStatus', 'Collection update report', (result.results ?? []).map((item) => ({ detail : item.error ?? `Version ${item.version ?? ''}`, name : item.modName, source : item.collectionName ?? item.sourceType, status : item.skipped ? 'Not attempted' : item.ok ? 'Updated' : 'Failed' })), result.error ?? '')
+		removeAppliedUpdateRows(downloads.filter((_item, index) => result.results?.[index]?.ok))
 		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
 		if ( result.ok ) {
 			removeAppliedUpdateRows(downloads)
@@ -425,6 +427,8 @@ async function downloadSelectedZIPs() {
 		} else {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
 		}
+	} catch (err) {
+		window.UpdateRunReport.show('updateStatus', 'Collection update report', downloads.map((item) => ({ name : item.modName, status : 'Unconfirmed', detail : err.message })))
 	} finally {
 		endUpdateBusy()
 	}
@@ -435,11 +439,13 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	const listDiv = MA.byId('modList')
 	const candidateEntries = Object.entries(candidates).sort((a, b) => Intl.Collator().compare(a[0], b[0]))
 	let completeCount = 0
+	const reportRows = []
 
 	listDiv.innerHTML = ''
 
 	if ( candidateEntries.length === 0 ) {
 		renderEmpty('update_list_no_sources')
+		window.UpdateRunReport.show('updateStatus', 'Collection check report', [], 'No eligible update sources in the selected collections.')
 		return
 	}
 
@@ -461,6 +467,8 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 			setUpdateBusy(`${completeCount} / ${candidateEntries.length}`, (completeCount / candidateEntries.length) * 100)
 		}
 
+		const available = result.ok && isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github')
+		reportRows.push({ detail : !result.ok ? window.UpdateRunReport.error(result.error) : `Local: ${[...entry.local].join(', ')}; online: ${result.version ?? 'unknown'}`, name : entry.modName, source : `${entry.sourceType}: ${entry.collections.join(', ')}`, status : !result.ok ? 'Failed' : isManualSourceType(entry.sourceType) ? 'Manual check required' : available ? 'Update available' : 'No newer version' })
 		if ( !result.ok ) { return null }
 		if ( !['itch', 'kingmods', 'manual'].includes(entry.sourceType) && !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
 	
@@ -502,6 +510,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 	})).filter((x) => x !== null)
 
 	if ( renderID !== activeRenderID ) { return }
+	window.UpdateRunReport.show('updateStatus', 'Collection check report', reportRows, 'Checks cover eligible mod sources in the selected collections; frozen collections, other game versions and folder mods are excluded.')
 
 	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, needsReview, node, review, sourceType, sourceURL, version } of updateRows ) {
 		const row = node.firstElementChild
@@ -563,6 +572,7 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		await displayCandidates(makeCandidateMap(modCollect), renderID, forceRemoteRefresh)
 	} catch (err) {
 		MA.byIdText('updateStatus', `Update list error: ${err.message}`)
+		window.UpdateRunReport.show('updateStatus', 'Collection check report', [{ name : 'Scan', status : 'Failed', detail : err.message }])
 	} finally {
 		if ( renderID === activeRenderID ) { endUpdateBusy() }
 	}
