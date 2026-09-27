@@ -62,9 +62,9 @@ window.addEventListener('DOMContentLoaded', () => {
 		byId('vaultImportProgress').hidden = !value
 		render()
 	}
-	const run = async (operation, importing = false) => {
+	const run = async (operation, importing = false, options = {}) => {
 		setBusy(true)
-		byId('vaultImportStatus').textContent = importing ? 'Importing selected mods...' : 'Preparing import review...'
+		byId('vaultImportStatus').textContent = options.startMessage ?? (importing ? 'Importing selected mods...' : 'Preparing import review...')
 		byId('vaultImportProgress').removeAttribute('value')
 		try {
 			const result = await operation()
@@ -79,10 +79,10 @@ window.addEventListener('DOMContentLoaded', () => {
 				const counts = new Map()
 				for ( const row of rows ) { counts.set(row.status, (counts.get(row.status) ?? 0) + 1) }
 				const sourceText = Number.isFinite(result.sourceCount) ?
-					`Loaded ${result.sourceCount} supported source URL${result.sourceCount === 1 ? '' : 's'} from manifest. ${result.skipped} manifest entr${result.skipped === 1 ? 'y was' : 'ies were'} skipped. ` :
+					`Loaded ${result.sourceCount} supported source URL${result.sourceCount === 1 ? '' : 's'} from Mod Manifest. ${result.skipped} manifest entr${result.skipped === 1 ? 'y was' : 'ies were'} skipped. ` :
 					''
 				byId('vaultImportStatus').textContent = `${result.cancelled ? 'Cancelled. ' : ''}${sourceText}${[...counts].map(([label, count]) => `${label}: ${count}`).join(' | ') || 'No mod ZIPs found.'}`
-			} else { byId('vaultImportStatus').textContent = 'Folder selection cancelled.' }
+			} else { byId('vaultImportStatus').textContent = options.cancelMessage ?? 'Selection cancelled.' }
 		} catch (err) { byId('vaultImportStatus').textContent = err.message }
 		finally { setBusy(false) }
 	}
@@ -109,7 +109,14 @@ window.addEventListener('DOMContentLoaded', () => {
 	for ( const button of dialog.querySelectorAll('[data-import-mode]') ) { button.addEventListener('click', () => switchMode(button.dataset.importMode)) }
 	byId('vaultImportResolve').addEventListener('click', () => run(() => window.vault_IPC.importLinks(byId('vaultImportURLs').value)))
 	byId('vaultImportBrowse').addEventListener('click', () => run(() => window.vault_IPC.importFolder({ recursive : byId('vaultImportRecursive').checked })))
-	byId('vaultManifestImport').addEventListener('click', () => run(() => window.vault_IPC.importRecoveryManifest()))
+	byId('vaultManifestImport').addEventListener('click', () => run(
+		() => window.vault_IPC.importRecoveryManifest(),
+		false,
+		{
+			cancelMessage : 'Mod Manifest import cancelled.',
+			startMessage  : 'Choose a Mod Manifest to import...',
+		}
+	))
 	byId('vaultImportRun').addEventListener('click', () => run(() => window.vault_IPC.importRun([...selected].map(([id, asset]) => ({ id, asset }))), true))
 	byId('vaultImportCancel').addEventListener('click', async () => {
 		await window.vault_IPC.importCancel()

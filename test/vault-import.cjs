@@ -67,6 +67,17 @@ async function main() {
     assert.equal(parseImportURL('https://www.farming-simulator.com/mod.php?mod_id=123&lang=en').id, '123')
     assert.equal(parseImportURL('https://github.com/a/b/releases/tag/v1.2').tag, 'v1.2')
     for (const url of ['http://github.com/a/b', 'https://evil.test/a', 'https://github.com/a/b/archive/main.zip', 'https://user:pass@github.com/a/b']) assert.throws(()=>parseImportURL(url))
+    await assert.rejects(
+      service.resolve(1, Array.from({length:201}, (_, index) => `https://github.com/a/manual-${index}`).join('\n'), progress),
+      /Import up to 200 links per batch/
+    )
+    result = await service.resolve(
+      1,
+      Array.from({length:201}, (_, index) => `https://github.com/a/manifest-${index}`).join('\n'),
+      progress,
+      {maxLinks:10000, sourceLabel:'Mod Manifest sources'}
+    )
+    assert.equal(result.rows.length, 201)
     result = await service.resolve(1, 'https://github.com/a/one\nhttps://github.com/a/one\nhttps://github.com/a/multi\nhttps://github.com/a/fail\nhttps://www.farming-simulator.com/mod.php?mod_id=123\ninvalid', progress)
     assert.equal(result.rows[1].status, 'Duplicate link')
     assert.equal(result.rows[2].status, 'Choose ZIP')

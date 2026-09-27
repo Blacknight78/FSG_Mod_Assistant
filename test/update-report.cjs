@@ -1,3 +1,4 @@
+/* global __dirname, console, process */
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -11,7 +12,7 @@ vm.runInNewContext(source.slice(start, end), {
   ipcMain: { handle(_name, fn) { handler = fn } },
   app: { getPath: () => 'test-only' }, path,
   fsPromise: { mkdir: async () => {} },
-  downloadAndApplyUpdate: async () => { if (++calls === 2) throw new Error('Download rejected'); return {} },
+  downloadToVaultAndApplyUpdate: async () => { if (++calls === 2) throw new Error('Download rejected'); return {} },
   addCollectionHistoryEntry() {}, updateSourceTypeLabel: value => value,
   funcLib: { general: { toggleFolderDirty() {} } },
   processModFoldersAndWait: async () => {},

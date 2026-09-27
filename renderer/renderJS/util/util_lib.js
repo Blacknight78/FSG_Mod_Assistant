@@ -667,6 +667,195 @@ window.addEventListener('error', (e) => {
 	window.log.warning(e?.error?.stack)
 })
 
+function ensureModManagementIcons() {
+	if ( document.querySelector('link[href="inc/src/bootstrap-icons.css"]') !== null ) { return }
+	const iconLink = document.createElement('link')
+	iconLink.rel = 'stylesheet'
+	iconLink.href = 'inc/src/bootstrap-icons.css'
+	document.head.appendChild(iconLink)
+}
+
+function modManagementActions() {
+	return [
+		{
+			buttonClass : 'btn-warning',
+			description : 'Check monitored collections and apply available updates.',
+			icon : 'bi-arrow-repeat',
+			label : 'Check Collection Updates',
+			target : 'update_candidates',
+		},
+		{
+			buttonClass : 'btn-warning',
+			description : 'Check stored Vault ZIPs and save newer supported versions into the Vault.',
+			icon : 'bi-database-down',
+			label : 'Check Vault Updates',
+			target : 'vault_update',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Browse stored ZIPs, notes, categories, and cleanup tools.',
+			icon : 'bi-database',
+			label : 'Mod Vault',
+			target : 'vault',
+		},
+		{
+			buttonClass : 'btn-success',
+			description : 'Export or import a lightweight collection manifest.',
+			icon : 'bi-box-arrow-up-right',
+			label : 'Share or Import a Collection',
+			target : 'manifest',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Create, compare, restore, or remove collection backup manifests.',
+			icon : 'bi-archive',
+			label : 'Collection Backups',
+			target : 'backups',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Review recent add, update, copy, restore, and disable activity.',
+			icon : 'bi-clock-history',
+			label : 'Recent Collection Changes',
+			target : 'recent_changes',
+		},
+	]
+}
+
+function ensureModManagementStyles() {
+	if ( document.getElementById('maModManagementStyles') !== null ) { return }
+	const style = document.createElement('style')
+	style.id = 'maModManagementStyles'
+	style.textContent = `
+		.ma-management-rail-tip { display: block; }
+		.ma-management-rail-button {
+			display: flex;
+			width: 100%;
+			min-height: 70px;
+			flex-direction: column;
+			gap: 0.25rem;
+			align-items: center;
+			justify-content: center;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
+			line-height: 1.1;
+			text-align: center;
+		}
+		.ma-management-rail-button .bi {
+			font-size: 1.65rem;
+			line-height: 1;
+		}
+		.ma-management-floating-button {
+			position: fixed;
+			left: 0.75rem;
+			bottom: 0.75rem;
+			z-index: 1040;
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+			box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.45);
+		}
+		.ma-management-menu-action {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 0.6rem;
+		}
+		@media (max-width: 1100px) {
+			.ma-management-rail-tip { flex: 1 1 11rem; }
+			.ma-management-rail-button { min-height: 52px; }
+		}
+	`
+	document.head.appendChild(style)
+}
+
+function createModManagementButton() {
+	const button = document.createElement('button')
+	button.className = 'btn btn-sm btn-warning ma-management-rail-button'
+	button.type = 'button'
+	button.title = 'Mod Management: open shortcuts for collection updates, Vault tools, sharing, backups, and recent changes.'
+	button.innerHTML = '<i aria-hidden="true" class="bi bi-grid-3x3-gap"></i><span>Mod Management</span>'
+	button.addEventListener('click', () => {
+		const canvas = MA.byId('modManagementCanvas')
+		if ( typeof window.bootstrap === 'undefined' || canvas === null ) { return }
+		window.bootstrap.Offcanvas.getOrCreateInstance(canvas).show()
+	})
+	return button
+}
+
+function addModManagementButton() {
+	const actionRail = document.querySelector('[class*="action-rail"]')
+	const button = createModManagementButton()
+	if ( actionRail !== null ) {
+		const wrapper = document.createElement('span')
+		wrapper.className = 'ma-management-rail-tip'
+		wrapper.appendChild(button)
+		actionRail.prepend(wrapper)
+		return
+	}
+	button.className = 'btn btn-warning ma-management-floating-button'
+	button.innerHTML = '<i aria-hidden="true" class="bi bi-grid-3x3-gap"></i><span>Mod Management</span>'
+	document.body.appendChild(button)
+}
+
+function createModManagementCanvas() {
+	const canvas = document.createElement('div')
+	canvas.className = 'offcanvas offcanvas-start w-50'
+	canvas.id = 'modManagementCanvas'
+	canvas.tabIndex = -1
+	canvas.style.webkitAppRegion = 'no-drag'
+	canvas.setAttribute('aria-labelledby', 'modManagementCanvasLabel')
+	canvas.innerHTML = `
+		<div class="offcanvas-header justify-content-start" style="-webkit-app-region: drag;">
+			<button type="button" style="-webkit-app-region: no-drag; z-index: 1;" class="btn btn-secondary" data-bs-dismiss="offcanvas" aria-label="Close"><i class="bi-x-lg"></i></button>
+			<h5 class="offcanvas-title ps-3 mb-0" id="modManagementCanvasLabel">Mod Management Menu</h5>
+		</div>
+		<div class="offcanvas-body full-scroll">
+			<div class="row g-3" id="modManagementCanvasActions"></div>
+		</div>
+	`
+	const actions = canvas.querySelector('#modManagementCanvasActions')
+	for ( const action of modManagementActions() ) {
+		const item = document.createElement('div')
+		item.className = 'col-12'
+		item.innerHTML = `
+			<button class="btn ${action.buttonClass} w-100 p-3 fs-5 ma-management-menu-action" data-dispatch-window="${action.target}" type="button">
+				<i class="bi ${action.icon}" aria-hidden="true"></i><span>${action.label}</span>
+			</button>
+			<div class="small text-body-secondary mt-1">${action.description}</div>
+		`
+		actions.appendChild(item)
+	}
+	canvas.addEventListener('click', (event) => {
+		const actionButton = event.target.closest('.ma-management-menu-action')
+		if ( actionButton === null ) { return }
+		const dispatchWindow = () => { window.operations.dispatch(actionButton.dataset.dispatchWindow) }
+		if ( typeof window.bootstrap === 'undefined' ) {
+			dispatchWindow()
+			return
+		}
+		const offcanvas = window.bootstrap.Offcanvas.getOrCreateInstance(canvas)
+		if ( canvas.classList.contains('show') ) {
+			canvas.addEventListener('hidden.bs.offcanvas', dispatchWindow, { once : true })
+			offcanvas.hide()
+			return
+		}
+		dispatchWindow()
+	})
+	document.body.appendChild(canvas)
+}
+
+function setupModManagementMenu() {
+	if ( window.operations?.dispatch === undefined ) { return }
+	if ( document.location.href.includes('main.html') ) { return }
+	if ( document.getElementById('modManagementCanvas') !== null ) { return }
+	ensureModManagementIcons()
+	ensureModManagementStyles()
+	createModManagementCanvas()
+	addModManagementButton()
+}
+
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
 	window.settings.get('show_tooltips').then((value) => {
@@ -680,6 +869,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.start()
 
 	I18N.refresh()
+	setupModManagementMenu()
 
 	const newConsole = ((oldConsole) => {
 		return {

@@ -30,6 +30,42 @@ tr.mod-list-row td:first-child input { display: none; }
 	vertical-align: super;
 }
 
+.app-window-brand {
+	display: flex;
+	align-items: center;
+	gap: 0.9rem;
+	min-width: 0;
+}
+
+.app-window-logo {
+	display: block;
+	width: 48px;
+	height: 48px;
+	flex: 0 0 auto;
+	background-image: url("../../img/icon.ico");
+	background-position: center;
+	background-repeat: no-repeat;
+	background-size: contain;
+}
+
+.app-window-name {
+	margin: 0;
+	color: var(--bs-body-color);
+	font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+	font-size: calc(1.375rem + 1.5vw);
+	font-weight: 300;
+	line-height: 1.15;
+	letter-spacing: 0;
+	white-space: nowrap;
+}
+
+.app-window-title {
+	font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+	font-weight: 700;
+	letter-spacing: 0;
+	line-height: 1.15;
+}
+
 .btn-launch:focus-visible { box-shadow: none!important;}
 
 .btn-group-win_ui {

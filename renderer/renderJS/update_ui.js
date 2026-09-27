@@ -5,7 +5,7 @@
    (c) 2022-present FSG Modding.  MIT License. */
 // MARK: UPDATE UI
 
-/* global MA, DATA, I18N */
+/* global MA, DATA, I18N, UpdateCandidateModel, bootstrap */
 
 function doL10N(item, locale) {
 	let returnText = item?.[locale]
@@ -15,28 +15,18 @@ function doL10N(item, locale) {
 	return DATA.escapeSpecial(returnText)
 }
 
-function updateSourceInfo(sourceURL) {
-	try {
-		const url = new URL(sourceURL)
-		if ( url.protocol !== 'https:' ) { return { label : 'Manual web page', type : 'manual' } }
-		const host = url.hostname.toLowerCase().replace(/^www\./u, '')
-		if ( host === 'github.com' ) { return { label : 'GitHub', type : 'github' } }
-		if ( host === 'kingmods.net' ) { return { label : 'KingMods', type : 'kingmods' } }
-		if ( host === 'itch.io' || host.endsWith('.itch.io') ) { return { label : 'itch.io', type : 'itch' } }
-		if ( host === 'farming-simulator.com' && url.searchParams.has('mod_id') ) { return { label : 'ModHub', type : 'modhub' } }
-		return { label : 'Manual web page', type : 'manual' }
-	} catch {
-		return { label : 'Manual web page', type : 'manual' }
-	}
-}
-
-function isWebURL(sourceURL) {
-	try {
-		return new URL(sourceURL).protocol === 'https:'
-	} catch {
-		return false
-	}
-}
+const {
+	buildCollectionCandidateMap,
+	candidateStateCounts,
+	candidateUpdateState,
+	collectionRemoteDecision,
+	isManualSourceType,
+	isWebURL,
+	modHubReleasedLabel,
+	reviewReasonLabels,
+	sourceTypeLabel,
+	stateSummaryText,
+} = UpdateCandidateModel
 
 function manualSourceResult(entry) {
 	return {
@@ -50,21 +40,9 @@ function manualSourceResult(entry) {
 	}
 }
 
-function isManualSourceType(sourceType) {
-	return ['itch', 'kingmods', 'manual'].includes(sourceType)
-}
-
-function sourceTypeLabel(sourceType) {
-	if ( sourceType === 'modhub' ) { return 'ModHub' }
-	if ( sourceType === 'github' ) { return 'GitHub' }
-	if ( sourceType === 'kingmods' ) { return 'KingMods' }
-	if ( sourceType === 'itch' ) { return 'itch.io' }
-	return 'Manual web page'
-}
-
 function modHubReleasedText(result) {
 	if ( result.source !== 'modhub' ) { return '' }
-	const released = typeof result.released === 'string' && result.released.trim() !== '' ? result.released.trim() : 'not recorded'
+	const released = modHubReleasedLabel(result.released)
 	return `<div class="small text-body-secondary mb-2">ModHub released: ${DATA.escapeSpecial(released)}</div>`
 }
 
@@ -82,118 +60,14 @@ function sourceBadgeText(entry, result) {
 	return `<span class="badge text-bg-secondary">${sourceTypeLabel(entry.sourceType)} source</span>`
 }
 
-const REVIEW_REASON_LABELS = {
-	manualSource     : 'manual source',
-	missingModHubDate : 'ModHub release date not recorded',
-	noDirectZip      : 'no direct ZIP',
-	repositoryZip    : 'repository ZIP instead of release asset',
-	versionUnclear   : 'version comparison unclear',
-}
-
-function reviewReasons(entry, result) {
-	const reasons = []
-	if ( isManualSourceType(entry.sourceType) ) {
-		reasons.push('manualSource')
-	}
-	if ( result.hasDownload !== true ) {
-		reasons.push('noDirectZip')
-	}
-	if ( result.source === 'modhub' && (typeof result.released !== 'string' || result.released.trim() === '') ) {
-		reasons.push('missingModHubDate')
-	}
-	if ( entry.sourceType === 'github' && result.downloadSource === 'repositoryFile' ) {
-		reasons.push('repositoryZip')
-	}
-	if ( typeof result.version !== 'string' || ![...entry.local].some((version) => !Number.isNaN(DATA.versionCompare(version, result.version))) ) {
-		reasons.push('versionUnclear')
-	}
-	return reasons
-}
-
 function reviewNoteText(reasons) {
 	if ( reasons.length === 0 ) { return '' }
-	const labels = reasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason)
+	const labels = reviewReasonLabels(reasons)
 	return `<div class="small text-warning mb-2">Needs review: ${DATA.escapeSpecial(labels.join(', '))}</div>`
 }
 
 function manualSourceMessage(sourceType) {
 	return `${sourceTypeLabel(sourceType)} is a manual download source. Open the web page to check and install updates manually.`
-}
-
-// eslint-disable-next-line complexity
-function makeCandidateMap(modCollect) {
-	const thisVersion    = modCollect.appSettings.game_version
-	const candidates     = {}
-	const collectKeyName = {}
-	const activeCollect  = modCollect.opts?.activeCollection ?? null
-	const modSites       = modCollect.opts?.modSites ?? {}
-	const collectionKeys = [...modCollect.set_Collections]
-	const collectKeys    = activeCollect !== null && collectionKeys.includes(activeCollect) ?
-		[activeCollect] :
-		collectionKeys
-
-	for ( const collectKey of collectKeys ) {
-		const theseNotes = modCollect?.collectionNotes?.[collectKey]
-
-		if ( theseNotes?.notes_frozen === true ) { continue }
-		if ( theseNotes?.notes_version !== thisVersion ) { continue }
-
-		collectKeyName[collectKey] = modCollect.collectionToName[collectKey]
-
-		for ( const modKey of modCollect.modList[collectKey].modSet ) {
-			const thisMod  = modCollect.modList[collectKey].mods[modKey]
-			const modName  = thisMod.fileDetail.shortName
-			const sourceURL = modSites[modName] ?? ''
-			const sourceInfo = updateSourceInfo(sourceURL)
-
-			if ( thisMod.fileDetail.isFolder ) { continue }
-
-			const addCandidate = (sourceType, sourceLink, remoteVersion = null, modHubID = null) => {
-				const candidateKey = `${modName}::${sourceType}`
-				candidates[candidateKey] ??= {
-					collectionKeys : [],
-					collections : [],
-					icon        : thisMod.modDesc.iconImage,
-					local       : new Set(),
-					modHubID,
-					modName,
-					remoteVersion,
-					sourceLabel : sourceTypeLabel(sourceType),
-					sourceType,
-					sourceURL   : sourceLink,
-					title       : doL10N(thisMod.l10n.title, modCollect.appSettings.force_lang),
-				}
-				if ( !candidates[candidateKey].collectionKeys.includes(collectKey) ) {
-					candidates[candidateKey].collectionKeys.push(collectKey)
-					candidates[candidateKey].collections.push(collectKeyName[collectKey])
-				}
-				candidates[candidateKey].local.add(thisMod.modDesc.version)
-			}
-
-			if ( sourceInfo.type === 'github' ) {
-				addCandidate('github', sourceURL)
-			} else if ( ['itch', 'kingmods', 'manual'].includes(sourceInfo.type) && isWebURL(sourceURL) ) {
-				addCandidate(sourceInfo.type, sourceURL)
-			} else if ( sourceInfo.type === 'modhub' && thisMod.modHub.id === null && isWebURL(sourceURL) ) {
-				addCandidate('modhub', sourceURL)
-			}
-			if ( thisMod.modHub.id !== null && typeof thisMod.modHub.version === 'string' && thisMod.modHub.version !== '' ) {
-				addCandidate('modhub', `https://www.farming-simulator.com/mod.php?mod_id=${thisMod.modHub.id}`, thisMod.modHub.version, thisMod.modHub.id)
-			}
-		}
-	}
-
-	return candidates
-}
-
-function isUpdateAvailable(localVersions, remoteVersion, allowUnknownDifference = false) {
-	for ( const localVersion of localVersions ) {
-		const compare = DATA.versionCompare(localVersion, remoteVersion)
-		if ( compare < 0 || (allowUnknownDifference && Number.isNaN(compare) && DATA.versionDifferent(localVersion, remoteVersion)) ) {
-			return true
-		}
-	}
-	return false
 }
 
 function statusText(result) {
@@ -228,6 +102,14 @@ function downloadStatusText(result) {
 	return `<span class="badge text-bg-secondary">${I18N.defer('update_list_source_newer_manual', false)}</span>`
 }
 
+function vaultStatusText(availability) {
+	if ( availability?.inVault === true ) {
+		const fileName = typeof availability.vaultFileName === 'string' && availability.vaultFileName !== '' ? ` ${DATA.escapeSpecial(availability.vaultFileName)}` : ''
+		return `<div class="small text-success mb-2">Already in Vault.${fileName}</div>`
+	}
+	return '<div class="small text-info mb-2">Will be stored in the Vault before the collection is updated.</div>'
+}
+
 function withTimeout(promise, timeoutMS = 15000) {
 	return Promise.race([
 		promise,
@@ -253,6 +135,7 @@ async function mapWithConcurrency(entries, limit, mapper) {
 }
 
 let activeRenderID = 0
+let loadedInitialModList = false
 let updateBusyDepth = 0
 
 function showUpdateBusyProgress(label = '', value = null) {
@@ -309,6 +192,27 @@ function renderEmpty(messageKey) {
 	updateSelectedCount()
 }
 
+function rowCandidateState(row) {
+	return candidateUpdateState({
+		downloadURL : row.dataset.hasDownload === 'true' ? 'available' : null,
+		needsReview : row.dataset.needsReview === 'true',
+		packageMismatch : null,
+	})
+}
+
+function visibleUpdateRows() {
+	const needsReviewOnly = MA.byId('needsReviewOnly')?.checked === true
+	const stateFilter = MA.byId('updateStateFilter')?.value ?? ''
+	const selectedReasons = selectedReviewReasons()
+	return [...document.querySelectorAll('.update-candidate-row')].filter((row) => {
+		if ( stateFilter !== '' && rowCandidateState(row) !== stateFilter ) { return false }
+		if ( !needsReviewOnly ) { return true }
+		const rowReasons = row.dataset.reviewReasons?.split(',').filter((reason) => reason !== '') ?? []
+		const reasonMatches = selectedReasons.length === 0 || selectedReasons.some((reason) => rowReasons.includes(reason))
+		return row.dataset.needsReview === 'true' && reasonMatches
+	})
+}
+
 function getUpdateCheckboxes() {
 	return [...document.querySelectorAll('.update-candidate-row:not(.d-none) .update-select-checkbox')]
 }
@@ -320,14 +224,46 @@ function getAllUpdateCheckboxes() {
 function updateSelectedCount() {
 	const selectedCount = getSelectedCheckboxes().length
 	const downloadableCount = getSelectedDownloadCandidates().length
+	const visibleRows = visibleUpdateRows()
+	const visibleRowSet = new Set(visibleRows)
+	const selectedRows = getSelectedCheckboxes()
+		.map((checkbox) => checkbox.closest('.update-candidate-row'))
+		.filter((row) => row !== null && visibleRowSet.has(row))
+	const selectedStateCounts = candidateStateCounts(selectedRows.map((row) => ({
+		downloadURL : row.dataset.hasDownload === 'true' ? 'available' : null,
+		needsReview : row.dataset.needsReview === 'true',
+		packageMismatch : null,
+	})))
+	const stateSummary = MA.byId('updateStateSummary')
+	if ( stateSummary !== null ) {
+		stateSummary.textContent = stateSummaryText(visibleRows.map((row) => ({
+			downloadURL : row.dataset.hasDownload === 'true' ? 'available' : null,
+			needsReview : row.dataset.needsReview === 'true',
+			packageMismatch : null,
+		})))
+	}
 	MA.byIdHTML('selectedCount', `${I18N.defer('update_list_selected', false)} ${selectedCount}`)
 	MA.byId('openSelectedButton').disabled = selectedCount === 0
 	MA.byId('downloadSelectedButton').disabled = downloadableCount === 0
+	MA.byId('selectAllButton').disabled = visibleRows.length === 0
+	MA.byId('selectReadyButton').disabled = visibleRows.filter((row) => rowCandidateState(row) === 'ready').length === 0
+	MA.byId('selectNoneButton').disabled = selectedCount === 0
+	if ( selectedCount !== 0 ) {
+		MA.byIdHTML('selectedCount', `${I18N.defer('update_list_selected', false)} ${selectedCount} (${selectedStateCounts.ready} ready, ${selectedStateCounts.review} review, ${selectedStateCounts.manual} manual)`)
+	}
 }
 
 function setAllSelections(isChecked) {
 	for ( const checkbox of getUpdateCheckboxes() ) {
 		checkbox.checked = isChecked
+	}
+	updateSelectedCount()
+}
+
+function selectReadyUpdates() {
+	for ( const checkbox of getUpdateCheckboxes() ) {
+		const row = checkbox.closest('.update-candidate-row')
+		checkbox.checked = row !== null && rowCandidateState(row) === 'ready'
 	}
 	updateSelectedCount()
 }
@@ -344,14 +280,12 @@ function applyNeedsReviewFilter() {
 	const filter = MA.byId('needsReviewOnly')
 	const needsReviewOnly = filter !== null && filter.checked
 	const reasonFilters = MA.byId('reviewReasonFilters')
-	const selectedReasons = selectedReviewReasons()
+	const visibleRows = new Set(visibleUpdateRows())
 	if ( reasonFilters !== null ) {
 		reasonFilters.classList.toggle('d-none', !needsReviewOnly)
 	}
 	for ( const row of document.querySelectorAll('.update-candidate-row') ) {
-		const rowReasons = row.dataset.reviewReasons?.split(',').filter((reason) => reason !== '') ?? []
-		const reasonMatches = selectedReasons.length === 0 || selectedReasons.some((reason) => rowReasons.includes(reason))
-		row.classList.toggle('d-none', needsReviewOnly && (row.dataset.needsReview !== 'true' || !reasonMatches))
+		row.classList.toggle('d-none', !visibleRows.has(row))
 	}
 	updateSelectedCount()
 }
@@ -414,16 +348,16 @@ async function downloadSelectedZIPs() {
 	if ( downloads.length === 0 ) { return }
 
 	MA.byId('downloadSelectedButton').disabled = true
-	MA.byIdHTML('updateStatus', I18N.defer('update_list_updating', false))
+	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_updating', false)} Updates are stored in the Vault first, then copied to the collection.`)
 	beginUpdateBusy(`0 / ${downloads.length}`, 0)
 	try {
 		const result = await window.update_IPC.downloadApplySelected(downloads)
-		window.UpdateRunReport.show('updateStatus', 'Collection update report', (result.results ?? []).map((item) => ({ detail : item.error ?? `Version ${item.version ?? ''}`, name : item.modName, source : item.collectionName ?? item.sourceType, status : item.skipped ? 'Not attempted' : item.ok ? 'Updated' : 'Failed' })), result.error ?? '')
+		window.UpdateRunReport.show('updateStatus', 'Collection update report', (result.results ?? []).map((item) => ({ detail : item.error ?? `Version ${item.version ?? ''}${item.vaultFileName ? ` from Vault ZIP ${item.vaultFileName}` : ''}`, name : item.modName, source : item.collectionName ?? item.sourceType, status : item.skipped ? 'Not attempted' : item.ok ? 'Updated from Vault' : 'Failed' })), result.error ?? '')
 		removeAppliedUpdateRows(downloads.filter((_item, index) => result.results?.[index]?.ok))
 		setUpdateBusy(`${downloads.length} / ${downloads.length}`, 100)
 		if ( result.ok ) {
 			removeAppliedUpdateRows(downloads)
-			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}. Use Refresh update checks to rescan all sources.`)
+			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_complete', false)} ${result.count} / ${downloads.length}. Updates were stored in the Vault first, then copied to the collection. Use Refresh update checks to rescan all sources.`)
 		} else {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
 		}
@@ -467,10 +401,13 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 			setUpdateBusy(`${completeCount} / ${candidateEntries.length}`, (completeCount / candidateEntries.length) * 100)
 		}
 
-		const available = result.ok && isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github')
-		reportRows.push({ detail : !result.ok ? window.UpdateRunReport.error(result.error) : `Local: ${[...entry.local].join(', ')}; online: ${result.version ?? 'unknown'}`, name : entry.modName, source : `${entry.sourceType}: ${entry.collections.join(', ')}`, status : !result.ok ? 'Failed' : isManualSourceType(entry.sourceType) ? 'Manual check required' : available ? 'Update available' : 'No newer version' })
+		const decision = collectionRemoteDecision(entry, result, {
+			versionCompare : DATA.versionCompare,
+			versionDifferent : DATA.versionDifferent,
+		})
+		reportRows.push({ detail : !result.ok ? window.UpdateRunReport.error(result.error) : `Local: ${[...entry.local].join(', ')}; online: ${result.version ?? 'unknown'}`, name : entry.modName, source : `${entry.sourceType}: ${entry.collections.join(', ')}`, status : !result.ok ? 'Failed' : isManualSourceType(entry.sourceType) ? 'Manual check required' : decision.available ? 'Update available' : 'No newer version' })
 		if ( !result.ok ) { return null }
-		if ( !['itch', 'kingmods', 'manual'].includes(entry.sourceType) && !isUpdateAvailable(entry.local, result.version, entry.sourceType === 'github') ) { return null }
+		if ( !decision.includeCandidate ) { return null }
 	
 		const collectionList = entry.collections
 			.sort((a, b) => Intl.Collator().compare(a, b))
@@ -478,7 +415,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 		const assetName = result.assetName ?? null
 		const collectionKey = entry.collectionKeys[0] ?? null
 		const collectionName = entry.collections[0] ?? 'updates'
-		const review = reviewReasons(entry, result)
+		const review = decision.reviewReasons
 		return {
 			assetName      : assetName,
 			collectionKey  : collectionKey,
@@ -501,6 +438,7 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 				sourceBadge   : sourceBadgeText(entry, result),
 				sourceName    : DATA.escapeSpecial(entry.sourceLabel),
 				statusText    : statusText(result),
+				vaultStatus   : '<div class="small mb-2 update-vault-status"></div>',
 			}),
 			review,
 			sourceType : entry.sourceType,
@@ -511,12 +449,24 @@ async function displayCandidates(candidates, renderID, forceRemoteRefresh = fals
 
 	if ( renderID !== activeRenderID ) { return }
 	window.UpdateRunReport.show('updateStatus', 'Collection check report', reportRows, 'Checks cover eligible mod sources in the selected collections; frozen collections, other game versions and folder mods are excluded.')
+	const vaultAvailability = await window.update_IPC.vaultAvailability(updateRows.map((row) => ({
+		modName   : row.modName,
+		sourceType : row.sourceType,
+		sourceURL  : row.sourceURL,
+		version    : row.version,
+	})))
+	const availabilityRows = Array.isArray(vaultAvailability) ? vaultAvailability : []
 
-	for ( const { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, needsReview, node, review, sourceType, sourceURL, version } of updateRows ) {
+	for ( const [index, { assetName, collectionKey, collectionName, downloadURL, modHubID, modHubReleased, modName, needsReview, node, review, sourceType, sourceURL, version }] of updateRows.entries() ) {
 		const row = node.firstElementChild
+		const vaultStatus = node.querySelector('.update-vault-status')
+		if ( vaultStatus !== null ) { vaultStatus.innerHTML = vaultStatusText(availabilityRows[index]) }
 		row.classList.add('bg-warning-subtle', 'update-candidate-row')
+		row.dataset.hasDownload = downloadURL !== null ? 'true' : 'false'
+		row.dataset.inVault = availabilityRows[index]?.inVault === true ? 'true' : 'false'
 		row.dataset.needsReview = needsReview ? 'true' : 'false'
 		row.dataset.reviewReasons = review.join(',')
+		row.dataset.updateState = rowCandidateState(row)
 		const selectCheckbox = node.querySelector('.update-select-checkbox')
 		if ( assetName !== null ) {
 			selectCheckbox.dataset.assetName = assetName
@@ -567,9 +517,12 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		MA.byIdHTML('modList', '')
 		MA.byId('selectionControls').classList.add('d-none')
 		if ( MA.byId('needsReviewOnly') !== null ) { MA.byId('needsReviewOnly').checked = false }
+		if ( MA.byId('updateStateFilter') !== null ) { MA.byId('updateStateFilter').value = '' }
 		for ( const filter of document.querySelectorAll('.review-reason-filter') ) { filter.checked = false }
 		updateSelectedCount()
-		await displayCandidates(makeCandidateMap(modCollect), renderID, forceRemoteRefresh)
+		await displayCandidates(buildCollectionCandidateMap(modCollect, {
+			titleResolver : (thisMod, currentModCollect) => doL10N(thisMod.l10n.title, currentModCollect.appSettings.force_lang),
+		}), renderID, forceRemoteRefresh)
 	} catch (err) {
 		MA.byIdText('updateStatus', `Update list error: ${err.message}`)
 		window.UpdateRunReport.show('updateStatus', 'Collection check report', [{ name : 'Scan', status : 'Failed', detail : err.message }])
@@ -594,19 +547,26 @@ async function refreshUpdateCandidates() {
 
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
+	for ( const item of document.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		bootstrap.Tooltip.getOrCreateInstance(item)
+	}
 	MA.byIdHTML('updateStatus', `${I18N.defer('update_list_checking', false)} ${I18N.defer('update_list_loading', false)}`)
 	MA.byIdEventIfExists('selectAllButton', () => { setAllSelections(true) })
+	MA.byIdEventIfExists('selectReadyButton', selectReadyUpdates)
 	MA.byIdEventIfExists('selectNoneButton', () => { setAllSelections(false) })
 	MA.byIdEventIfExists('openSelectedButton', openSelectedSources)
 	MA.byIdEventIfExists('downloadSelectedButton', downloadSelectedZIPs)
 	MA.byIdEventIfExists('refreshUpdatesButton', refreshUpdateCandidates)
-	MA.byIdEventIfExists('updateMenuButton', () => window.update_IPC.dispatchModManagement())
+	MA.byIdEventIfExists('updateMenuButton', () => { window.operations.close() })
 	MA.byIdEventIfExists('needsReviewOnly', applyNeedsReviewFilter)
+	MA.byIdEventIfExists('updateStateFilter', applyNeedsReviewFilter)
 	for ( const filter of document.querySelectorAll('.review-reason-filter') ) {
 		filter.addEventListener('change', applyNeedsReviewFilter)
 	}
 
 	window.update_IPC.receive('mods:list', (modCollect) => {
+		if ( loadedInitialModList ) { return }
+		loadedInitialModList = true
 		startFromModList(modCollect)
 	})
 

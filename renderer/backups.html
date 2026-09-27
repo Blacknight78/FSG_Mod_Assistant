@@ -6,59 +6,142 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Collection Backups</title>
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
-	<link rel="stylesheet" href="inc/site_dark.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
+	<style>
+		.backup-shell {
+			display: grid;
+			grid-template-columns: 104px minmax(0, 1fr) 320px;
+			gap: 0.75rem;
+			height: calc(100vh - 108px);
+			min-height: 0;
+		}
+		.backup-action-rail,
+		.backup-main-panel,
+		.backup-side-panel {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			min-height: 0;
+		}
+		.backup-action-rail,
+		.backup-side-panel {
+			overflow: auto;
+			padding: 0.4rem;
+		}
+		.backup-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.45rem;
+		}
+		.backup-rail-tip {
+			display: block;
+		}
+		.backup-rail-button {
+			display: flex;
+			width: 100%;
+			min-height: 70px;
+			flex-direction: column;
+			gap: 0.25rem;
+			align-items: center;
+			justify-content: center;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
+			line-height: 1.1;
+			text-align: center;
+		}
+		.backup-rail-button:disabled {
+			pointer-events: none;
+		}
+		.backup-rail-button .bi {
+			font-size: 1.65rem;
+			line-height: 1;
+		}
+		.backup-main-panel {
+			display: flex;
+			min-width: 0;
+			flex-direction: column;
+			overflow: auto;
+			padding: 0.75rem;
+		}
+		.backup-side-panel {
+			padding: 0.75rem;
+		}
+		.backup-status-card {
+			background: #111315;
+			border-color: #30363d;
+			color: var(--bs-body-color);
+		}
+		.backup-section {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			padding: 0.75rem;
+		}
+		@media (max-width: 1100px) {
+			.backup-shell {
+				grid-template-columns: 1fr;
+				height: auto;
+			}
+			.backup-action-rail {
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.backup-rail-tip {
+				flex: 1 1 11rem;
+			}
+			.backup-rail-button {
+				min-height: 52px;
+			}
+		}
+	</style>
 </head>
-<body>
-	<main class="container-fluid py-3">
-		<div class="row align-items-center mb-4">
+<body data-bs-theme="dark" class="overflow-custom2">
+	<main class="container-fluid px-1 py-3">
+		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
+		<div class="row align-items-center mx-2 mb-3">
 			<div class="col-md-5">
-				<div class="d-flex align-items-center gap-3">
-					<img src="img/icon.png" alt="" style="width: 48px; height: 48px;">
-					<h1 class="display-6 mb-0">FSG Mod Assistant</h1>
+				<div class="app-window-brand">
+					<span class="app-window-logo" aria-hidden="true"></span>
+					<h1 class="app-window-name">FSG Mod Assistant</h1>
 				</div>
 			</div>
 			<div class="col-md-7">
-				<h2 class="h1 text-center rounded-3 py-2 mb-0 bg-info text-dark">Collection Backups</h2>
+				<h2 class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-info text-dark">Collection Backups</h2>
 			</div>
 		</div>
+		</div>
 
-		<hr>
+		<div class="backup-shell mx-2 mb-3">
+			<aside class="backup-action-rail" aria-label="Collection backup actions">
+				<span class="backup-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Create backup manifest: save a record of the ZIP files currently in the selected collection.">
+					<button class="btn btn-sm btn-success backup-rail-button" type="button" id="backupCreate">
+						<i aria-hidden="true" class="bi bi-journal-plus"></i>
+						<span>Create</span>
+					</button>
+				</span>
+				<span class="backup-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Review old manifests: choose old backup JSON records to delete. This does not delete collection mods or Vault ZIP files.">
+					<button class="btn btn-sm btn-outline-danger backup-rail-button" type="button" id="backupDeleteOld">
+						<i aria-hidden="true" class="bi bi-trash3"></i>
+						<span>Review old</span>
+					</button>
+				</span>
+				<span class="backup-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Back: closes this Collection Backups window and returns to the main window.">
+					<button class="btn btn-sm btn-outline-light backup-rail-button" type="button" id="backupBackToUpdates">
+						<i aria-hidden="true" class="bi bi-arrow-left"></i>
+						<span>Back</span>
+					</button>
+				</span>
+			</aside>
 
-		<section class="card mb-3">
-			<div class="card-body">
-				<div id="backupStatus" class="alert alert-secondary mb-0">
+			<section class="backup-main-panel">
+				<div id="backupStatus" class="alert backup-status-card mb-3">
 					Loading collection backup tools...
 				</div>
-			</div>
-		</section>
 
-		<section class="card mb-3">
-			<div class="card-body">
-				<div class="row g-3 align-items-end">
-					<div class="col-lg-6">
-						<label class="form-label" for="backupCollection">Collection</label>
-						<select class="form-select" id="backupCollection"></select>
-					</div>
-					<div class="col-lg-3">
-						<button class="btn btn-success w-100" type="button" id="backupCreate">
-							Create backup manifest
-						</button>
-					</div>
-					<div class="col-lg-3">
-						<button class="btn btn-secondary w-100" type="button" id="backupBackToUpdates">
-							Back to Mod Management Menu
-						</button>
-					</div>
-				</div>
-				<p class="text-body-secondary mt-3 mb-0">
-					Collection backups save a manifest of the ZIPs currently in a collection. Restore uses matching ZIPs from the Mod Vault and does not delete extra mods yet.
-				</p>
-			</div>
-		</section>
-
-		<section class="card mb-3">
-			<div class="card-body">
+				<section class="backup-section mb-3">
 				<div class="d-flex flex-wrap justify-content-between gap-2 align-items-center">
 					<div>
 						<h3 class="h4 mb-1">Saved backup manifests</h3>
@@ -66,25 +149,30 @@
 							Old manifest cleanup only removes backup JSON records. It does not delete collection mods or Vault ZIP files.
 						</p>
 					</div>
-					<button class="btn btn-outline-danger" type="button" id="backupDeleteOld">
-						Review old manifests
-					</button>
 				</div>
 				<div id="backupCleanupStatus" class="mt-3"></div>
 				<div id="backupList" class="mt-3"></div>
-			</div>
-		</section>
+				</section>
 
-		<section class="card mb-3">
-			<div class="card-body">
+				<section class="backup-section">
 				<h3 class="h4">Backup comparison</h3>
 				<div id="backupCompare" class="text-body-secondary mt-3">
 					Select a saved backup to compare it with the current collection.
 				</div>
-			</div>
-		</section>
+				</section>
+			</section>
+
+			<aside class="backup-side-panel" aria-label="Collection backup settings">
+				<label class="form-label" for="backupCollection">Collection</label>
+				<select class="form-select" id="backupCollection"></select>
+				<div class="alert alert-dark mt-3 mb-0">
+					Collection backups save a manifest of the ZIPs currently in a collection. Restore uses matching ZIPs from the Mod Vault and does not delete extra mods yet.
+				</div>
+			</aside>
+		</div>
 	</main>
 
+	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/backups_ui.js"></script>
 </body>

@@ -1,109 +1,222 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;">
+	<title>Share or Import a Collection</title>
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
-	<script src="inc/bootstrap.bundle.min.js"></script>
-	<script src="renderJS/util/util_lib.js"></script>
-	<script src="renderJS/manifest_ui.js"></script>
+	<link rel="stylesheet" href="inc/src/overrides.css">
+	<style>
+		.manifest-shell {
+			display: grid;
+			grid-template-columns: 104px minmax(0, 1fr) 330px;
+			gap: 0.75rem;
+			height: calc(100vh - 108px);
+			min-height: 0;
+		}
+		.manifest-action-rail,
+		.manifest-main-panel,
+		.manifest-side-panel {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			min-height: 0;
+		}
+		.manifest-action-rail,
+		.manifest-side-panel {
+			overflow: auto;
+			padding: 0.4rem;
+		}
+		.manifest-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.45rem;
+		}
+		.manifest-rail-tip {
+			display: block;
+		}
+		.manifest-rail-button {
+			display: flex;
+			width: 100%;
+			min-height: 70px;
+			flex-direction: column;
+			gap: 0.25rem;
+			align-items: center;
+			justify-content: center;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
+			line-height: 1.1;
+			text-align: center;
+		}
+		.manifest-rail-button:disabled {
+			pointer-events: none;
+		}
+		.manifest-rail-button .bi {
+			font-size: 1.65rem;
+			line-height: 1;
+		}
+		.manifest-main-panel {
+			display: flex;
+			min-width: 0;
+			flex-direction: column;
+			overflow: auto;
+			padding: 0.75rem;
+		}
+		.manifest-side-panel {
+			padding: 0.75rem;
+		}
+		.manifest-status-card {
+			background: #111315;
+			border-color: #30363d;
+			color: var(--bs-body-color);
+		}
+		.manifest-section,
+		.manifest-row {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			padding: 0.75rem;
+		}
+		.manifest-row + .manifest-row {
+			margin-top: 0.65rem;
+		}
+		@media (max-width: 1100px) {
+			.manifest-shell {
+				grid-template-columns: 1fr;
+				height: auto;
+			}
+			.manifest-action-rail {
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.manifest-rail-tip {
+				flex: 1 1 11rem;
+			}
+			.manifest-rail-button {
+				min-height: 52px;
+			}
+		}
+	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
-	<div class="container-fluid px-1 user-select-none">
+	<main class="container-fluid px-1 py-3 user-select-none">
 		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
-			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
-				<div class="col-7 pt-2">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+			<div class="row align-items-center mx-2 mb-3">
+				<div class="col-md-5">
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 				</div>
-				<div class="col-5 pt-4 mt-3">
-					<span class="badge bg-success text-dark mx-auto w-100 d-block rounded-3 h4 fs-5">Share or Import a Collection</span>
+				<div class="col-md-7">
+					<h2 class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-success text-dark">Share or Import a Collection</h2>
 				</div>
 			</div>
 		</div>
 
-		<section class="mx-2 mb-3 card">
-			<div class="card-body">
-				<p class="fs-5 mb-0">Export a small collection manifest, or import one and review what can be installed automatically before changing a collection.</p>
-			</div>
-		</section>
+		<div class="manifest-shell mx-2 mb-3">
+			<aside class="manifest-action-rail" aria-label="Collection manifest actions">
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Export file: save a lightweight manifest for the selected collection.">
+					<button id="manifestExportFile" type="button" class="btn btn-sm btn-outline-success manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-file-earmark-arrow-up"></i>
+						<span>Export file</span>
+					</button>
+				</span>
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Copy share link: copy the selected collection manifest as a compact share link.">
+					<button id="manifestCopyLink" type="button" class="btn btn-sm btn-outline-success manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-link-45deg"></i>
+						<span>Copy link</span>
+					</button>
+				</span>
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Import file: choose a collection manifest file and review what can be installed.">
+					<button id="manifestImportFile" type="button" class="btn btn-sm btn-outline-info manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-file-earmark-arrow-down"></i>
+						<span>Import file</span>
+					</button>
+				</span>
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Import link: read a copied collection manifest link and review what can be installed.">
+					<button id="manifestImportLink" type="button" class="btn btn-sm btn-outline-info manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-cloud-arrow-down"></i>
+						<span>Import link</span>
+					</button>
+				</span>
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Back: closes this Share or Import window and returns to the main window.">
+					<button id="manifestMenuButton" type="button" class="btn btn-sm btn-outline-light manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-arrow-left"></i>
+						<span>Back</span>
+					</button>
+				</span>
+			</aside>
 
-		<section id="manifestBusyProgress" class="mx-2 mb-3 d-none" aria-hidden="true">
-			<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
-				<div id="manifestBusyProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Working...</div>
-			</div>
-		</section>
+			<section class="manifest-main-panel">
+				<div id="manifestStatus" class="alert manifest-status-card mb-3">Choose a collection to export, or import a manifest file/link to review it.</div>
 
-		<section class="mx-2 mb-3 card">
-			<div class="card-body">
-				<div class="row g-2 align-items-end">
-					<div class="col-12 col-lg-5">
-						<label for="manifestCollection" class="form-label">Target collection</label>
-						<select id="manifestCollection" class="form-select">
-							<option value="">Choose a collection...</option>
-						</select>
+				<section id="manifestBusyProgress" class="mb-3 d-none" aria-hidden="true">
+					<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+						<div id="manifestBusyProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Working...</div>
 					</div>
-					<div class="col-12 col-lg-7">
-						<div class="btn-group w-100" role="group" aria-label="Collection manifest actions">
-							<button id="manifestExportFile" type="button" class="btn btn-outline-success">Export file</button>
-							<button id="manifestCopyLink" type="button" class="btn btn-outline-success">Copy share link</button>
-							<button id="manifestImportFile" type="button" class="btn btn-outline-info">Import file</button>
-							<button id="manifestImportLink" type="button" class="btn btn-outline-info">Import link</button>
+				</section>
+
+				<section id="manifestPreview" class="d-none">
+					<div class="manifest-section mb-3">
+						<h3 id="manifestTitle" class="h4 mb-2">Manifest preview</h3>
+						<div id="manifestSummary" class="alert alert-primary">No manifest loaded.</div>
+
+						<div class="btn-group w-100 mb-2" role="group" aria-label="Manifest filters">
+							<button id="manifestShowAll" type="button" class="btn btn-secondary active">All</button>
+							<button id="manifestShowAttention" type="button" class="btn btn-outline-danger">Problems</button>
+							<button id="manifestShowDownloadable" type="button" class="btn btn-outline-success">Downloadable</button>
+							<button id="manifestShowNeedsUpdate" type="button" class="btn btn-outline-info">Install/update needed</button>
+							<button id="manifestShowCurrent" type="button" class="btn btn-outline-secondary">Current</button>
 						</div>
+						<div class="btn-group w-100" role="group" aria-label="Manifest selection">
+							<button id="manifestSelectAll" type="button" class="btn btn-outline-success">Select All</button>
+							<button id="manifestSelectNone" type="button" class="btn btn-outline-secondary">Select None</button>
+							<button id="manifestSelectedCount" type="button" class="btn btn-secondary" disabled>Selected: 0</button>
+						</div>
+						<button id="manifestInstall" type="button" class="btn btn-warning w-100 mt-3" disabled>Install selected mods</button>
 					</div>
-					<div class="col-12">
-						<button id="manifestMenuButton" type="button" class="btn btn-secondary w-100">Back to Mod Management Menu</button>
-					</div>
+
+					<div id="manifestList"></div>
+				</section>
+			</section>
+
+			<aside class="manifest-side-panel" aria-label="Collection manifest settings">
+				<label for="manifestCollection" class="form-label">Target collection</label>
+				<select id="manifestCollection" class="form-select">
+					<option value="">Choose a collection...</option>
+				</select>
+				<div class="alert alert-dark mt-3 mb-0">
+					Export saves a small collection manifest. Import reads a manifest first so you can review available automatic installs before changing a collection.
 				</div>
-				<div id="manifestStatus" class="alert alert-info mt-3 mb-0">Choose a collection to export, or import a manifest file/link to review it.</div>
-			</div>
-		</section>
-
-		<section id="manifestPreview" class="mx-2 d-none">
-			<div class="card mb-3">
-				<div class="card-body">
-					<h3 id="manifestTitle" class="mb-2">Manifest preview</h3>
-					<div id="manifestSummary" class="alert alert-primary">No manifest loaded.</div>
-
-					<div class="btn-group w-100 mb-2" role="group" aria-label="Manifest filters">
-						<button id="manifestShowAll" type="button" class="btn btn-secondary active">All</button>
-						<button id="manifestShowAttention" type="button" class="btn btn-outline-danger">Problems</button>
-						<button id="manifestShowDownloadable" type="button" class="btn btn-outline-success">Downloadable</button>
-						<button id="manifestShowNeedsUpdate" type="button" class="btn btn-outline-info">Install/update needed</button>
-						<button id="manifestShowCurrent" type="button" class="btn btn-outline-secondary">Current</button>
-					</div>
-					<div class="btn-group w-100" role="group" aria-label="Manifest selection">
-						<button id="manifestSelectAll" type="button" class="btn btn-outline-success">Select All</button>
-						<button id="manifestSelectNone" type="button" class="btn btn-outline-secondary">Select None</button>
-						<button id="manifestSelectedCount" type="button" class="btn btn-secondary" disabled>Selected: 0</button>
-					</div>
-					<button id="manifestInstall" type="button" class="btn btn-warning w-100 mt-3" disabled>Install selected mods</button>
-				</div>
-			</div>
-
-			<div id="manifestList"></div>
-		</section>
-	</div>
+			</aside>
+		</div>
+	</main>
 
 	<template id="manifest_line">
-		<div class="manifest-row card mb-2">
-			<div class="card-body">
-				<div class="d-flex gap-3 align-items-start">
-					<input class="form-check-input manifest-select mt-2" type="checkbox">
-					<div class="flex-grow-1">
-						<div class="d-flex flex-wrap justify-content-between gap-2">
-							<h5 class="mb-1"><template-var>modName</template-var></h5>
-							<div><template-var>stateBadge</template-var></div>
-						</div>
-						<div class="small text-body-secondary"><template-var>versions</template-var></div>
-						<div class="manifest-install-detail mt-2"><template-var>installDetail</template-var></div>
-						<div class="small mt-2"><template-var>detail</template-var></div>
-						<button type="button" class="btn btn-primary manifest-source-button d-none mt-3">Open Web Page</button>
+		<div class="manifest-row">
+			<div class="d-flex gap-3 align-items-start">
+				<input class="form-check-input manifest-select mt-2" type="checkbox">
+				<div class="flex-grow-1">
+					<div class="d-flex flex-wrap justify-content-between gap-2">
+						<h5 class="mb-1"><template-var>modName</template-var></h5>
+						<div><template-var>stateBadge</template-var></div>
 					</div>
+					<div class="small text-body-secondary"><template-var>versions</template-var></div>
+					<div class="manifest-install-detail mt-2"><template-var>installDetail</template-var></div>
+					<div class="small mt-2"><template-var>detail</template-var></div>
+					<button type="button" class="btn btn-primary manifest-source-button d-none mt-3">Open Web Page</button>
 				</div>
 			</div>
 		</div>
 	</template>
+
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/manifest_ui.js"></script>
 </body>
 </html>

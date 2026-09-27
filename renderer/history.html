@@ -1,119 +1,214 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<!-- _______           __ _______               __         __
-		|   |   |.-----.--|  |   _   |.-----.-----.|__|.-----.|  |_
-		|       ||  _  |  _  |       ||__ --|__ --||  ||__ --||   _|
-		|__|_|__||_____|_____|___|___||_____|_____||__||_____||____|
-		(c) 2022-present FSG Modding.  MIT License. -->
-
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;">
+	<title>Collection History</title>
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
-	<script src="inc/bootstrap.bundle.min.js"></script>
-	<script src="renderJS/util/util_lib.js"></script>
-	<script src="renderJS/history_ui.js"></script>
+	<link rel="stylesheet" href="inc/src/overrides.css">
 	<style>
+		.history-shell {
+			display: grid;
+			grid-template-columns: 104px minmax(0, 1fr) 330px;
+			gap: 0.75rem;
+			height: calc(100vh - 108px);
+			min-height: 0;
+		}
+		.history-action-rail,
+		.history-main-panel,
+		.history-side-panel {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			min-height: 0;
+		}
+		.history-action-rail,
+		.history-side-panel {
+			overflow: auto;
+			padding: 0.4rem;
+		}
+		.history-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.45rem;
+		}
+		.history-rail-tip {
+			display: block;
+		}
+		.history-rail-button {
+			display: flex;
+			width: 100%;
+			min-height: 70px;
+			flex-direction: column;
+			gap: 0.25rem;
+			align-items: center;
+			justify-content: center;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
+			line-height: 1.1;
+			text-align: center;
+		}
+		.history-rail-button:disabled {
+			pointer-events: none;
+		}
+		.history-rail-button .bi {
+			font-size: 1.65rem;
+			line-height: 1;
+		}
+		.history-main-panel {
+			display: flex;
+			min-width: 0;
+			flex-direction: column;
+			overflow: auto;
+			padding: 0.75rem;
+		}
+		.history-side-panel {
+			padding: 0.75rem;
+		}
+		.history-status-card {
+			background: #111315;
+			border-color: #30363d;
+			color: var(--bs-body-color);
+		}
+		.history-entry {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: #1f2327;
+			padding: 0.75rem;
+		}
+		.history-entry + .history-entry {
+			margin-top: 0.65rem;
+		}
 		.history-path {
 			word-break: break-all;
+		}
+		.history-side-section {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: #1f2327;
+			padding: 0.75rem;
+		}
+		@media (max-width: 1100px) {
+			.history-shell {
+				grid-template-columns: 1fr;
+				height: auto;
+			}
+			.history-action-rail {
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.history-rail-tip {
+				flex: 1 1 11rem;
+			}
+			.history-rail-button {
+				min-height: 52px;
+			}
 		}
 	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
-	<div class="container-fluid px-2 user-select-none">
+	<main class="container-fluid px-1 py-3 user-select-none">
 		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
-			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
-				<div class="col-7 pt-2">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+			<div class="row align-items-center mx-2 mb-3">
+				<div class="col-md-5">
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 				</div>
-				<div class="col-5 pt-4 mt-3">
-					<i18n-text class="badge bg-info text-dark mx-auto w-100 d-block rounded-3 h4 fs-5" data-key="history_window"></i18n-text>
-				</div>
-			</div>
-		</div>
-		<div class="mx-2 mb-3 alert alert-secondary" id="historyStatus">
-			<i18n-text data-key="history_loading"></i18n-text>
-		</div>
-		<div class="mx-2 mb-3 card">
-			<div class="card-body">
-				<div class="row g-2">
-					<div class="col-md-3">
-						<label class="form-label small" for="historyCollectionFilter">
-							<i18n-text data-key="history_filter_collection"></i18n-text>
-						</label>
-						<select class="form-select form-select-sm" id="historyCollectionFilter"></select>
-					</div>
-					<div class="col-md-3">
-						<label class="form-label small" for="historyActionFilter">
-							<i18n-text data-key="history_filter_action"></i18n-text>
-						</label>
-						<select class="form-select form-select-sm" id="historyActionFilter"></select>
-					</div>
-					<div class="col-md-3">
-						<label class="form-label small" for="historyFromFilter">
-							<i18n-text data-key="history_filter_from"></i18n-text>
-						</label>
-						<input class="form-control form-control-sm" id="historyFromFilter" type="date">
-					</div>
-					<div class="col-md-3">
-						<label class="form-label small" for="historyToFilter">
-							<i18n-text data-key="history_filter_to"></i18n-text>
-						</label>
-						<input class="form-control form-control-sm" id="historyToFilter" type="date">
-					</div>
-					<div class="col-md-9">
-						<label class="form-label small" for="historyTextFilter">
-							<i18n-text data-key="history_filter_search"></i18n-text>
-						</label>
-						<input class="form-control form-control-sm" id="historyTextFilter" type="search">
-					</div>
-					<div class="col-md-3 d-flex align-items-end">
-						<button class="btn btn-sm btn-secondary w-100" id="historyClearFilters" type="button">
-							<i18n-text data-key="history_filter_clear"></i18n-text>
-						</button>
-					</div>
-					<div class="col-md-3 d-flex align-items-end">
-						<button class="btn btn-sm btn-outline-danger w-100" id="historyClearLog" type="button">Clear log (testing)</button>
-					</div>
-					<div class="col-md-3 d-flex align-items-end">
-						<button class="btn btn-sm btn-info w-100" id="historyBackToUpdates" type="button">Back to Mod Management Menu</button>
-					</div>
+				<div class="col-md-7">
+					<h2 class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-info text-dark" id="historyTitle">Collection History</h2>
 				</div>
 			</div>
 		</div>
-		<div class="list-group mx-2 my-3" id="historyList"></div>
-	</div>
 
-<template id="history_line">
-	<li class="list-group-item">
-		<div class="d-flex justify-content-between gap-3">
-			<div>
-				<div class="fw-bold"><template-var>modName</template-var></div>
-				<div class="small fst-italic"><template-var>fileName</template-var></div>
-			</div>
-			<div class="text-end">
-				<div><span class="badge text-bg-info"><template-var>action</template-var></span></div>
-				<div class="small"><template-var>timestamp</template-var></div>
-			</div>
-		</div>
-		<div class="mt-2">
-			<span class="badge text-bg-secondary"><template-var>collectionName</template-var></span>
-			<span class="badge text-bg-warning"><template-var>source</template-var></span>
-			<template-var>replaceBadge</template-var>
-			<template-var>backupBadge</template-var>
-			<template-var>integrityBadge</template-var>
-			<template-var>versionBadges</template-var>
-		</div>
-		<template-var>timeline</template-var>
-		<div class="small mt-2 history-path user-select-text"><template-var>stagedPath</template-var></div>
-		<template-var>backupPath</template-var>
-		<template-var>targetPath</template-var>
-		<div class="small mt-1 history-path user-select-text"><template-var>sourceURL</template-var></div>
-		<template-var>rollbackButton</template-var>
-	</li>
-</template>
+		<div class="history-shell mx-2 mb-3">
+			<aside class="history-action-rail" aria-label="Collection history actions">
+				<span class="history-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Refresh: reload the history list or recent troubleshooting list.">
+					<button class="btn btn-sm btn-outline-info history-rail-button" type="button" id="historyRefresh">
+						<i aria-hidden="true" class="bi bi-arrow-clockwise"></i>
+						<span>Refresh</span>
+					</button>
+				</span>
+				<span class="history-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="History: show the full collection audit log with filters and rollback actions.">
+					<button class="btn btn-sm btn-info history-rail-button" type="button" id="historyModeHistory">
+						<i aria-hidden="true" class="bi bi-journal-text"></i>
+						<span>History</span>
+					</button>
+				</span>
+				<span class="history-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Recent: show recent collection changes that can help track down load problems.">
+					<button class="btn btn-sm btn-outline-warning history-rail-button" type="button" id="historyModeRecent">
+						<i aria-hidden="true" class="bi bi-clock-history"></i>
+						<span>Recent</span>
+					</button>
+				</span>
+				<span class="history-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Back: closes this Collection History window and returns to the main window.">
+					<button class="btn btn-sm btn-outline-light history-rail-button" type="button" id="historyBackToUpdates">
+						<i aria-hidden="true" class="bi bi-arrow-left"></i>
+						<span>Back</span>
+					</button>
+				</span>
+			</aside>
 
+			<section class="history-main-panel">
+				<div class="alert history-status-card mb-3" id="historyStatus">Loading collection history...</div>
+				<div id="historyList"></div>
+			</section>
+
+			<aside class="history-side-panel" aria-label="Collection history filters">
+				<div class="history-side-section mb-3">
+					<h3 class="h5 mb-3">View</h3>
+					<div class="btn-group w-100" role="group" aria-label="History view mode">
+						<button class="btn btn-sm btn-info" id="historyModeHistorySide" type="button">History</button>
+						<button class="btn btn-sm btn-outline-warning" id="historyModeRecentSide" type="button">Recent</button>
+					</div>
+					<p class="text-body-secondary small mt-3 mb-0" id="historyModeHelp">
+						History shows the full audit log. Recent mode shows the latest collection changes for the selected collection.
+					</p>
+				</div>
+
+				<div class="history-side-section mb-3" id="historyFilterPanel">
+					<h3 class="h5 mb-3">History filters</h3>
+					<label class="form-label small" for="historyCollectionFilter">Collection</label>
+					<select class="form-select form-select-sm mb-2" id="historyCollectionFilter"></select>
+					<label class="form-label small" for="historyActionFilter">Action</label>
+					<select class="form-select form-select-sm mb-2" id="historyActionFilter"></select>
+					<div class="row g-2 mb-2">
+						<div class="col-6">
+							<label class="form-label small" for="historyFromFilter">From</label>
+							<input class="form-control form-control-sm" id="historyFromFilter" type="date">
+						</div>
+						<div class="col-6">
+							<label class="form-label small" for="historyToFilter">To</label>
+							<input class="form-control form-control-sm" id="historyToFilter" type="date">
+						</div>
+					</div>
+					<label class="form-label small" for="historyTextFilter">Search</label>
+					<input class="form-control form-control-sm mb-2" id="historyTextFilter" type="search">
+					<div class="d-grid gap-2">
+						<button class="btn btn-sm btn-secondary" id="historyClearFilters" type="button">Clear filters</button>
+						<button class="btn btn-sm btn-outline-danger" id="historyClearLog" type="button">Clear log (testing)</button>
+					</div>
+				</div>
+
+				<div class="history-side-section" id="historyRecentPanel">
+					<h3 class="h5 mb-3">Recent changes</h3>
+					<label class="form-label small" for="historyRecentCollection">Collection</label>
+					<select class="form-select form-select-sm mb-3" id="historyRecentCollection"></select>
+					<div class="alert alert-dark small mb-0">
+						Shows recent add, update, copy, restore, rollback, and disable activity for the selected collection. Use the main mod list to enable or disable mods.
+					</div>
+				</div>
+			</aside>
+		</div>
+	</main>
+
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/history_ui.js"></script>
 </body>
 </html>

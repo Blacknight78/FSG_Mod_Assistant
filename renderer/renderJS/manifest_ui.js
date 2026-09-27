@@ -5,7 +5,7 @@
    (c) 2022-present FSG Modding.  MIT License. */
 // MARK: COLLECTION MANIFEST UI
 
-/* global DATA, MA */
+/* global DATA, MA, bootstrap */
 
 let manifestResolvedMods = []
 let manifestViewFilter = 'all'
@@ -322,6 +322,9 @@ async function installManifestSelection() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+	for ( const tooltip of document.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		bootstrap.Tooltip.getOrCreateInstance(tooltip)
+	}
 	MA.byIdEventIfExists('manifestMenuButton', () => window.manifest_IPC.dispatchModManagement())
 	MA.byIdEventIfExists('manifestExportFile', () => exportManifest('file'))
 	MA.byIdEventIfExists('manifestCopyLink', () => exportManifest('clipboard'))

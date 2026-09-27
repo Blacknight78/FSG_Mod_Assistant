@@ -10,6 +10,8 @@
 const startTime  = Date.now()
 const testList   = [
 	'csvcheck',     // CSV Reader (collection compare)
+	'drivecollectionlink', // Google Drive collection short links
+	'manifestshare', // Collection manifest share links
 	'sourcecode',   // ESLint Source code
 	'sourcehtml',   // HTML Source
 	'translations', // Translation file check
