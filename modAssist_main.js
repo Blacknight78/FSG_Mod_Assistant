@@ -938,15 +938,21 @@ ipcMain.on('context:mod', async (event, modID, modIDs) => {
 						sendMainLoading('current', 1)
 						serveIPC.windowLib.sendToValidWindow('vault', 'vault:refresh')
 						sendMainLoading('hide')
-						serveIPC.windowLib.doDialogBox('main', {
+						await requestAppConfirm({
+							hideCancel : true,
 							message : `Scanned ${result.modName} into the Vault.\n\nCollection: ${result.collectionName}\nVault file: ${result.fileName}`,
-							type    : 'info',
+							okClass : 'btn-primary',
+							okText   : 'OK',
+							title    : 'FSG Mod Assistant',
 						})
 					} catch (err) {
 						sendMainLoading('hide')
-						serveIPC.windowLib.doDialogBox('main', {
+						await requestAppConfirm({
+							hideCancel : true,
 							message : `Vault scan failed for ${thisMod.fileDetail.shortName}.\n\n${err.message}`,
-							type    : 'warning',
+							okClass : 'btn-warning',
+							okText   : 'OK',
+							title    : 'FSG Mod Assistant',
 						})
 					} finally {
 						sendMainLoading('hide')
@@ -1175,9 +1181,19 @@ ipcMain.on('dispatch:vault', () => {
 })
 ipcMain.on('dispatch:vault_update', () => { serveIPC.windowLib.createNamedWindow('vault_update') })
 ipcMain.on('dispatch:backups', () => { serveIPC.windowLib.createNamedWindow('backups') })
-ipcMain.on('dispatch:recent_changes', () => { serveIPC.windowLib.createNamedWindow('recent_changes') })
+ipcMain.on('dispatch:recent_changes', () => { serveIPC.windowLib.createNamedWindow('history', { mode : 'recent' }) })
 ipcMain.on('dispatch:manifest', () => { serveIPC.windowLib.createNamedWindow('manifest') })
-ipcMain.on('dispatch:mod_management', () => { serveIPC.windowLib.createNamedWindow('mod_management') })
+ipcMain.on('dispatch:mod_management', (event) => {
+	const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+	if ( sourceWindow !== null && sourceWindow !== serveIPC.windowLib.win.main && !sourceWindow.isDestroyed() ) {
+		sourceWindow.close()
+	}
+	if ( serveIPC.windowLib.isValid('main') ) {
+		if ( serveIPC.windowLib.win.main.isMinimized() ) { serveIPC.windowLib.win.main.restore() }
+		serveIPC.windowLib.win.main.show()
+		serveIPC.windowLib.win.main.focus()
+	}
+})
 ipcMain.on('dispatch:update_candidates', () => { serveIPC.windowLib.createNamedWindow('update') })
 
 
@@ -2893,17 +2909,41 @@ let modLibraryIndexWarmupStarted = false
 let modLibraryIndexEntrySnapshot = null
 let modLibraryIndexIdleQueue = []
 let modLibraryIndexIdleTimer = null
+let modLibraryIndexCleanupTimer = null
+let modLibraryIndexRevision = 0
 let modFolderScanStartedAt = null
 
-function invalidateModLibrarySummary() {
+function scheduleModLibraryIndexCleanup(delay = 30000) {
+	clearTimeout(modLibraryIndexCleanupTimer)
+	modLibraryIndexCleanupTimer = setTimeout(() => {
+		modLibraryIndexCleanupTimer = null
+		const startedAt = performance.now()
+		fsPromise.rm(modLibraryIndexFolder(), { force : true, recursive : true })
+			.then(() => {
+				serveIPC.log.info('performance', `Deferred Vault index cleanup took ${(performance.now() - startedAt).toFixed(1)} ms`)
+			})
+			.catch((err) => {
+				serveIPC.log.warning('performance', 'Deferred Vault index cleanup failed', err)
+			})
+	}, delay)
+}
+
+function invalidateModLibrarySummary({ deferDiskCleanup = false } = {}) {
 	modLibrarySummaryCache.clear()
 	vaultDetailCache.clear()
 	modLibraryIndexWarmupStarted = false
+	modLibraryIndexRevision++
 	modLibraryIndexEntrySnapshot = null
 	modLibraryIndexIdleQueue = []
 	clearTimeout(modLibraryIndexIdleTimer)
 	modLibraryIndexIdleTimer = null
-	fs.rmSync(modLibraryIndexFolder(), { force : true, recursive : true })
+	if ( deferDiskCleanup ) {
+		scheduleModLibraryIndexCleanup()
+	} else {
+		clearTimeout(modLibraryIndexCleanupTimer)
+		modLibraryIndexCleanupTimer = null
+		fs.rmSync(modLibraryIndexFolder(), { force : true, recursive : true })
+	}
 }
 
 async function wipeModLibraryForTesting() {
@@ -3395,18 +3435,18 @@ async function registerModLibraryFileImpl(filePath, metadata = {}, suppliedTimin
 	}
 }
 
-function findCachedModLibraryFile(metadata = {}) {
+function findCachedModLibraryFile(metadata = {}, recordsOverride = null) {
 	const startedAt = performance.now()
-	try { return findCachedModLibraryMatch(metadata) } finally {
+	try { return findCachedModLibraryMatch(metadata, recordsOverride) } finally {
 		addPerformanceStat(modUpdateDiagnostics.getStore(), 'cacheLookupMS', performance.now() - startedAt)
 	}
 }
 
-function findCachedModLibraryMatch(metadata = {}) {
+function findCachedModLibraryMatch(metadata = {}, recordsOverride = null) {
 	const targetModName = normalizeVaultModName(metadata.modName)
 	if ( targetModName === '' || typeof metadata.version !== 'string' ) { return null }
 
-	const records = getStoredModLibraryRecords()
+	const records = typeof recordsOverride === 'object' && recordsOverride !== null ? recordsOverride : getStoredModLibraryRecords()
 	return Object.values(records).find((record) => {
 		if ( typeof record?.filePath !== 'string' ) { return false }
 		if ( !normalizedVaultModNames(record.modNames).includes(targetModName) ) { return false }
@@ -3884,6 +3924,7 @@ function modLibrarySummaryForEntries(entries) {
 function writeModLibraryIndex(gameKey, summary) {
 	fs.mkdirSync(modLibraryIndexFolder(), { recursive : true })
 	fs.writeFileSync(modLibraryIndexFilePath(gameKey), JSON.stringify({
+		revision : modLibraryIndexRevision,
 		schema  : MOD_LIBRARY_INDEX_SCHEMA,
 		summary,
 		writtenAt : new Date().toISOString(),
@@ -3893,7 +3934,12 @@ function writeModLibraryIndex(gameKey, summary) {
 function readModLibraryIndex(gameKey) {
 	try {
 		const payload = JSON.parse(fs.readFileSync(modLibraryIndexFilePath(gameKey)))
-		if ( payload?.schema !== MOD_LIBRARY_INDEX_SCHEMA || typeof payload?.summary !== 'object' || payload.summary === null ) {
+		if (
+			payload?.schema !== MOD_LIBRARY_INDEX_SCHEMA ||
+			payload?.revision !== modLibraryIndexRevision ||
+			typeof payload?.summary !== 'object' ||
+			payload.summary === null
+		) {
 			return null
 		}
 		return payload.summary
@@ -4886,7 +4932,7 @@ async function refreshVaultModHubMetadataImpl(progressCallback = null) {
 	}
 }
 
-async function backupModToLibrary(filePath, metadata = {}) {
+async function backupModToLibrary(filePath, metadata = {}, options = {}) {
 	if ( !fs.existsSync(filePath) ) {
 		return {
 			backupHash : null,
@@ -4903,7 +4949,7 @@ async function backupModToLibrary(filePath, metadata = {}) {
 		source         : metadata.source ?? 'Collection',
 		sourceURL      : metadata.sourceURL ?? null,
 		version        : metadata.version,
-	})
+	}, null, options)
 
 	return {
 		backupHash : libraryRecord.hash,
@@ -5014,12 +5060,12 @@ function getCollectionModRecord(collectionKey, modName) {
 	return Object.values(collection.mods).find((mod) => mod?.fileDetail?.shortName === modName) ?? null
 }
 
-async function downloadUpdateToVault(download) {
-	return withVaultMutation(() => measureModUpdate('vault', download, () => storeDownloadedVaultUpdate(download)))
+async function downloadUpdateToVault(download, options = {}) {
+	return withVaultMutation(() => measureModUpdate('vault', download, () => storeDownloadedVaultUpdate(download, options)))
 }
 
 // eslint-disable-next-line complexity
-async function storeDownloadedVaultUpdate(download) {
+async function storeDownloadedVaultUpdate(download, options = {}) {
 	if (
 		typeof download?.fileName !== 'string' ||
 		typeof download?.modName !== 'string' ||
@@ -5033,11 +5079,16 @@ async function storeDownloadedVaultUpdate(download) {
 	const requestedModName = normalizeVaultModName(download.modName)
 	const tempFolder = path.join(app.getPath('temp'), 'fsg-mod-assistant-vault-updates')
 	const tempPath = path.join(tempFolder, `${Date.now()}-${assetName}`)
+	const registerOptions = {
+		deferInvalidate : options.deferInvalidate === true,
+		deferStore      : options.deferStore === true,
+		records         : typeof options.records === 'object' && options.records !== null ? options.records : undefined,
+	}
 	let cachedLibrary = findCachedModLibraryFile({
 		modName : requestedModName || download.modName,
 		sourceURL : download.sourceURL ?? null,
 		version : download.version,
-	})
+	}, registerOptions.records ?? null)
 
 	try {
 		if ( cachedLibrary !== null ) {
@@ -5058,7 +5109,7 @@ async function storeDownloadedVaultUpdate(download) {
 					source         : sourceName,
 					sourceURL      : download.sourceURL ?? download.url,
 					version        : integrity.version ?? download.version,
-				})
+				}, null, registerOptions)
 				return {
 					fileName : record.fileName ?? cachedLibrary.fileName ?? assetName,
 					hash     : record.hash ?? cachedLibrary.hash,
@@ -5096,7 +5147,7 @@ async function storeDownloadedVaultUpdate(download) {
 			source         : sourceName,
 			sourceURL      : download.sourceURL ?? download.url,
 			version        : integrity.version ?? download.version,
-		})
+		}, null, registerOptions)
 		return {
 			fileName : record.fileName ?? canonicalFileName,
 			hash     : record.hash,
@@ -5110,12 +5161,12 @@ async function storeDownloadedVaultUpdate(download) {
 	}
 }
 
-async function downloadAndApplyUpdate(download) {
-	return withVaultMutation(() => measureModUpdate('collection', download, () => applyDownloadedCollectionUpdate(download)))
+async function downloadToVaultAndApplyUpdate(download) {
+	return withVaultMutation(() => measureModUpdate('collection-vault-first', download, () => applyVaultFirstCollectionUpdate(download)))
 }
 
 // eslint-disable-next-line complexity
-async function applyDownloadedCollectionUpdate(download) {
+async function applyVaultFirstCollectionUpdate(download) {
 	if (
 		typeof download?.collectionKey !== 'string' ||
 		typeof download?.fileName !== 'string' ||
@@ -5130,83 +5181,65 @@ async function applyDownloadedCollectionUpdate(download) {
 	if ( modRecord.fileDetail.isFolder ) { throw new Error(`Folder mods cannot be replaced yet: ${download.modName}`) }
 
 	const collectionName = serveIPC.modCollect.mapCollectionToName(download.collectionKey) ?? download.collectionName ?? download.collectionKey
-	const collectionFolder = serveIPC.modCollect.mapCollectionToFolder(download.collectionKey)
-	const targetPath = path.join(collectionFolder, path.basename(modRecord.fileDetail.fullPath))
-	const tempFolder = path.join(app.getPath('temp'), 'fsg-mod-assistant-update-downloads', safeDownloadFolderName(collectionName))
-	const tempPath = path.join(tempFolder, `${Date.now()}-${safeDownloadFileName(download.fileName)}`)
-	const sourceName = updateSourceTypeLabel(download.sourceType)
+	const targetPath = path.join(serveIPC.modCollect.mapCollectionToFolder(download.collectionKey), path.basename(modRecord.fileDetail.fullPath))
+	const records = getStoredModLibraryRecords()
+	const deferredRegisterOptions = {
+		deferInvalidate : true,
+		deferStore      : true,
+		records,
+	}
+	const vaultResult = await measureModUpdatePhase('vaultStoreMS', () => downloadUpdateToVault(download, deferredRegisterOptions))
+	if ( typeof vaultResult?.hash !== 'string' || vaultResult.hash === '' ) {
+		throw new Error('The update was not stored in the Vault.')
+	}
 
-	try {
-		let cachedLibrary = findCachedModLibraryFile({
-			modName   : download.modName,
-			sourceURL : download.sourceURL ?? null,
-			version   : download.version,
-		})
-		if ( cachedLibrary !== null ) {
-			try {
-				validateModZipIntegrity(cachedLibrary.filePath, {
-					expectedVersion : download.version,
-					label           : `${sourceName} cached ZIP`,
-				})
-			} catch {
-				cachedLibrary = null
-			}
-		}
-		let downloadLibrary = cachedLibrary
-		if ( downloadLibrary === null ) {
-			await downloadGitHubZipToPath(download, tempPath)
-			const integrity = validateModZipIntegrity(tempPath, {
-				expectedVersion : download.version,
-				label           : `${sourceName} download`,
-			})
-			// This value belongs only to this update; the timing callback below does not mutate it.
-			// eslint-disable-next-line require-atomic-updates
-			downloadLibrary = await registerModLibraryFile(tempPath, {
-				collectionName,
-				fileName  : download.fileName,
-				author    : integrity.author,
-				modHubID  : download.modHubID ?? null,
-				modHubScreenshots : download.modHubScreenshots ?? [],
-				modHubVersion : download.sourceType === 'modhub' ? download.version : null,
-				modName   : download.modName,
-				source    : sourceName,
-				sourceURL : download.sourceURL ?? null,
-				version   : download.version,
-			})
-		}
-		const sourceIntegrity = validateModZipIntegrity(downloadLibrary.libraryPath ?? downloadLibrary.filePath, {
-			expectedVersion : download.version,
-			label           : `${sourceName} update ZIP`,
-		})
-		const backupResult = await measureModUpdatePhase('backupMS', () => backupModToLibrary(targetPath, {
-			collectionName,
-			fileName  : path.basename(targetPath),
-			author    : modRecord.modDesc.author,
-			modName   : download.modName,
-			source    : 'Collection',
-			sourceURL : download.sourceURL ?? null,
-			version   : modRecord.modDesc.version,
-		}))
-		await measureModUpdatePhase('installCopyMS', () => fsPromise.copyFile(downloadLibrary.libraryPath ?? downloadLibrary.filePath, targetPath))
-		const targetIntegrity = validateModZipIntegrity(targetPath, {
-			expectedVersion : sourceIntegrity.version,
-			label           : 'Updated collection ZIP',
-		})
+	const vaultRecord = records[vaultResult.hash]
+	if ( typeof vaultRecord === 'undefined' ) { throw new Error('Stored Vault update record could not be found.') }
+	if ( typeof vaultRecord.filePath !== 'string' || !fs.existsSync(vaultRecord.filePath) ) { throw new Error('Stored Vault update ZIP could not be found on disk.') }
 
-		return {
-			backupHash : backupResult.backupHash,
-			backupPath : backupResult.backupPath,
-			collectionName,
-			currentHash : downloadLibrary.hash,
-			currentLibraryPath : downloadLibrary.libraryPath ?? downloadLibrary.filePath,
-			integrityVersion : targetIntegrity.version,
-			previousVersion : modRecord.modDesc.version,
-			targetPath,
-			tempPath,
-			usedCache : cachedLibrary !== null,
-		}
-	} finally {
-		await fsPromise.rm(tempPath, { force : true }).catch(() => {})
+	const sourceIntegrity = validateModZipIntegrity(vaultRecord.filePath, {
+		expectedVersion : download.version,
+		label           : 'Vault update ZIP',
+	})
+	const backupResult = await measureModUpdatePhase('backupMS', () => backupModToLibrary(targetPath, {
+		collectionName,
+		fileName  : path.basename(targetPath),
+		author    : modRecord.modDesc.author,
+		modName   : download.modName,
+		source    : 'Collection',
+		sourceURL : download.sourceURL ?? null,
+		version   : modRecord.modDesc.version,
+	}, deferredRegisterOptions))
+	await measureModUpdatePhase('installCopyMS', () => fsPromise.copyFile(vaultRecord.filePath, targetPath))
+	const targetIntegrity = validateModZipIntegrity(targetPath, {
+		expectedVersion : sourceIntegrity.version,
+		label           : 'Updated collection ZIP',
+	})
+
+	// Vault mutations are serialized, so this batched records object is still current here.
+	// eslint-disable-next-line require-atomic-updates
+	records[vaultResult.hash] = {
+		...vaultRecord,
+		collections : uniqueCleanArray([...(vaultRecord.collections ?? []), collectionName]),
+		updatedAt   : new Date().toISOString(),
+	}
+	await measureModUpdatePhase('finalRecordStoreMS', () => serveIPC.storeLibrary.set('records', records))
+	await measureModUpdatePhase('finalInvalidateMS', () => invalidateModLibrarySummary({ deferDiskCleanup : true }))
+
+	return {
+		backupHash : backupResult.backupHash,
+		backupPath : backupResult.backupPath,
+		collectionName,
+		currentHash : vaultResult.hash,
+		currentLibraryPath : vaultRecord.filePath,
+		fileName : path.basename(targetPath),
+		integrityVersion : targetIntegrity.version,
+		previousVersion : modRecord.modDesc.version,
+		replacedExisting : true,
+		sourceLabel : updateSourceTypeLabel(download.sourceType),
+		targetPath,
+		vaultFileName : vaultRecord.fileName ?? vaultResult.fileName ?? download.fileName,
+		vaultReused : vaultResult.reused === true,
 	}
 }
 
@@ -5620,6 +5653,7 @@ function updateSourceTypeLabel(sourceType) {
 const COLLECTION_MANIFEST_SCHEMA = 'fsg-mod-assistant.collection'
 const COLLECTION_MANIFEST_VERSION = 1
 const COLLECTION_SHARE_PREFIX = 'fsgma://collection/v1/'
+const COLLECTION_SHARE_PREFIX_V2 = 'fsgma://collection/v2/'
 const VAULT_RECOVERY_MANIFEST_SCHEMA = 'fsg-mod-assistant.vault-recovery'
 const VAULT_RECOVERY_MANIFEST_VERSION = 1
 
@@ -5703,15 +5737,28 @@ function createVaultRecoveryManifest() {
 	}
 }
 
-function vaultRecoveryManifestPath() {
-	return path.join(modLibraryFolder(), 'vault-recovery-manifest.json')
+function vaultRecoveryManifestDefaultPath() {
+	const stamp = new Date().toISOString().slice(0, 10)
+	return path.join(serveIPC.storeSet.get('vaultModManifestExportFolder', modLibraryFolder()), `vault-mod-manifest-${stamp}.json`)
 }
 
-async function exportVaultRecoveryManifest() {
+async function exportVaultRecoveryManifest(event) {
 	const manifest = createVaultRecoveryManifest()
-	const filePath = vaultRecoveryManifestPath()
+	const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+		defaultPath : vaultRecoveryManifestDefaultPath(),
+		filters : [
+			{ extensions : ['json'], name : 'Mod Manifest' },
+			{ extensions : ['*'], name : 'All files' },
+		],
+		title : 'Export Mod Manifest',
+	})
+	if ( result.canceled || typeof result.filePath !== 'string' ) {
+		return { cancelled : true, ok : true }
+	}
+	const filePath = result.filePath
 	await fsPromise.mkdir(path.dirname(filePath), { recursive : true })
 	await fsPromise.writeFile(filePath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+	serveIPC.storeSet.set('vaultModManifestExportFolder', path.dirname(filePath))
 	return {
 		filePath,
 		modCount : manifest.modCount,
@@ -5722,10 +5769,10 @@ async function exportVaultRecoveryManifest() {
 
 function vaultRecoveryManifestURLs(manifest) {
 	if ( manifest?.schema !== VAULT_RECOVERY_MANIFEST_SCHEMA || manifest?.version !== VAULT_RECOVERY_MANIFEST_VERSION ) {
-		throw new Error('This is not a supported FSG Mod Assistant Vault recovery manifest.')
+		throw new Error('This is not a supported FSG Mod Assistant Mod Manifest.')
 	}
-	if ( !Array.isArray(manifest.mods) ) { throw new Error('The Vault recovery manifest has no readable mod list.') }
-	if ( manifest.mods.length > 10000 ) { throw new Error('The Vault recovery manifest contains too many entries.') }
+	if ( !Array.isArray(manifest.mods) ) { throw new Error('The Mod Manifest has no readable mod list.') }
+	if ( manifest.mods.length > 10000 ) { throw new Error('The Mod Manifest contains too many entries.') }
 
 	const urls = new Set()
 	let skipped = 0
@@ -5754,20 +5801,31 @@ function vaultRecoveryManifestURLs(manifest) {
 async function importVaultRecoveryManifest(event) {
 	if ( directVaultImports.busy ) { throw new Error('An import is already running.') }
 	const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
-		defaultPath : modLibraryFolder(),
+		defaultPath : serveIPC.storeSet.get('vaultModManifestImportFolder', modLibraryFolder()),
 		filters : [
-			{ extensions : ['json'], name : 'Vault recovery manifest' },
+			{ extensions : ['json'], name : 'Mod Manifest' },
 			{ extensions : ['*'], name : 'All files' },
 		],
 		properties : ['openFile'],
-		title      : 'Import Vault recovery manifest',
+		title      : 'Import Mod Manifest',
 	})
 	if ( result.canceled ) { return null }
 	const filePath = result.filePaths[0]
+	serveIPC.storeSet.set('vaultModManifestImportFolder', path.dirname(filePath))
 	const manifest = JSON.parse(await fsPromise.readFile(filePath))
 	const { skipped, urls } = vaultRecoveryManifestURLs(manifest)
-	if ( urls.length === 0 ) { throw new Error('No supported ModHub or GitHub source URLs were found in this manifest.') }
-	const review = await directVaultImports.resolve(event.sender.id, urls.join('\n'), directImportProgress(event))
+	if ( urls.length === 0 ) {
+		throw new Error('The Mod Manifest was loaded, but no supported ModHub or GitHub source URLs were found. There is nothing this screen can automatically redownload.')
+	}
+	directImportProgress(event)({
+		completed : 0,
+		label     : `Loaded Mod Manifest with ${manifest.modCount ?? manifest.mods.length} Vault mod entries. Resolving ${urls.length} supported source URL${urls.length === 1 ? '' : 's'}...`,
+		total     : urls.length,
+	})
+	const review = await directVaultImports.resolve(event.sender.id, urls.join('\n'), directImportProgress(event), {
+		maxLinks    : 10000,
+		sourceLabel : 'Mod Manifest sources',
+	})
 	return {
 		...review,
 		filePath,
@@ -6749,14 +6807,92 @@ async function disableRecentCollectionMods({ collectionKey, items = [] } = {}) {
 	}
 }
 
+function compactCollectionManifestSource(source) {
+	if ( source?.type === 'modhub' && Number.isFinite(Number(source.id)) ) { return ['m', Number(source.id)] }
+	if ( source?.type === 'github' && typeof source.url === 'string' ) { return ['g', source.url] }
+	if ( source?.type === 'itch' && typeof source.url === 'string' ) { return ['i', source.url] }
+	if ( source?.type === 'kingmods' && typeof source.url === 'string' ) { return ['k', source.url] }
+	if ( source?.type === 'manual' && typeof source.url === 'string' ) { return ['x', source.url] }
+	return null
+}
+
+function expandCollectionManifestSource(source) {
+	if ( !Array.isArray(source) ) { return null }
+	const [type, value] = source
+	if ( type === 'm' && Number.isFinite(Number(value)) ) {
+		return { id : Number(value), type : 'modhub', url : funcLib.general.doModHub(Number(value)) }
+	}
+	if ( type === 'g' && typeof value === 'string' ) { return { type : 'github', url : value } }
+	if ( type === 'i' && typeof value === 'string' ) { return { type : 'itch', url : value } }
+	if ( type === 'k' && typeof value === 'string' ) { return { type : 'kingmods', url : value } }
+	if ( type === 'x' && typeof value === 'string' ) { return { type : 'manual', url : value } }
+	return null
+}
+
+function compactCollectionManifestMod(mod) {
+	const fileName = mod.fileName === `${mod.name}.zip` ? null : mod.fileName
+	const sources = (Array.isArray(mod.sources) ? mod.sources : [])
+		.map((source) => compactCollectionManifestSource(source))
+		.filter((source) => source !== null)
+	const compact = [mod.name, fileName, mod.version ?? null, sources]
+	while ( compact.length > 1 && (compact.at(-1) === null || (Array.isArray(compact.at(-1)) && compact.at(-1).length === 0)) ) {
+		compact.pop()
+	}
+	return compact
+}
+
+function expandCompactCollectionManifest(payload) {
+	if ( typeof payload !== 'object' || payload === null || !Array.isArray(payload.m) ) {
+		throw new Error('This is not a supported FSG Mod Assistant collection manifest.')
+	}
+	return validateCollectionManifest({
+		collection : { name : typeof payload.c === 'string' ? payload.c : 'Shared collection' },
+		exportedAt : typeof payload.e === 'string' ? payload.e : null,
+		gameVersion : typeof payload.g === 'string' ? payload.g : null,
+		mods : payload.m.map((mod) => {
+			if ( !Array.isArray(mod) ) { return {} }
+			const [name, fileName, version, sources] = mod
+			return {
+				fileName : typeof fileName === 'string' ? fileName : `${name}.zip`,
+				name,
+				sources : (Array.isArray(sources) ? sources : [])
+					.map((source) => expandCollectionManifestSource(source))
+					.filter((source) => source !== null),
+				version : typeof version === 'string' ? version : null,
+			}
+		}),
+		schema  : COLLECTION_MANIFEST_SCHEMA,
+		version : COLLECTION_MANIFEST_VERSION,
+	})
+}
+
+function compactCollectionManifest(manifest) {
+	return {
+		c : manifest.collection?.name ?? 'Shared collection',
+		e : manifest.exportedAt ?? null,
+		g : manifest.gameVersion ?? null,
+		m : manifest.mods.map((mod) => compactCollectionManifestMod(mod)),
+	}
+}
+
 function collectionManifestShareCode(manifest) {
-	const compressed = zlib.gzipSync(Buffer.from(JSON.stringify(manifest)), { level : 9 })
-	return `${COLLECTION_SHARE_PREFIX}${compressed.toString('base64url')}`
+	const compressed = zlib.brotliCompressSync(Buffer.from(JSON.stringify(compactCollectionManifest(manifest))), {
+		params : { [zlib.constants.BROTLI_PARAM_QUALITY] : 11 },
+	})
+	return `${COLLECTION_SHARE_PREFIX_V2}${compressed.toString('base64url')}`
 }
 
 function parseCollectionManifestText(rawText) {
 	if ( typeof rawText !== 'string' || rawText.trim() === '' ) { throw new Error('No collection manifest was supplied.') }
 	const cleanText = rawText.trim()
+	if ( cleanText.startsWith(COLLECTION_SHARE_PREFIX_V2) ) {
+		const encoded = cleanText.slice(COLLECTION_SHARE_PREFIX_V2.length)
+		try {
+			return expandCompactCollectionManifest(JSON.parse(zlib.brotliDecompressSync(Buffer.from(encoded, 'base64url')).toString('utf8')))
+		} catch {
+			throw new Error('The copied collection link is damaged or incomplete.')
+		}
+	}
 	if ( cleanText.startsWith(COLLECTION_SHARE_PREFIX) ) {
 		const encoded = cleanText.slice(COLLECTION_SHARE_PREFIX.length)
 		try {
@@ -7014,7 +7150,7 @@ ipcMain.handle('input:restore', (_, s, v) => funcLib.inputManage.restore(s, v))
 
 // MARK: version resolve
 ipcMain.on('dispatch:version', () => { serveIPC.windowLib.createNamedWindow('version') })
-ipcMain.on('dispatch:update', () => { serveIPC.windowLib.createNamedWindow('mod_management') })
+ipcMain.on('dispatch:update', () => { serveIPC.windowLib.createNamedWindow('update') })
 ipcMain.handle('update:list', async () => {
 	if ( serveIPC.isProcessing ) {
 		await new Promise((resolve) => { modQueueRunner.once('process-mods-done', resolve) })
@@ -7451,9 +7587,9 @@ ipcMain.handle('vault:copyToCollection', async (_, payload) => {
 		return { ok : false, error : err.message }
 	}
 })
-ipcMain.handle('vault:exportRecoveryManifest', async () => {
+ipcMain.handle('vault:exportRecoveryManifest', async (event) => {
 	try {
-		return await exportVaultRecoveryManifest()
+		return await exportVaultRecoveryManifest(event)
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
@@ -7636,6 +7772,28 @@ ipcMain.handle('update:rollbackLatest', async (_, update) => {
 		return { ok : false, error : err.message }
 	}
 })
+ipcMain.handle('update:vaultAvailability', (_, updates) => {
+	try {
+		if ( !Array.isArray(updates) ) { return [] }
+		return updates.map((update) => {
+			const cached = findCachedModLibraryFile({
+				modName   : update?.modName,
+				sourceURL : update?.sourceURL ?? null,
+				version   : update?.version,
+			})
+			return {
+				hash      : cached?.hash ?? null,
+				inVault  : cached !== null,
+				modName   : typeof update?.modName === 'string' ? update.modName : '',
+				sourceType : update?.sourceType ?? null,
+				vaultFileName : cached?.fileName ?? null,
+				version   : typeof update?.version === 'string' ? update.version : '',
+			}
+		})
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
 ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 	const results = []
 	let failedDownloadIndex = null
@@ -7650,8 +7808,8 @@ ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 		const updateCount = await downloads.reduce(async (previousCount, download) => {
 			const count = await previousCount
 			failedDownloadIndex = count
-			const updateResult = await downloadAndApplyUpdate(download)
-			results.push({ ...download, collectionName : updateResult.collectionName, ok : true })
+			const updateResult = await downloadToVaultAndApplyUpdate(download)
+			results.push({ ...download, collectionName : updateResult.collectionName, ok : true, vaultFileName : updateResult.vaultFileName, vaultFirst : true })
 			failedDownloadIndex = null
 			addCollectionHistoryEntry({
 				action           : 'update_applied',
@@ -7661,13 +7819,13 @@ ipcMain.handle('update:downloadApplySelected', async (_, downloads) => {
 				currentHash      : updateResult.currentHash,
 				currentLibraryPath : updateResult.currentLibraryPath,
 				currentVersion   : download.version ?? null,
-				fileName         : download.fileName,
+				fileName         : updateResult.fileName ?? download.fileName,
 				integrityChecked : true,
 				integrityVersion : updateResult.integrityVersion ?? download.version ?? null,
 				modName          : download.modName,
 				previousVersion  : updateResult.previousVersion ?? null,
-				replacedExisting : updateResult.backupPath !== null,
-				source           : updateResult.usedCache ? `${updateSourceTypeLabel(download.sourceType)} cache` : updateSourceTypeLabel(download.sourceType),
+				replacedExisting : updateResult.replacedExisting ?? updateResult.backupPath !== null,
+				source           : `Vault (${updateResult.sourceLabel ?? updateSourceTypeLabel(download.sourceType)}${updateResult.vaultReused === true ? ' cached' : ''})`,
 				sourceURL        : download.sourceURL,
 				stagedPath       : null,
 				targetPath       : updateResult.targetPath,

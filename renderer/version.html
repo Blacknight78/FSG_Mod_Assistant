@@ -12,6 +12,7 @@
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
 	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/version_ui.js"></script>
@@ -67,7 +68,10 @@
 		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
 			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
 				<div class="col-7 pt-2">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 				</div>
 				<div class="col-5 pt-4 mt-3">
 					<i18n-text class="badge bg-primary mx-auto w-100 d-block rounded-3 h4 fs-5" data-key="version_check_window"></i18n-text>

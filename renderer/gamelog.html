@@ -12,6 +12,7 @@
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
 	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/gamelog_ui.js"></script>
@@ -80,7 +81,10 @@
 		<div class="border-bottom bg-body ">
 			<div class="row bg-body border-bottom">
 				<div class="col-12 pt-1" style="-webkit-app-region: drag;">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 					<span class="ps-4 small fst-italic" id="gameLogPath"></span>
 				</div>
 				<div class="m-0 px-0 rounded-end-0 btn-group-win_ui d-flex justify-content-end bg-transparent" style="position:absolute; -webkit-app-region: no-drag;">

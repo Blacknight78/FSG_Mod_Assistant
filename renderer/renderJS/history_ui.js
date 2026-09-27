@@ -4,11 +4,19 @@
    |__|_|__||_____|_____|___|___||_____|_____||__||_____||____|
    (c) 2022-present FSG Modding.  MIT License. */
 
-/* global DATA, I18N, MA */
+/* global I18N, MA, bootstrap */
 
-let historyEntries = []
+const historyState = {
+	collections    : [],
+	entries        : [],
+	isBusy         : false,
+	mode           : 'history',
+	recentChanges  : [],
+}
 
 const fallbackLabels = {
+	history_action_collection_backup_restored : 'Restored from backup manifest',
+	history_action_collection_mod_disabled    : 'Disabled for testing',
 	history_action_manifest_installed : 'Shared collection mod installed',
 	history_action_update_applied     : 'Update applied',
 	history_action_update_rolled_back : 'Update rolled back',
@@ -16,9 +24,13 @@ const fallbackLabels = {
 	history_action_vault_cleanup_deleted : 'Vault cleanup deleted',
 	history_action_vault_copied       : 'Copied from vault',
 	history_backup_saved              : 'Backup saved',
+	history_empty                     : 'No collection history has been recorded yet.',
+	history_entries_found             : 'history entrie(s) found.',
 	history_filter_all_actions        : 'All actions',
 	history_filter_all_collections    : 'All collections',
+	history_filter_no_matches         : 'No history entries match the current filters.',
 	history_integrity_checked         : 'ZIP checked',
+	history_replaced_existing         : 'replaced existing copy',
 	history_rollback_button           : 'Rollback to this version',
 	history_rollback_failed           : 'Rollback failed:',
 	history_rollback_restored         : 'Rollback restored.',
@@ -27,7 +39,7 @@ const fallbackLabels = {
 
 function formatTimestamp(timestamp) {
 	const date = new Date(timestamp)
-	if ( Number.isNaN(date.getTime()) ) { return DATA.escapeSpecial(timestamp ?? '') }
+	if ( Number.isNaN(date.getTime()) ) { return timestamp ?? '' }
 	return date.toLocaleString()
 }
 
@@ -47,7 +59,43 @@ function plainLabel(key) {
 	return label
 }
 
+function setText(id, text) {
+	const node = MA.byId(id)
+	if ( node !== null ) { node.textContent = text }
+}
+
+function setStatus(message, type = 'secondary') {
+	const node = MA.byId('historyStatus')
+	if ( node === null ) { return }
+	node.className = `alert history-status-card alert-${type} mb-3`
+	node.textContent = message
+}
+
+function setControlDisabled(id, disabled) {
+	const node = MA.byId(id)
+	if ( node !== null ) { node.disabled = disabled }
+}
+
+function setBusy(isBusy) {
+	historyState.isBusy = isBusy
+	for ( const id of [
+		'historyRefresh',
+		'historyModeHistory',
+		'historyModeRecent',
+		'historyModeHistorySide',
+		'historyModeRecentSide',
+		'historyRecentCollection',
+		'historyClearFilters',
+		'historyClearLog',
+		'historyBackToUpdates',
+	] ) {
+		setControlDisabled(id, isBusy)
+	}
+}
+
 function actionLabelText(action) {
+	if ( action === 'collection_backup_restored' ) { return plainLabel('history_action_collection_backup_restored') }
+	if ( action === 'collection_mod_disabled' ) { return plainLabel('history_action_collection_mod_disabled') }
 	if ( action === 'update_applied' ) { return plainLabel('history_action_update_applied') }
 	if ( action === 'update_rolled_back' ) { return plainLabel('history_action_update_rolled_back') }
 	if ( action === 'update_staged' ) { return plainLabel('history_action_update_staged') }
@@ -57,12 +105,10 @@ function actionLabelText(action) {
 	return action ?? ''
 }
 
-function actionLabel(action) {
-	return DATA.escapeSpecial(actionLabelText(action))
-}
-
 function fillSelect(selectID, values, allLabelKey) {
 	const select = MA.byId(selectID)
+	if ( select === null ) { return }
+	const previousValue = select.value
 	select.innerHTML = ''
 
 	const allOption = document.createElement('option')
@@ -73,10 +119,41 @@ function fillSelect(selectID, values, allLabelKey) {
 	for ( const value of values ) {
 		const option = document.createElement('option')
 		option.value = value
-		option.textContent = actionLabelText(value)
-		if ( selectID === 'historyCollectionFilter' ) { option.textContent = value }
+		option.textContent = selectID === 'historyCollectionFilter' ? value : actionLabelText(value)
 		select.appendChild(option)
 	}
+
+	if ( previousValue !== '' && values.includes(previousValue) ) {
+		select.value = previousValue
+	}
+}
+
+function renderRecentCollectionSelect() {
+	const select = MA.byId('historyRecentCollection')
+	if ( select === null ) { return }
+	const previousValue = select.value
+	select.innerHTML = ''
+
+	if ( historyState.collections.length === 0 ) {
+		const option = document.createElement('option')
+		option.value = ''
+		option.textContent = 'No collections available'
+		select.appendChild(option)
+		select.disabled = true
+		return
+	}
+
+	for ( const collection of historyState.collections ) {
+		const option = document.createElement('option')
+		option.value = collection.key
+		option.textContent = collection.name
+		select.appendChild(option)
+	}
+
+	if ( previousValue !== '' && historyState.collections.some((collection) => collection.key === previousValue) ) {
+		select.value = previousValue
+	}
+	select.disabled = historyState.isBusy
 }
 
 function setupFilters(entries) {
@@ -87,11 +164,11 @@ function setupFilters(entries) {
 }
 
 function filterHistory(entries) {
-	const collectionFilter = MA.byId('historyCollectionFilter').value
-	const actionFilter = MA.byId('historyActionFilter').value
-	const fromFilter = MA.byId('historyFromFilter').value
-	const toFilter = MA.byId('historyToFilter').value
-	const textFilter = normalValue(MA.byId('historyTextFilter').value)
+	const collectionFilter = MA.byId('historyCollectionFilter')?.value ?? ''
+	const actionFilter = MA.byId('historyActionFilter')?.value ?? ''
+	const fromFilter = MA.byId('historyFromFilter')?.value ?? ''
+	const toFilter = MA.byId('historyToFilter')?.value ?? ''
+	const textFilter = normalValue(MA.byId('historyTextFilter')?.value)
 	const fromDate = fromFilter === '' ? null : new Date(`${fromFilter}T00:00:00`)
 	const toDate = toFilter === '' ? null : new Date(`${toFilter}T23:59:59`)
 
@@ -125,30 +202,39 @@ function filterHistory(entries) {
 	})
 }
 
-function renderFilteredHistory() {
-	renderHistory(filterHistory(historyEntries), historyEntries.length)
-}
-
 function canRollbackEntry(entry) {
 	return typeof entry?.backupPath === 'string' &&
 		typeof entry?.targetPath === 'string' &&
 		entry.action !== 'update_rolled_back'
 }
 
-function versionBadges(entry) {
-	const previousVersion = typeof entry?.previousVersion === 'string' && entry.previousVersion !== '' ?
-		entry.previousVersion :
-		null
-	const currentVersion = typeof entry?.currentVersion === 'string' && entry.currentVersion !== '' ?
-		entry.currentVersion :
-		null
+function appendBadge(container, text, className) {
+	if ( typeof text !== 'string' || text === '' ) { return }
+	const badge = document.createElement('span')
+	badge.className = `badge ${className} me-1 mb-1`
+	badge.textContent = text
+	container.appendChild(badge)
+}
 
-	if ( previousVersion === null && currentVersion === null ) { return '' }
+function appendPath(container, value) {
+	if ( typeof value !== 'string' || value === '' ) { return }
+	const pathNode = document.createElement('div')
+	pathNode.className = 'small mt-1 history-path user-select-text'
+	pathNode.textContent = value
+	container.appendChild(pathNode)
+}
+
+function appendVersionBadges(container, entry) {
+	const previousVersion = typeof entry?.previousVersion === 'string' && entry.previousVersion !== '' ? entry.previousVersion : null
+	const currentVersion = typeof entry?.currentVersion === 'string' && entry.currentVersion !== '' ? entry.currentVersion : null
+
+	if ( previousVersion === null && currentVersion === null ) { return }
 	if ( previousVersion !== null && currentVersion !== null && previousVersion !== currentVersion ) {
-		return `<span class="badge text-bg-secondary">From ${DATA.escapeSpecial(previousVersion)}</span> <span class="badge text-bg-info">To ${DATA.escapeSpecial(currentVersion)}</span>`
+		appendBadge(container, `From ${previousVersion}`, 'text-bg-secondary')
+		appendBadge(container, `To ${currentVersion}`, 'text-bg-info')
+		return
 	}
-
-	return `<span class="badge text-bg-info">Version ${DATA.escapeSpecial(currentVersion ?? previousVersion)}</span>`
+	appendBadge(container, `Version ${currentVersion ?? previousVersion}`, 'text-bg-info')
 }
 
 // eslint-disable-next-line complexity
@@ -172,6 +258,9 @@ function historyTimeline(entry) {
 		const previousText = previousVersion === null ? '' : `, replacing ${previousVersion}`
 		return `Installed shared collection mod ${modName} version ${currentVersion}${previousText}.`
 	}
+	if ( entry?.action === 'collection_mod_disabled' ) {
+		return `Disabled ${modName} for collection troubleshooting.`
+	}
 	if ( entry?.integrityChecked ) {
 		const versionText = typeof entry?.integrityVersion === 'string' && entry.integrityVersion !== '' ? ` Version ${entry.integrityVersion}.` : ''
 		return `ZIP integrity was checked before this action completed.${versionText}`
@@ -179,88 +268,262 @@ function historyTimeline(entry) {
 	return ''
 }
 
-async function reloadHistory() {
-	historyEntries = await window.history_IPC.all()
-	setupFilters(historyEntries)
-	renderFilteredHistory()
-}
-
 async function rollbackHistoryEntry(entry, button) {
 	button.disabled = true
-	MA.byIdHTML('historyStatus', plainLabel('history_rollback_restoring'))
+	setStatus(plainLabel('history_rollback_restoring'), 'warning')
 
 	const result = await window.history_IPC.rollbackEntry(entry)
 	if ( result.ok ) {
-		MA.byIdHTML('historyStatus', plainLabel('history_rollback_restored'))
+		setStatus(plainLabel('history_rollback_restored'), 'success')
 		await reloadHistory()
 	} else {
-		MA.byIdHTML('historyStatus', `${plainLabel('history_rollback_failed')} ${DATA.escapeSpecial(result.error)}`)
+		setStatus(`${plainLabel('history_rollback_failed')} ${result.error}`, 'danger')
 		button.disabled = false
 	}
 }
 
 function renderHistory(entries, totalEntries) {
 	const list = MA.byId('historyList')
+	if ( list === null ) { return }
 	list.innerHTML = ''
 
 	if ( entries.length === 0 ) {
-		MA.byIdHTML('historyStatus', totalEntries === 0 ? I18N.defer('history_empty', false) : I18N.defer('history_filter_no_matches', false))
+		setStatus(totalEntries === 0 ? plainLabel('history_empty') : plainLabel('history_filter_no_matches'))
 		return
 	}
 
-	MA.byIdHTML('historyStatus', `${entries.length} / ${totalEntries} ${I18N.defer('history_entries_found', false)}`)
+	setStatus(`${entries.length} / ${totalEntries} ${plainLabel('history_entries_found')}`)
 
 	for ( const entry of entries ) {
-		const replaceBadge = entry.replacedExisting ?
-			`<span class="badge text-bg-success">${I18N.defer('history_replaced_existing', false)}</span>` :
-			''
-		const backupBadge = entry.backupPath ?
-			`<span class="badge text-bg-success">${I18N.defer('history_backup_saved', false)}</span>` :
-			''
-		const integrityBadge = entry.integrityChecked ?
-			`<span class="badge text-bg-primary">${DATA.escapeSpecial(plainLabel('history_integrity_checked'))}</span>` :
-			''
-		const backupPath = entry.backupPath ?
-			`<div class="small mt-1 history-path user-select-text">${DATA.escapeSpecial(entry.backupPath)}</div>` :
-			''
+		const row = document.createElement('article')
+		row.className = 'history-entry'
+
+		const header = document.createElement('div')
+		header.className = 'd-flex justify-content-between gap-3'
+
+		const titleBlock = document.createElement('div')
+		const title = document.createElement('div')
+		title.className = 'fw-bold'
+		title.textContent = entry.modName ?? ''
+		const fileName = document.createElement('div')
+		fileName.className = 'small fst-italic'
+		fileName.textContent = entry.fileName ?? ''
+		titleBlock.append(title, fileName)
+
+		const actionBlock = document.createElement('div')
+		actionBlock.className = 'text-end'
+		const action = document.createElement('div')
+		appendBadge(action, actionLabelText(entry.action), 'text-bg-info')
+		const time = document.createElement('div')
+		time.className = 'small'
+		time.textContent = formatTimestamp(entry.timestamp)
+		actionBlock.append(action, time)
+		header.append(titleBlock, actionBlock)
+		row.appendChild(header)
+
+		const badges = document.createElement('div')
+		badges.className = 'mt-2'
+		appendBadge(badges, entry.collectionName ?? '', 'text-bg-secondary')
+		appendBadge(badges, entry.source ?? '', 'text-bg-warning')
+		if ( entry.replacedExisting ) { appendBadge(badges, plainLabel('history_replaced_existing'), 'text-bg-success') }
+		if ( entry.backupPath ) { appendBadge(badges, plainLabel('history_backup_saved'), 'text-bg-success') }
+		if ( entry.integrityChecked ) { appendBadge(badges, plainLabel('history_integrity_checked'), 'text-bg-primary') }
+		appendVersionBadges(badges, entry)
+		row.appendChild(badges)
+
 		const timeline = historyTimeline(entry)
-		const timelineHTML = timeline === '' ?
-			'' :
-			`<div class="small mt-2">${DATA.escapeSpecial(timeline)}</div>`
-		const targetPath = entry.targetPath ?
-			`<div class="small mt-1 history-path user-select-text">${DATA.escapeSpecial(entry.targetPath)}</div>` :
-			''
-		const rollbackButton = canRollbackEntry(entry) ?
-			`<button class="btn btn-sm btn-info mt-2 history-rollback-button" type="button">${DATA.escapeSpecial(plainLabel('history_rollback_button'))}</button>` :
-			''
-		const node = DATA.templateEngine('history_line', {
-			action         : actionLabel(entry.action),
-			backupBadge    : backupBadge,
-			backupPath     : backupPath,
-			collectionName : DATA.escapeSpecial(entry.collectionName ?? ''),
-			fileName       : DATA.escapeSpecial(entry.fileName ?? ''),
-			integrityBadge : integrityBadge,
-			modName        : DATA.escapeSpecial(entry.modName ?? ''),
-			replaceBadge   : replaceBadge,
-			rollbackButton : rollbackButton,
-			source         : DATA.escapeSpecial(entry.source ?? ''),
-			sourceURL      : DATA.escapeSpecial(entry.sourceURL ?? ''),
-			stagedPath     : DATA.escapeSpecial(entry.stagedPath ?? ''),
-			targetPath     : targetPath,
-			timeline       : timelineHTML,
-			timestamp      : DATA.escapeSpecial(formatTimestamp(entry.timestamp)),
-			versionBadges  : versionBadges(entry),
-		})
-		const rollbackNode = node.querySelector('.history-rollback-button')
-		if ( rollbackNode !== null ) {
-			rollbackNode.addEventListener('click', () => { rollbackHistoryEntry(entry, rollbackNode) })
+		if ( timeline !== '' ) {
+			const timelineNode = document.createElement('div')
+			timelineNode.className = 'small mt-2'
+			timelineNode.textContent = timeline
+			row.appendChild(timelineNode)
 		}
-		list.appendChild(node)
+
+		appendPath(row, entry.stagedPath)
+		appendPath(row, entry.backupPath)
+		appendPath(row, entry.targetPath)
+		appendPath(row, entry.sourceURL)
+
+		if ( canRollbackEntry(entry) ) {
+			const rollbackButton = document.createElement('button')
+			rollbackButton.className = 'btn btn-sm btn-info mt-2'
+			rollbackButton.type = 'button'
+			rollbackButton.textContent = plainLabel('history_rollback_button')
+			rollbackButton.addEventListener('click', () => { rollbackHistoryEntry(entry, rollbackButton) })
+			row.appendChild(rollbackButton)
+		}
+
+		list.appendChild(row)
 	}
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+function renderFilteredHistory() {
+	renderHistory(filterHistory(historyState.entries), historyState.entries.length)
+}
+
+async function reloadHistory() {
+	setBusy(true)
+	try {
+		historyState.entries = await window.history_IPC.all()
+		setupFilters(historyState.entries)
+		renderFilteredHistory()
+	} finally {
+		setBusy(false)
+	}
+}
+
+function selectedRecentCollectionKey() {
+	return MA.byId('historyRecentCollection')?.value ?? ''
+}
+
+function selectedRecentCollectionName() {
+	return MA.byId('historyRecentCollection')?.selectedOptions?.[0]?.textContent ?? 'the selected collection'
+}
+
+function renderRecentChanges() {
+	const list = MA.byId('historyList')
+	if ( list === null ) { return }
+	list.innerHTML = ''
+
+	if ( historyState.recentChanges.length === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'history-entry text-body-secondary'
+		empty.textContent = 'No recent collection changes were found for this collection.'
+		list.appendChild(empty)
+		return
+	}
+
+	for ( const entry of historyState.recentChanges ) {
+		const row = document.createElement('article')
+		row.className = 'history-entry'
+
+		const content = document.createElement('div')
+
+		const header = document.createElement('div')
+		header.className = 'd-flex flex-wrap justify-content-between gap-2'
+		const title = document.createElement('div')
+		const strong = document.createElement('strong')
+		strong.textContent = entry.modName ?? entry.fileName ?? 'Unknown mod'
+		title.appendChild(strong)
+		appendBadge(title, actionLabelText(entry.action), 'text-bg-secondary')
+		const date = document.createElement('div')
+		date.className = 'text-body-secondary text-end flex-shrink-0'
+		date.textContent = formatTimestamp(entry.timestamp)
+		header.append(title, date)
+		content.appendChild(header)
+
+		const meta = document.createElement('div')
+		meta.className = 'text-body-secondary small mt-1'
+		meta.textContent = [
+			entry.fileName,
+			entry.currentVersion ? `version ${entry.currentVersion}` : '',
+			entry.previousVersion ? `previous ${entry.previousVersion}` : '',
+			entry.source ? `source: ${entry.source}` : '',
+		].filter((item) => item !== '').join(' | ')
+		content.appendChild(meta)
+
+		appendPath(content, entry.targetPath)
+
+		if ( entry.exists === false ) {
+			const missing = document.createElement('div')
+			missing.className = 'text-warning small mt-1'
+			missing.textContent = 'This ZIP is no longer in the collection folder.'
+			content.appendChild(missing)
+		}
+
+		row.appendChild(content)
+		list.appendChild(row)
+	}
+}
+
+async function loadRecentChanges() {
+	const collectionKey = selectedRecentCollectionKey()
+	if ( collectionKey === '' ) {
+		historyState.recentChanges = []
+		setStatus('Choose a collection to review recent changes.')
+		renderRecentChanges()
+		return
+	}
+
+	setBusy(true)
+	setStatus('Loading recent collection changes...')
+	try {
+		const result = await window.history_IPC.recentChanges({
+			collectionKey,
+			limit : 80,
+		})
+		if ( result.ok === false ) {
+			historyState.recentChanges = []
+			setStatus(`Recent changes failed to load: ${result.error}`, 'danger')
+			renderRecentChanges()
+			return
+		}
+		historyState.recentChanges = Array.isArray(result.entries) ? result.entries : []
+		setStatus(`${historyState.recentChanges.length} recent change(s) found for ${result.collectionName ?? selectedRecentCollectionName()}.`, historyState.recentChanges.length === 0 ? 'secondary' : 'info')
+		renderRecentChanges()
+	} catch (err) {
+		historyState.recentChanges = []
+		setStatus(`Recent changes failed to load: ${err.message}`, 'danger')
+		renderRecentChanges()
+	} finally {
+		setBusy(false)
+	}
+}
+
+async function loadCollections() {
+	const collections = await window.history_IPC.collections()
+	historyState.collections = Array.isArray(collections) ? collections : []
+	renderRecentCollectionSelect()
+}
+
+function updateModeButtons() {
+	const historyActive = historyState.mode === 'history'
+	const recentActive = historyState.mode === 'recent'
+	for ( const id of ['historyModeHistory', 'historyModeHistorySide'] ) {
+		const node = MA.byId(id)
+		if ( node !== null ) {
+			node.className = node.className.replace(/btn-outline-info|btn-info|btn-outline-warning|btn-warning/gu, historyActive ? 'btn-info' : 'btn-outline-info')
+		}
+	}
+	for ( const id of ['historyModeRecent', 'historyModeRecentSide'] ) {
+		const node = MA.byId(id)
+		if ( node !== null ) {
+			node.className = node.className.replace(/btn-outline-info|btn-info|btn-outline-warning|btn-warning/gu, recentActive ? 'btn-warning' : 'btn-outline-warning')
+		}
+	}
+}
+
+async function setHistoryMode(mode) {
+	const nextMode = mode === 'recent' ? 'recent' : 'history'
+	historyState.mode = nextMode
+	updateModeButtons()
+	setText('historyTitle', nextMode === 'recent' ? 'Recent Collection Changes' : 'Collection History')
+	const filterPanel = MA.byId('historyFilterPanel')
+	const recentPanel = MA.byId('historyRecentPanel')
+	if ( filterPanel !== null ) { filterPanel.classList.toggle('d-none', nextMode !== 'history') }
+	if ( recentPanel !== null ) { recentPanel.classList.toggle('d-none', nextMode !== 'recent') }
+
+	if ( nextMode === 'recent' ) {
+		await loadRecentChanges()
+	} else {
+		renderFilteredHistory()
+	}
+}
+
+async function refreshCurrentMode() {
+	if ( historyState.mode === 'recent' ) {
+		await loadRecentChanges()
+	} else {
+		await reloadHistory()
+	}
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
 	MA.byId('historyList').addEventListener('contextmenu', window.history_IPC.context)
+	for ( const tooltip of document.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		bootstrap.Tooltip.getOrCreateInstance(tooltip)
+	}
+
 	MA.byId('historyClearFilters').addEventListener('click', () => {
 		for ( const inputID of ['historyCollectionFilter', 'historyActionFilter', 'historyFromFilter', 'historyToFilter', 'historyTextFilter'] ) {
 			MA.byId(inputID).value = ''
@@ -275,8 +538,18 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 	})
 	MA.byId('historyBackToUpdates').addEventListener('click', () => { window.history_IPC.dispatchModManagement() })
+	MA.byId('historyRefresh').addEventListener('click', refreshCurrentMode)
+	MA.byId('historyModeHistory').addEventListener('click', () => { setHistoryMode('history') })
+	MA.byId('historyModeRecent').addEventListener('click', () => { setHistoryMode('recent') })
+	MA.byId('historyModeHistorySide').addEventListener('click', () => { setHistoryMode('history') })
+	MA.byId('historyModeRecentSide').addEventListener('click', () => { setHistoryMode('recent') })
+	MA.byId('historyRecentCollection').addEventListener('change', loadRecentChanges)
 	for ( const inputID of ['historyCollectionFilter', 'historyActionFilter', 'historyFromFilter', 'historyToFilter', 'historyTextFilter'] ) {
 		MA.byId(inputID).addEventListener('input', renderFilteredHistory)
 	}
-	reloadHistory()
+	window.history_IPC.receive('history:mode', (mode) => { setHistoryMode(mode) })
+
+	await loadCollections()
+	await reloadHistory()
+	await setHistoryMode('history')
 })

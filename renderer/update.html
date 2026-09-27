@@ -11,10 +11,13 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/update_report.js"></script>
+	<script src="renderJS/update_candidate_model.js"></script>
 	<script src="renderJS/update_ui.js"></script>
 	<style>
 		.btn-group-win_ui {
@@ -44,6 +47,86 @@
 		.collection-list {
 			list-style-type: none;
 		}
+		.update-shell {
+			display: grid;
+			grid-template-columns: 104px minmax(0, 1fr) 320px;
+			gap: 0.75rem;
+			height: calc(100vh - 108px);
+			min-height: 0;
+		}
+		.update-action-rail,
+		.update-side-panel {
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			padding: 0.4rem;
+			min-height: 0;
+			overflow: auto;
+		}
+		.update-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.45rem;
+		}
+		.update-rail-tip {
+			display: block;
+		}
+		.update-rail-button {
+			display: flex;
+			width: 100%;
+			min-height: 70px;
+			flex-direction: column;
+			gap: 0.25rem;
+			align-items: center;
+			justify-content: center;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
+			line-height: 1.1;
+			text-align: center;
+		}
+		.update-rail-button:disabled {
+			pointer-events: none;
+		}
+		.update-rail-button .bi {
+			font-size: 1.65rem;
+			line-height: 1;
+		}
+		.update-rail-label {
+			display: block;
+		}
+		.update-main-panel {
+			min-width: 0;
+			min-height: 0;
+			display: flex;
+			flex-direction: column;
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			background: var(--bs-body-bg);
+			padding: 0.75rem;
+			overflow: hidden;
+		}
+		.update-status-card {
+			background: #111315;
+			border-color: #30363d;
+			color: var(--bs-body-color);
+		}
+		#modList {
+			min-height: 0;
+			overflow-y: auto;
+			padding-right: 0.25rem;
+		}
+		#updateRunReport {
+			background: var(--bs-body-bg);
+			border-color: var(--bs-border-color) !important;
+			margin: 0 0 1rem !important;
+			max-height: 45vh;
+			overflow: auto;
+		}
+		#updateRunReport .form-control,
+		#updateRunReport .table {
+			font-size: 0.92rem;
+		}
 		.progress-readable {
 			position: relative;
 		}
@@ -59,86 +142,146 @@
 			text-shadow: 0 1px 2px #000;
 			pointer-events: none;
 		}
+		@media (max-width: 1100px) {
+			.update-shell {
+				grid-template-columns: 1fr;
+				height: auto;
+			}
+			.update-action-rail {
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.update-rail-tip {
+				flex: 1 1 11rem;
+			}
+			.update-rail-button {
+				min-height: 52px;
+			}
+			.update-main-panel,
+			#modList {
+				overflow: visible;
+			}
+		}
 	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
 	<div class="container-fluid px-1 user-select-none">
 		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
-			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
-				<div class="col-7 pt-2">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+			<div class="row align-items-center mx-2 mb-3" style="-webkit-app-region: drag;">
+				<div class="col-md-5">
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 				</div>
-				<div class="col-5 pt-4 mt-3">
-					<i18n-text class="badge bg-warning text-dark mx-auto w-100 d-block rounded-3 h4 fs-5" data-key="update_list_window"></i18n-text>
+				<div class="col-md-7">
+					<i18n-text class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-warning text-dark d-block" data-key="update_list_window"></i18n-text>
 					<div class="small text-center text-body-secondary mt-1" id="updateCollectionContext"></div>
 				</div>
 			</div>
-			<button class="btn btn-success w-100 mt-2" type="button" id="openSelectedButton" disabled>
-				<i18n-text data-key="update_list_open_selected"></i18n-text>
-			</button>
-			<button class="btn btn-warning w-100 mt-2" type="button" id="downloadSelectedButton" disabled>
-				<i18n-text data-key="update_list_download_selected"></i18n-text>
-			</button>
-			<button class="btn btn-outline-info w-100 mt-2" type="button" id="refreshUpdatesButton">
-				Refresh update checks
-			</button>
-			<button class="btn btn-outline-light w-100 mt-2" type="button" id="updateMenuButton">
-				Back to Mod Management Menu
-			</button>
 		</div>
 
-		<div class="mx-2 mb-3 alert alert-secondary" id="updateStatus">
-			<i18n-text data-key="update_list_checking"></i18n-text>
-		</div>
-		<div class="mx-2 mb-3 d-none" id="updateBusyProgress" aria-hidden="true">
-			<div class="progress progress-readable" role="progressbar" aria-label="Update window busy" aria-valuemin="0" aria-valuemax="100">
-				<div class="progress-bar progress-bar-striped progress-bar-animated" id="updateBusyProgressBar" style="width: 100%"></div>
-				<div class="progress-readable-label" id="updateBusyProgressLabel"></div>
-			</div>
-		</div>
-		<div class="mx-2 mb-3 d-none" id="selectionControls">
-			<div class="btn-group w-100">
-				<button class="btn btn-outline-success" type="button" id="selectAllButton">
-					<i18n-text data-key="update_list_select_all"></i18n-text>
-				</button>
-				<button class="btn btn-outline-secondary" type="button" id="selectNoneButton">
-					<i18n-text data-key="update_list_select_none"></i18n-text>
-				</button>
-				<button class="btn btn-secondary disabled" type="button" id="selectedCount">
-					<i18n-text data-key="update_list_selected"></i18n-text> 0
-				</button>
-			</div>
-			<div class="form-check form-switch mt-2">
-				<input class="form-check-input" type="checkbox" id="needsReviewOnly">
-				<label class="form-check-label" for="needsReviewOnly">Needs review only</label>
-			</div>
-			<div class="d-none mt-2" id="reviewReasonFilters">
-				<div class="small text-body-secondary mb-1">Review reasons</div>
-				<div class="d-flex flex-wrap gap-3">
-					<div class="form-check">
-						<input class="form-check-input review-reason-filter" type="checkbox" value="manualSource" id="reviewManualSource">
-						<label class="form-check-label" for="reviewManualSource">Manual source</label>
-					</div>
-					<div class="form-check">
-						<input class="form-check-input review-reason-filter" type="checkbox" value="noDirectZip" id="reviewNoDirectZip">
-						<label class="form-check-label" for="reviewNoDirectZip">No direct ZIP</label>
-					</div>
-					<div class="form-check">
-						<input class="form-check-input review-reason-filter" type="checkbox" value="missingModHubDate" id="reviewMissingModHubDate">
-						<label class="form-check-label" for="reviewMissingModHubDate">Missing ModHub date</label>
-					</div>
-					<div class="form-check">
-						<input class="form-check-input review-reason-filter" type="checkbox" value="repositoryZip" id="reviewRepositoryZip">
-						<label class="form-check-label" for="reviewRepositoryZip">Repository ZIP</label>
-					</div>
-					<div class="form-check">
-						<input class="form-check-input review-reason-filter" type="checkbox" value="versionUnclear" id="reviewVersionUnclear">
-						<label class="form-check-label" for="reviewVersionUnclear">Version unclear</label>
+		<div class="update-shell mx-2 mb-3">
+			<aside class="update-action-rail" aria-label="Collection update actions">
+				<span class="update-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Update mod list: re-check online update sources and rebuild this list for the selected collection.">
+					<button class="btn btn-sm btn-outline-info update-rail-button" type="button" id="refreshUpdatesButton">
+						<i aria-hidden="true" class="bi bi-arrow-repeat"></i>
+						<span class="update-rail-label">Update list</span>
+					</button>
+				</span>
+				<span class="update-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Open selected web pages: opens the source pages for checked update rows so you can review them manually.">
+					<button class="btn btn-sm btn-success update-rail-button" type="button" id="openSelectedButton" disabled>
+						<i aria-hidden="true" class="bi bi-globe2"></i>
+						<span class="update-rail-label">Web pages</span>
+					</button>
+				</span>
+				<span class="update-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Update selected via Vault: stores each checked update in the Vault first, then copies it into the collection with a backup.">
+					<button class="btn btn-sm btn-warning update-rail-button" type="button" id="downloadSelectedButton" disabled>
+						<i aria-hidden="true" class="bi bi-database-down"></i>
+						<span class="update-rail-label">Via Vault</span>
+					</button>
+				</span>
+				<span class="update-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Back: closes this update window and returns to the main window.">
+					<button class="btn btn-sm btn-outline-light update-rail-button" type="button" id="updateMenuButton">
+						<i aria-hidden="true" class="bi bi-arrow-left"></i>
+						<span class="update-rail-label">Back</span>
+					</button>
+				</span>
+			</aside>
+
+			<main class="update-main-panel">
+				<div class="mb-3 alert update-status-card" id="updateStatus">
+					<i18n-text data-key="update_list_checking"></i18n-text>
+				</div>
+				<div class="mb-3 d-none" id="updateBusyProgress" aria-hidden="true">
+					<div class="progress progress-readable" role="progressbar" aria-label="Update window busy" aria-valuemin="0" aria-valuemax="100">
+						<div class="progress-bar progress-bar-striped progress-bar-animated" id="updateBusyProgressBar" style="width: 100%"></div>
+						<div class="progress-readable-label" id="updateBusyProgressLabel"></div>
 					</div>
 				</div>
-			</div>
+				<div class="list-group my-0" id="modList"></div>
+			</main>
+
+			<aside class="update-side-panel" aria-label="Update selection and filters">
+				<div class="d-none" id="selectionControls">
+					<div class="small text-body-secondary mb-1">Current selection</div>
+					<button class="btn btn-secondary disabled w-100 mb-2" type="button" id="selectedCount">
+						<i18n-text data-key="update_list_selected"></i18n-text> 0
+					</button>
+					<div class="d-grid gap-2">
+						<button class="btn btn-sm btn-outline-success" type="button" id="selectAllButton">
+							<i18n-text data-key="update_list_select_all"></i18n-text>
+						</button>
+						<button class="btn btn-sm btn-outline-info" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Select only visible updates that are ready to download without review warnings." type="button" id="selectReadyButton">
+							Select Ready
+						</button>
+						<button class="btn btn-sm btn-outline-secondary" type="button" id="selectNoneButton">
+							<i18n-text data-key="update_list_select_none"></i18n-text>
+						</button>
+					</div>
+					<div class="alert alert-dark mt-3 mb-0" id="updateStateSummary">Visible updates: 0.</div>
+					<div class="mt-3">
+						<label class="form-label small" for="updateStateFilter">Update state</label>
+						<select class="form-select form-select-sm" data-bs-placement="bottom" data-bs-toggle="tooltip" id="updateStateFilter" title="Filter the scanned update list by whether an item is ready, needs review, or requires manual download.">
+							<option selected value="">All states</option>
+							<option value="ready">Ready</option>
+							<option value="review">Needs review</option>
+							<option value="manual">Manual only</option>
+							<option value="packageMismatch">Package mismatch</option>
+						</select>
+					</div>
+					<div class="form-check form-switch mt-3">
+						<input class="form-check-input" type="checkbox" id="needsReviewOnly">
+						<label class="form-check-label" for="needsReviewOnly">Needs review only</label>
+					</div>
+					<div class="d-none mt-3 border-top pt-3" id="reviewReasonFilters">
+						<div class="small text-body-secondary mb-1">Review reasons</div>
+						<div class="d-grid gap-2">
+							<div class="form-check">
+								<input class="form-check-input review-reason-filter" type="checkbox" value="manualSource" id="reviewManualSource">
+								<label class="form-check-label" for="reviewManualSource">Manual download source</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input review-reason-filter" type="checkbox" value="noDirectZip" id="reviewNoDirectZip">
+								<label class="form-check-label" for="reviewNoDirectZip">No direct ZIP found</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input review-reason-filter" type="checkbox" value="missingModHubDate" id="reviewMissingModHubDate">
+								<label class="form-check-label" for="reviewMissingModHubDate">Missing ModHub date</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input review-reason-filter" type="checkbox" value="repositoryZip" id="reviewRepositoryZip">
+								<label class="form-check-label" for="reviewRepositoryZip">Repository ZIP, check before installing</label>
+							</div>
+							<div class="form-check">
+								<input class="form-check-input review-reason-filter" type="checkbox" value="versionUnclear" id="reviewVersionUnclear">
+								<label class="form-check-label" for="reviewVersionUnclear">Version could not be compared clearly</label>
+							</div>
+						</div>
+					</div>
+				</div>
+			</aside>
 		</div>
-		<div class="list-group mx-2 my-3" id="modList"></div>
 	</div>
 
 
@@ -164,6 +307,7 @@
 				<div class="mb-2"><template-var>sourceBadge</template-var></div>
 				<template-var>reviewNote</template-var>
 				<template-var>modHubReleased</template-var>
+				<template-var>vaultStatus</template-var>
 				<div class="small mb-3"><template-var>statusText</template-var></div>
 				<div class="small mb-3"><template-var>downloadStatus</template-var></div>
 				<button class="btn btn-primary btn-sm w-75 update-source-button" type="button">

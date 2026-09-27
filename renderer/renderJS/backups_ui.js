@@ -1,4 +1,4 @@
-/* global MA */
+/* global MA, bootstrap */
 
 const backupState = {
 	backups        : [],
@@ -630,6 +630,9 @@ const reviewOldManifests = async () => {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+	for ( const item of document.querySelectorAll('[data-bs-toggle="tooltip"]') ) {
+		bootstrap.Tooltip.getOrCreateInstance(item)
+	}
 	MA.byIdEventIfExists('backupBackToUpdates', () => window.backups_IPC.dispatchModManagement())
 	MA.byIdEventIfExists('backupCreate', createBackup)
 	MA.byIdEventIfExists('backupDeleteOld', reviewOldManifests)

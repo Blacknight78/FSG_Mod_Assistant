@@ -83,12 +83,14 @@ const pageAPI = {
 		functions : {
 			all           : () => ipcRenderer.invoke('history:all'),
 			clear         : () => ipcRenderer.invoke('history:clear'),
+			collections   : () => ipcRenderer.invoke('backups:collections'),
 			context       : () => ipcRenderer.send('context:copy'),
 			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			dispatchUpdate : () => ipcRenderer.send('dispatch:update'),
+			recentChanges : (payload) => ipcRenderer.invoke('backups:recentChanges', payload),
 			rollbackEntry : (entry) => ipcRenderer.invoke('history:rollbackEntry', entry),
 		},
-		validAsync : new Set(),
+		validAsync : new Set(['history:mode']),
 	},
 	'importjson' : {
 		functions : {
@@ -126,7 +128,7 @@ const pageAPI = {
 				const knownWindows = new Set([
 					'basegame', 'changelog', 'compare', 'debug',
 					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input',
-					'manifest', 'mini', 'mod_management', 'notes', 'recent_changes',
+					'manifest', 'mini', 'notes', 'recent_changes',
 					'resolve', 'savemanage', 'savetrack',
 					'update', 'update_candidates', 'version', 'wizard',
 					'vault', 'vault_update',
@@ -308,6 +310,7 @@ const pageAPI = {
 			openURL          : (url) => ipcRenderer.send('win:openURL', url),
 			rollbackEntries  : (update) => ipcRenderer.invoke('update:rollbackEntries', update),
 			rollbackEntry    : (entry) => ipcRenderer.invoke('update:rollbackEntry', entry),
+			vaultAvailability : (updates) => ipcRenderer.invoke('update:vaultAvailability', updates),
 		},
 		validAsync : new Set(['mods:list']),
 	},
@@ -334,18 +337,6 @@ const pageAPI = {
 			importCollectionManifestFile : () => ipcRenderer.invoke('manifest:importFile'),
 			installCollectionManifest : (payload) => ipcRenderer.invoke('manifest:install', payload),
 			openURL          : (url) => ipcRenderer.send('win:openURL', url),
-		},
-		validAsync : new Set(),
-	},
-	'mod_management' : {
-		functions : {
-			dispatchBackups : () => ipcRenderer.send('dispatch:backups'),
-			dispatchHistory  : () => ipcRenderer.send('dispatch:history'),
-			dispatchManifest : () => ipcRenderer.send('dispatch:manifest'),
-			dispatchRecentChanges : () => ipcRenderer.send('dispatch:recent_changes'),
-			dispatchUpdateCandidates : () => ipcRenderer.send('dispatch:update_candidates'),
-			dispatchVault    : () => ipcRenderer.send('dispatch:vault'),
-			dispatchVaultUpdates : () => ipcRenderer.send('dispatch:vault_update'),
 		},
 		validAsync : new Set(),
 	},
@@ -490,6 +481,19 @@ contextBridge.exposeInMainWorld(
 	'operations', {
 		clip    : (value) => { ipcRenderer.send('win:clipboard', value)},
 		close   : ()      => { ipcRenderer.send('win:close') },
+		dispatch : (win) => {
+			const knownWindows = new Set([
+				'backups',
+				'manifest',
+				'recent_changes',
+				'update_candidates',
+				'vault',
+				'vault_update',
+			])
+			if ( knownWindows.has(win) ) {
+				ipcRenderer.send(`dispatch:${win}`)
+			}
+		},
 		url     : (url)   => { ipcRenderer.send('win:openURL', url)},
 
 		receive : ( channel, func ) => {

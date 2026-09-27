@@ -6,23 +6,25 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Recent Collection Changes</title>
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
-	<link rel="stylesheet" href="inc/site_dark.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
 </head>
-<body>
-	<main class="container-fluid py-3">
-		<div class="row align-items-center mb-4">
+<body data-bs-theme="dark" class="overflow-custom2">
+	<main class="container-fluid px-1 py-3 user-select-none">
+		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
+		<div class="row align-items-center mx-2 mb-3">
 			<div class="col-md-5">
-				<div class="d-flex align-items-center gap-3">
-					<img src="img/icon.png" alt="" style="width: 48px; height: 48px;">
-					<h1 class="display-6 mb-0">FSG Mod Assistant</h1>
+				<div class="app-window-brand">
+					<span class="app-window-logo" aria-hidden="true"></span>
+					<h1 class="app-window-name">FSG Mod Assistant</h1>
 				</div>
 			</div>
 			<div class="col-md-7">
-				<h2 class="h1 text-center rounded-3 py-2 mb-0 bg-info text-dark">Recent Collection Changes</h2>
+				<h2 class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-info text-dark">Recent Collection Changes</h2>
 			</div>
 		</div>
-		<hr>
+		</div>
 
 		<section class="card mb-3">
 			<div class="card-body">
@@ -38,7 +40,7 @@
 						<div class="btn-group w-100" role="group">
 							<button class="btn btn-outline-info" type="button" id="recentRefresh">Refresh recent changes</button>
 							<button class="btn btn-outline-warning" type="button" id="recentDisableSelected">Disable selected mods</button>
-							<button class="btn btn-secondary" type="button" id="recentBackToUpdates">Back to Mod Management Menu</button>
+							<button class="btn btn-secondary" type="button" id="recentBackToUpdates">Back to Main Window</button>
 						</div>
 					</div>
 				</div>

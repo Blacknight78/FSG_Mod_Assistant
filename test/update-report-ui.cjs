@@ -14,7 +14,8 @@ app.whenReady().then(async () => {
       const rows = Array.from({length: 251}, (_, i) => ({name: 'Mod ' + i, source: 'GitHub / Gameplay', status: i === 250 ? 'Failed' : 'Updated', detail: i === 250 ? '<script>unsafe text</script>' : 'Version 1.2.3'}));
       window.UpdateRunReport.show('status', 'Collection update report', rows);
       const root = document.getElementById('updateRunReport');
-      if (!root.open || root.querySelectorAll('tbody tr').length !== 100) throw Error('Pagination failed');
+      if (root.open || root.querySelectorAll('tbody tr').length !== 100) throw Error('Collapsed default or pagination failed');
+      root.open = true;
       root.querySelectorAll('button')[1].click();
       if (root.querySelector('tbody td').textContent !== 'Mod 100') throw Error('Next page failed');
       const input = root.querySelector('input'); input.value = 'Failed'; input.dispatchEvent(new Event('input'));

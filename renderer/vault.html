@@ -13,6 +13,7 @@
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
 	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/util/baseGameData_25.js"></script>
@@ -36,6 +37,7 @@
 			height: 100vh;
 			display: flex;
 			flex-direction: column;
+			box-sizing: border-box;
 		}
 		.vault-path {
 			word-break: break-all;
@@ -172,7 +174,7 @@
 			flex: 1 1 auto;
 			min-height: 0;
 			display: grid;
-			grid-template-columns: 7rem minmax(0, 1fr) 20rem;
+			grid-template-columns: 104px minmax(0, 1fr) 20rem;
 			gap: 0.75rem;
 			align-items: stretch;
 			overflow: hidden;
@@ -180,29 +182,35 @@
 		.vault-action-rail {
 			display: flex;
 			flex-direction: column;
-			gap: 0.5rem;
+			gap: 0.45rem;
 			min-height: 0;
 			max-height: 100%;
 			overflow-y: auto;
-			padding: 0.5rem;
+			padding: 0.4rem;
 			border: 1px solid var(--bs-border-color);
 			border-radius: 0.5rem;
 			background: var(--bs-body-bg);
 			overscroll-behavior: contain;
 		}
 		.vault-rail-button {
-			display: inline-flex;
+			display: flex;
+			width: 100%;
+			min-height: 70px;
 			flex-direction: column;
+			gap: 0.25rem;
 			align-items: center;
 			justify-content: center;
-			gap: 0.25rem;
-			min-height: 3rem;
-			padding: 0.45rem 0.35rem;
-			font-size: 0.75rem;
+			padding: 0.4rem 0.25rem;
+			white-space: normal;
+			font-size: 0.78rem;
 			line-height: 1.1;
+			text-align: center;
+		}
+		.vault-rail-button:disabled {
+			pointer-events: none;
 		}
 		.vault-rail-button .bi {
-			font-size: 1.15rem;
+			font-size: 1.65rem;
 			line-height: 1;
 		}
 		.vault-rail-separator {
@@ -346,8 +354,11 @@
 				overflow: visible;
 			}
 			.vault-action-rail {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(4.75rem, 1fr));
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.vault-rail-button {
+				min-height: 52px;
 			}
 			.vault-rail-separator {
 				display: none;
@@ -359,33 +370,36 @@
 	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-custom2">
-	<div class="container-fluid px-2 user-select-none">
+	<div class="container-fluid px-1 py-3 user-select-none">
 		<div class="sticky-top pb-2 bg-body border-bottom mb-3">
-			<div class="row w-100 g-0" style="-webkit-app-region: drag;">
-				<div class="col-7 pt-2">
-					<i18n-text class="h2 ps-2 mastHead" data-key="app_name"></i18n-text>
+			<div class="row align-items-center mx-2 mb-3" style="-webkit-app-region: drag;">
+				<div class="col-md-5">
+					<div class="app-window-brand">
+						<span class="app-window-logo" aria-hidden="true"></span>
+						<h1 class="app-window-name">FSG Mod Assistant</h1>
+					</div>
 				</div>
-				<div class="col-5 pt-4 mt-3">
-					<span class="badge bg-primary mx-auto w-100 d-block rounded-3 h4 fs-5">Mod Vault</span>
+				<div class="col-md-7">
+					<h2 class="h1 app-window-title text-center rounded-3 py-2 mb-0 bg-primary text-dark">Mod Vault</h2>
 				</div>
 			</div>
 		</div>
 
 		<div class="vault-shell mx-2 mb-3">
 			<aside class="vault-action-rail" aria-label="Vault actions">
-				<button aria-controls="vaultAdvancedFilters" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultAdvancedFilters" data-bs-toggle="collapse" id="vaultAdvancedToggle" title="Show or hide advanced Vault filters." type="button"><i aria-hidden="true" class="bi bi-sliders"></i><span>Advanced</span></button>
+				<button aria-controls="vaultAdvancedFilters" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultAdvancedFilters" data-bs-toggle="collapse" id="vaultAdvancedToggle" title="Advanced filters: show or hide the extended Vault filtering tools." type="button"><i aria-hidden="true" class="bi bi-sliders"></i><span>Advanced</span></button>
 				<div class="vault-rail-separator"></div>
-				<button class="btn btn-sm btn-success vault-rail-button" id="vaultImportOpen" title="Import mods from links, folders, or a Vault recovery manifest. Export recovery manifests from the same panel." type="button"><i aria-hidden="true" class="bi bi-arrow-down-up"></i><span>Import / export</span></button>
-				<button class="btn btn-sm btn-success vault-rail-button" id="vaultImportCollections" title="Scan tracked collections and add any missing or changed ZIP files to the Vault." type="button"><i aria-hidden="true" class="bi bi-database-add"></i><span>Scan collections</span></button>
-				<button class="btn btn-sm btn-warning vault-rail-button" id="vaultRefreshModHub" title="Refresh cached ModHub categories, release dates, screenshots, and version metadata for Vault records." type="button"><i aria-hidden="true" class="bi bi-arrow-repeat"></i><span>Refresh ModHub</span></button>
-				<button aria-controls="vaultHealthPanel" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultHealthPanel" data-bs-toggle="collapse" id="vaultHealthToggle" title="Show Vault quality checks, including missing files, missing game tags, updates, and cleanup candidates." type="button"><i aria-hidden="true" class="bi bi-heart-pulse"></i><span>Health</span></button>
-				<button aria-controls="vaultCleanupPanel" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultCleanupPanel" data-bs-toggle="offcanvas" id="vaultCleanupToggle" title="Review older unused ZIPs that can be safely removed under the current retention rules." type="button"><i aria-hidden="true" class="bi bi-trash3"></i><span>Cleanup</span></button>
+				<button class="btn btn-sm btn-success vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultImportOpen" title="Import / export: import mods from links, folders, or a Mod Manifest. Export Mod Manifests from the same panel." type="button"><i aria-hidden="true" class="bi bi-box-arrow-in-down"></i><span>Import / export</span></button>
+				<button class="btn btn-sm btn-success vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultImportCollections" title="Scan collections: scan tracked collections and add missing or changed ZIP files to the Vault." type="button"><i aria-hidden="true" class="bi bi-database-add"></i><span>Scan collections</span></button>
+				<button class="btn btn-sm btn-warning vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultRefreshModHub" title="Refresh ModHub: refresh cached ModHub categories, release dates, screenshots, and version metadata for Vault records." type="button"><i aria-hidden="true" class="bi bi-arrow-repeat"></i><span>Refresh ModHub</span></button>
+				<button aria-controls="vaultHealthPanel" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultHealthPanel" data-bs-toggle="collapse" id="vaultHealthToggle" title="Health: show Vault quality checks, including missing files, missing game tags, updates, and cleanup candidates." type="button"><i aria-hidden="true" class="bi bi-activity"></i><span>Health</span></button>
+				<button aria-controls="vaultCleanupPanel" aria-expanded="false" class="btn btn-sm btn-outline-info vault-rail-button" data-bs-target="#vaultCleanupPanel" data-bs-toggle="offcanvas" id="vaultCleanupToggle" title="Cleanup: review older unused ZIPs that can be safely removed under the current retention rules." type="button"><i aria-hidden="true" class="bi bi-trash3"></i><span>Cleanup</span></button>
 				<div class="vault-rail-separator"></div>
-				<button class="btn btn-sm btn-outline-secondary vault-rail-button" id="vaultOpenFolder" title="Open the current Vault storage folder in File Explorer." type="button"><i aria-hidden="true" class="bi bi-folder2-open"></i><span>Open folder</span></button>
-				<button class="btn btn-sm btn-outline-warning vault-rail-button" id="vaultMoveFolder" title="Move the managed Vault storage folder to a new location." type="button"><i aria-hidden="true" class="bi bi-folder-symlink"></i><span>Move Vault</span></button>
-				<button class="btn btn-sm btn-outline-danger vault-rail-button" id="vaultWipeForTesting" title="Testing only: deletes all managed Vault ZIP copies, Vault records, notes, tags, and cached update metadata." type="button"><i aria-hidden="true" class="bi bi-database-x"></i><span>Wipe Vault</span></button>
+				<button class="btn btn-sm btn-outline-secondary vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultOpenFolder" title="Open folder: open the current Vault storage folder in File Explorer." type="button"><i aria-hidden="true" class="bi bi-folder2-open"></i><span>Open folder</span></button>
+				<button class="btn btn-sm btn-outline-warning vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultMoveFolder" title="Move Vault: move the managed Vault storage folder to a new location." type="button"><i aria-hidden="true" class="bi bi-folder-symlink"></i><span>Move Vault</span></button>
+				<button class="btn btn-sm btn-outline-danger vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultWipeForTesting" title="Wipe Vault: testing only. Deletes managed Vault ZIP copies, Vault records, notes, tags, and cached update metadata." type="button"><i aria-hidden="true" class="bi bi-database-x"></i><span>Wipe Vault</span></button>
 				<div class="vault-rail-separator"></div>
-				<button class="btn btn-sm btn-outline-secondary vault-rail-button" id="vaultBackToUpdates" title="Close the Vault and return to the main screen." type="button"><i aria-hidden="true" class="bi bi-arrow-left"></i><span>Back</span></button>
+				<button class="btn btn-sm btn-outline-light vault-rail-button" data-bs-placement="right" data-bs-toggle="tooltip" id="vaultBackToUpdates" title="Back: closes the Vault and returns to the main screen." type="button"><i aria-hidden="true" class="bi bi-arrow-left"></i><span>Back</span></button>
 			</aside>
 
 			<main class="vault-main-panel">
@@ -909,10 +923,13 @@
 	<div class="nav nav-tabs mb-3" role="tablist" aria-label="Import source">
 		<button data-import-control data-import-mode="links" type="button" role="tab" aria-selected="true" class="nav-link active">From links</button>
 		<button data-import-control data-import-mode="folder" type="button" role="tab" aria-selected="false" class="nav-link">From folder</button>
-		<button data-import-control data-import-mode="manifest" type="button" role="tab" aria-selected="false" class="nav-link">Recovery manifest</button>
+		<button data-import-control data-import-mode="manifest" type="button" role="tab" aria-selected="false" class="nav-link">Mod Manifest</button>
 	</div>
 	<div id="vaultImportLinksPane">
 		<label for="vaultImportURLs" class="form-label">ModHub or GitHub URLs (one per line)</label>
+		<div class="alert alert-info py-2 small" role="note">
+			Automatic link imports only support ModHub mod pages and GitHub repository or release pages. Links from KingMods, itch.io, author websites, file hosts, or direct ZIP downloads will be rejected. Download those ZIPs yourself and use From folder instead.
+		</div>
 		<textarea id="vaultImportURLs" data-import-control class="form-control" rows="4"></textarea>
 		<button id="vaultImportResolve" data-import-control type="button" class="btn btn-primary my-2">Review links</button>
 	</div>
@@ -924,16 +941,16 @@
 		<div class="row g-3">
 			<div class="col-lg-6">
 				<div class="border rounded p-3 h-100">
-					<h3 class="h6">Import from recovery manifest</h3>
-					<p class="small text-body-secondary mb-3">Choose a Vault recovery manifest. Supported ModHub and GitHub source URLs will be loaded into the review list below.</p>
-					<button id="vaultManifestImport" data-import-control type="button" class="btn btn-primary w-100"><i class="bi bi-file-earmark-arrow-up" aria-hidden="true"></i> Review manifest URLs</button>
+					<h3 class="h6">Import Mod Manifest</h3>
+					<p class="small text-body-secondary mb-3">Choose a Mod Manifest JSON file. Supported ModHub and GitHub source URLs will be loaded into the review list below.</p>
+					<button id="vaultManifestImport" data-import-control type="button" class="btn btn-primary w-100"><i class="bi bi-file-earmark-arrow-up" aria-hidden="true"></i> Import Mod Manifest</button>
 				</div>
 			</div>
 			<div class="col-lg-6">
 				<div class="border rounded p-3 h-100">
-					<h3 class="h6">Export recovery manifest</h3>
-					<p class="small text-body-secondary mb-3">Save a JSON manifest containing every known redownload URL for the ZIPs currently stored in the Vault.</p>
-					<button id="vaultRecoveryManifest" data-import-control type="button" class="btn btn-outline-info w-100"><i class="bi bi-file-earmark-arrow-down" aria-hidden="true"></i> Save recovery manifest</button>
+					<h3 class="h6">Export Mod Manifest</h3>
+					<p class="small text-body-secondary mb-3">Save a JSON Mod Manifest containing every known redownload URL for the ZIPs currently stored in the Vault.</p>
+					<button id="vaultRecoveryManifest" data-import-control type="button" class="btn btn-outline-info w-100"><i class="bi bi-file-earmark-arrow-down" aria-hidden="true"></i> Export Mod Manifest</button>
 				</div>
 			</div>
 		</div>

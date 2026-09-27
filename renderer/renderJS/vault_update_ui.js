@@ -1,4 +1,4 @@
-/* global DATA, bootstrap */
+/* global DATA, UpdateCandidateModel, bootstrap */
 
 let candidates = []
 let noSourceRecords = []
@@ -20,54 +20,27 @@ const UPDATE_PROFILE_STORAGE_KEY = 'fsg.vaultUpdateProfiles.v1'
 
 const byID = (id) => document.getElementById(id)
 
-function versionParts(value) {
-	return String(value ?? '')
-		.replace(/^v/iu, '')
-		.split(/[^0-9]+/u)
-		.filter((part) => part.length !== 0)
-		.map(Number)
-}
-
-function compareVersions(left, right) {
-	const leftParts = versionParts(left)
-	const rightParts = versionParts(right)
-	const length = Math.max(leftParts.length, rightParts.length)
-
-	for ( let index = 0; index < length; index++ ) {
-		const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
-		if ( difference !== 0 ) { return difference }
-	}
-	return 0
-}
-
-function newestVersion(versions) {
-	return [...new Set((versions ?? []).filter((value) => typeof value === 'string' && value.length !== 0))]
-		.sort((left, right) => compareVersions(right, left))[0] ?? 'unknown'
-}
-
-function sourceLabel(sourceType) {
-	return sourceType === 'modhub' ? 'ModHub' : 'GitHub'
-}
-
-function modHubReleasedLabel(value) {
-	const released = typeof value === 'string' ? value.trim() : ''
-	return released === '' ? 'not recorded' : released
-}
+const {
+	applyVaultReviewState,
+	candidateStateCounts,
+	candidateGroupKey,
+	candidateUpdateState,
+	compareVersions,
+	modHubReleasedLabel,
+	newestVersion,
+	packageMismatchMessage,
+	reviewReasonLabels,
+	sourcesForVaultRecord,
+	sourceTypeLabel : sourceLabel,
+	stateSummaryText,
+	vaultRemoteDecision,
+} = UpdateCandidateModel
 
 function sourceBadgeLabel(candidate) {
 	if ( candidate.sourceType === 'modhub' ) { return 'ModHub update' }
 	if ( candidate.sourceType === 'github' && candidate.downloadSource === 'repositoryFile' ) { return 'GitHub repository ZIP' }
 	if ( candidate.sourceType === 'github' ) { return 'GitHub release' }
 	return `${sourceLabel(candidate.sourceType)} source`
-}
-
-const REVIEW_REASON_LABELS = {
-	manualOnly       : 'manual download only',
-	missingModHubDate : 'ModHub release date not recorded',
-	packageMismatch  : 'downloaded package version does not match source version',
-	repositoryZip    : 'repository ZIP instead of release asset',
-	sourceMismatch   : 'source mismatch risk',
-	versionUnclear   : 'version comparison unclear',
 }
 
 function packageMismatchStates() {
@@ -95,80 +68,12 @@ function applyPackageMismatchState(candidate) {
 }
 
 function updateCandidateReviewState(candidate) {
-	candidate.reviewReasons = reviewReasons(candidate)
-	candidate.needsReview = candidate.reviewReasons.length !== 0
-}
-
-function sourceMismatchRisk(candidate) {
-	const assetName = canonicalVaultModName(candidate.assetName ?? candidate.fileName ?? '')
-	const modName = canonicalVaultModName(candidate.modName ?? '')
-	if ( assetName === '' || modName === '' ) { return false }
-	return !assetName.toLocaleLowerCase().includes(modName.toLocaleLowerCase()) &&
-		!modName.toLocaleLowerCase().includes(assetName.toLocaleLowerCase())
-}
-
-function reviewReasons(candidate) {
-	const reasons = []
-	if ( candidate.packageMismatch !== null && typeof candidate.packageMismatch === 'object' ) {
-		reasons.push('packageMismatch')
-	}
-	if ( candidate.downloadURL === null ) {
-		reasons.push('manualOnly')
-	}
-	if ( candidate.sourceType === 'modhub' && modHubReleasedLabel(candidate.modHubReleased) === 'not recorded' ) {
-		reasons.push('missingModHubDate')
-	}
-	if ( candidate.sourceType === 'github' && candidate.downloadSource === 'repositoryFile' ) {
-		reasons.push('repositoryZip')
-	}
-	if ( candidate.localVersion === 'unknown' || compareVersions(candidate.remoteVersion, candidate.localVersion) === 0 ) {
-		reasons.push('versionUnclear')
-	}
-	if ( sourceMismatchRisk(candidate) ) {
-		reasons.push('sourceMismatch')
-	}
-	return reasons
+	applyVaultReviewState(candidate, { normalizeModName : canonicalVaultModName })
 }
 
 function reviewNoteText(reasons) {
 	if ( reasons.length === 0 ) { return '' }
-	return `Needs review: ${reasons.map((reason) => REVIEW_REASON_LABELS[reason] ?? reason).join(', ')}`
-}
-
-function candidateUpdateState(candidate) {
-	if ( candidate.packageMismatch !== null && typeof candidate.packageMismatch === 'object' ) { return 'packageMismatch' }
-	if ( candidate.downloadURL === null ) { return 'manual' }
-	if ( candidate.needsReview === true ) { return 'review' }
-	return 'ready'
-}
-
-function candidateStateCounts(items) {
-	const counts = {
-		manual          : 0,
-		packageMismatch : 0,
-		ready           : 0,
-		review          : 0,
-	}
-	for ( const candidate of items ) {
-		counts[candidateUpdateState(candidate)] += 1
-	}
-	return counts
-}
-
-function stateSummaryText(items) {
-	const counts = candidateStateCounts(items)
-	const parts = [
-		`Visible updates: ${items.length}`,
-		`ready: ${counts.ready}`,
-		`needs review: ${counts.review}`,
-		`manual only: ${counts.manual}`,
-		`package mismatch: ${counts.packageMismatch}`,
-	]
-	return `${parts.join(' | ')}.`
-}
-
-function packageMismatchMessage(mismatch, fallbackExpectedVersion = 'unknown') {
-	return `Remote package mismatch: the source site says version ${mismatch?.expectedVersion ?? fallbackExpectedVersion}, but its downloaded ZIP reports ${mismatch?.downloadedVersion ?? 'unknown'}. This is a remote package/version-label problem, not an issue with your local Vault mod.`
+	return `Needs review: ${reviewReasonLabels(reasons).join(', ')}`
 }
 
 function dateTimeValue(value) {
@@ -506,37 +411,8 @@ function setCandidateCounts({
 	}
 }
 
-function getSources(record) {
-	const sources = []
-	const seen = new Set()
-	const addSource = (source) => {
-		const sourceKey = `${source.sourceType}:${source.modHubID ?? source.sourceURL}`
-		if ( seen.has(sourceKey) ) { return }
-		seen.add(sourceKey)
-		sources.push(source)
-	}
-
-	for ( const rawModHubID of record.modHubIDs ?? [] ) {
-		const modHubID = Number(rawModHubID)
-		if ( Number.isInteger(modHubID) && modHubID > 0 ) {
-			addSource({
-				modHubID,
-				sourceType : 'modhub',
-				sourceURL  : record.modHubURL ?? `https://www.farming-simulator.com/mod.php?mod_id=${modHubID}&title=fs2025`,
-			})
-		}
-	}
-
-	const sourceURL = record.sourceURL ?? ''
-	if ( /^https:\/\/github\.com\//iu.test(sourceURL) ) {
-		addSource({ modHubID : null, sourceType : 'github', sourceURL })
-	}
-
-	return sources
-}
-
 function makeGroupKey(modName, source) {
-	return `${source.sourceType}:${source.modHubID ?? source.sourceURL}:${canonicalVaultModName(modName).toLocaleLowerCase()}`
+	return candidateGroupKey(modName, source, canonicalVaultModName)
 }
 
 function canonicalVaultModName(value) {
@@ -590,7 +466,7 @@ function autoTag(key, label, group) {
 }
 
 function autoTagsForVaultRecord(record) {
-	const sources = getSources(record).map((source) => autoTag(source.sourceType, sourceLabel(source.sourceType), 'source'))
+	const sources = sourcesForVaultRecord(record).map((source) => autoTag(source.sourceType, sourceLabel(source.sourceType), 'source'))
 	return [
 		...uniqueStrings(record.modHubCategories ?? []).map((value) => autoTag(value, value, 'modhub')),
 		...uniqueStrings(record.itemCategories ?? []).map((value) => autoTag(value, value, 'category')),
@@ -1351,7 +1227,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				tagSkipped++
 				continue
 			}
-			const sources = getSources(record)
+			const sources = sourcesForVaultRecord(record)
 			if ( sources.length === 0 ) {
 				skipped++
 				noSourceRecords.push(noSourceReviewRecord(record, customTags, autoTags))
@@ -1472,9 +1348,8 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		for ( const result of remoteResults ) {
 			if ( result === undefined ) { continue }
 			const { group, remote } = result
-			if ( !remote?.ok || typeof remote.version !== 'string' ) { continue }
-			const localVersion = newestVersion(group.localVersions)
-			if ( compareVersions(remote.version, localVersion) <= 0 ) { continue }
+			const decision = vaultRemoteDecision(group, remote)
+			if ( !decision.available ) { continue }
 			const candidate = {
 				assetName     : remote.assetName ?? group.fileName,
 				autoTags      : group.autoTags,
@@ -1483,7 +1358,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				fileName      : group.fileName,
 				gameVersion   : group.gameVersions.find((value) => Number.isInteger(value)) ?? null,
 				key           : group.key,
-				localVersion,
+				localVersion  : decision.localVersion,
 				modHubID      : group.modHubID,
 				modHubReleased : remote.released ?? null,
 				modHubScreenshots : Array.isArray(remote.screenshots) ? remote.screenshots : [],

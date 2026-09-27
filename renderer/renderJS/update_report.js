@@ -20,7 +20,7 @@ window.UpdateRunReport = {
 			document.getElementById(anchorID).after(report)
 		}
 		report.replaceChildren()
-		report.open = true
+		report.open = false
 		const add = (tag, text, parent = report) => {
 			const node = document.createElement(tag)
 			node.textContent = text

@@ -2035,21 +2035,30 @@ async function openVaultFolder() {
 async function exportVaultRecoveryManifest() {
 	const button = MA.byId('vaultRecoveryManifest')
 	const originalText = button.textContent
-	setButtonState(button, true, 'Saving manifest...')
-	MA.byIdText('vaultStatus', 'Saving Vault recovery manifest...')
-	beginVaultBusy('Saving Vault recovery manifest...', null)
+	const dialogStatus = MA.byId('vaultImportStatus')
+	const setStatus = (message) => {
+		MA.byIdText('vaultStatus', message)
+		if ( dialogStatus !== null ) { dialogStatus.textContent = message }
+	}
+	setButtonState(button, true, 'Exporting Mod Manifest...')
+	setStatus('Choose where to export the Mod Manifest...')
+	beginVaultBusy('Exporting Mod Manifest...', null)
 	try {
 		const result = await window.vault_IPC.exportRecoveryManifest()
+		if ( result === null || result.cancelled === true ) {
+			setStatus('Mod Manifest export cancelled.')
+			return
+		}
 		if ( result.ok === false ) {
-			MA.byIdText('vaultStatus', `Vault recovery manifest failed: ${result.error ?? 'Unknown error'}`)
+			setStatus(`Mod Manifest export failed: ${result.error ?? 'Unknown error'}`)
 			return
 		}
 		const coverage = result.sourceCoverage ?? {}
 		const withoutSource = Number.isFinite(coverage.withoutSource) ? coverage.withoutSource : 0
 		const missingText = withoutSource === 0 ? '' : ` ${withoutSource} mod${withoutSource === 1 ? '' : 's'} do not have a known redownload URL yet.`
-		MA.byIdText('vaultStatus', `Saved recovery manifest for ${result.modCount} Vault mod${result.modCount === 1 ? '' : 's'}: ${result.filePath}.${missingText}`)
+		setStatus(`Exported Mod Manifest for ${result.modCount} Vault mod${result.modCount === 1 ? '' : 's'}: ${result.filePath}.${missingText}`)
 	} catch (err) {
-		MA.byIdText('vaultStatus', `Vault recovery manifest failed: ${err.message}`)
+		setStatus(`Mod Manifest export failed: ${err.message}`)
 	} finally {
 		endVaultBusy()
 		setButtonState(button, false, originalText)
