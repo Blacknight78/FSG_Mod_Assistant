@@ -11,6 +11,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
 	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
@@ -92,48 +93,179 @@
 		.joint-container .joint.attach_has {
 			clip-path: polygon(90% 0, 100% 50%, 90% 100%, 0% 100%, 10% 50%, 0% 0%);
 		}
+		.basegame-body {
+			background: var(--bs-body-bg);
+		}
+		.basegame-window {
+			display: flex;
+			flex-direction: column;
+			gap: 0.75rem;
+			height: 100vh;
+			min-height: 0;
+			padding: 0.75rem;
+		}
+		.basegame-header {
+			-webkit-app-region: drag;
+			border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+			padding-bottom: 0.75rem;
+		}
+		.basegame-header-grid {
+			align-items: center;
+			display: grid;
+			gap: 1rem;
+			grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 42rem);
+		}
+		.basegame-title-banner {
+			background: color-mix(in srgb, var(--bs-success) 78%, var(--bs-body-bg) 22%);
+			border-radius: 0.5rem;
+			color: var(--bs-dark);
+			font-weight: 700;
+			margin: 0;
+			padding: 0.45rem 1rem;
+			text-align: center;
+		}
+		.basegame-layout {
+			display: grid;
+			flex: 1 1 auto;
+			gap: 0.75rem;
+			grid-template-columns: 10rem minmax(0, 1fr);
+			min-height: 0;
+		}
+		.basegame-action-rail,
+		.basegame-content-panel {
+			background: color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-secondary-bg) 8%);
+			border: var(--bs-border-width) solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			min-height: 0;
+		}
+		.basegame-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+			overflow: auto;
+			padding: 0.5rem;
+		}
+		.basegame-rail-button {
+			align-items: center;
+			background: var(--bs-body-bg);
+			border: var(--bs-border-width) solid rgba(var(--bs-info-rgb), 0.45);
+			border-radius: 0.45rem;
+			color: var(--bs-body-color);
+			display: flex;
+			flex-direction: column;
+			gap: 0.3rem;
+			justify-content: center;
+			line-height: 1.15;
+			min-height: 5.2rem;
+			padding: 0.5rem 0.35rem;
+			text-align: center;
+			white-space: normal;
+		}
+		.basegame-rail-button:hover,
+		.basegame-rail-button:focus-visible {
+			background: rgba(var(--bs-info-rgb), 0.12);
+			border-color: rgba(var(--bs-info-rgb), 0.85);
+		}
+		.basegame-rail-button > div:first-child {
+			font-size: 1.7rem !important;
+			line-height: 1;
+		}
+		.basegame-content-panel {
+			display: flex;
+			flex-direction: column;
+			overflow: hidden;
+		}
+		.basegame-home-card {
+			background: #111315;
+			border: var(--bs-border-width) solid #30363d;
+			border-radius: 0.5rem;
+			margin: auto;
+			max-width: 42rem;
+			padding: 1.4rem;
+		}
+		.basegame-home-card > i18n-text {
+			display: block;
+			font-size: 1.45rem;
+			line-height: 1.45;
+		}
+		.basegame-search-panel {
+			background: color-mix(in srgb, var(--bs-body-bg) 88%, var(--bs-secondary-bg) 12%);
+			border-top: var(--bs-border-width) solid var(--bs-border-color);
+			padding: 0.75rem;
+		}
+		#bgContent {
+			align-content: flex-start;
+			gap: 0.65rem !important;
+			min-height: 0;
+			padding: 0.75rem;
+		}
+		.storeItemBox {
+			flex: 1 1 18rem;
+			max-width: calc(33.333% - 0.5rem);
+		}
+		@media (max-width: 1100px) {
+			.basegame-header-grid,
+			.basegame-layout {
+				grid-template-columns: 1fr;
+			}
+			.basegame-action-rail {
+				flex-direction: row;
+				flex-wrap: wrap;
+			}
+			.basegame-rail-button {
+				flex: 1 1 9rem;
+				min-height: 4.25rem;
+			}
+			.storeItemBox {
+				max-width: calc(50% - 0.5rem);
+			}
+		}
 	</style>
 </head>
-<body data-bs-theme="dark" class="overflow-hidden">
-	<div class="container-fluid px-1 vh-100 d-flex flex-column">
-		<div class="sticky-top pb-2 bg-body border-bottom mb-0" >
-			<div class="row w-100" style="-webkit-app-region: drag;">
-				<div class="col-12">
-					<div class="app-window-brand ps-2 mt-2"><span class="app-window-logo" aria-hidden="true"></span><h1 class="app-window-name">FSG Mod Assistant</h1><div class="h4 mb-0 ms-3"><i class="fsico-ver-19"></i> <i18n-text data-key="basegame_browser"></i18n-text></div></div>
+<body data-bs-theme="dark" class="overflow-hidden basegame-body">
+	<main class="basegame-window user-select-none">
+		<header class="basegame-header">
+			<div class="basegame-header-grid">
+				<div class="app-window-brand ps-2">
+					<span class="app-window-logo" aria-hidden="true"></span>
+					<h1 class="app-window-name">FSG Mod Assistant</h1>
 				</div>
+				<h2 class="h1 basegame-title-banner"><i class="fsico-ver-19"></i> <i18n-text data-key="basegame_browser"></i18n-text></h2>
 			</div>
-		</div>
-		<div class="d-flex flex-row flex-grow-1" style="height: calc(100vh - 60px)">
-			<div class="col-3 fs-5 px-3 d-flex flex-column justify-content-evenly border-end">
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="brand">
-					<div class="fs-2 fsico-cat-brand align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_brand"></i18n-text>
+		</header>
+		<div class="basegame-layout">
+			<nav class="basegame-action-rail" aria-label="Base game browser sections">
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="brand">
+					<div class="fsico-cat-brand" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_brand"></i18n-text>
 				</div>
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="non-place">
-					<div class="fs-2 fsico-cat-vehicle align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_categories"></i18n-text>
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="non-place">
+					<div class="fsico-cat-vehicle" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_categories"></i18n-text>
 				</div>
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="placeable">
-					<div class="fs-2 fsico-cat-placeable align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_placeable"></i18n-text>
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="placeable">
+					<div class="fsico-cat-placeable" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_placeable"></i18n-text>
 				</div>
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="attach_has">
-					<div class="fs-2 fsico-cat-attach-has align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_attach_has"></i18n-text>
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="attach_has">
+					<div class="fsico-cat-attach-has" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_attach_has"></i18n-text>
 				</div>
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="attach_need">
-					<div class="fs-2 fsico-cat-attach-need align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_attach_need"></i18n-text>
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="attach_need">
+					<div class="fsico-cat-attach-need" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_attach_need"></i18n-text>
 				</div>
-				<div class="border-top border-bottom pageClicker d-flex justify-content-between" data-type="cat" data-page="fills">
-					<div class="fs-2 fsico-look-fillunit align-self-center"></div>
-					<i18n-text class="text-end align-self-center" data-key="basegame_fills"></i18n-text>
+				<div class="pageClicker basegame-rail-button" data-type="cat" data-page="fills">
+					<div class="fsico-look-fillunit" aria-hidden="true"></div>
+					<i18n-text data-key="basegame_fills"></i18n-text>
 				</div>
-			</div>
-			<div class="col-9 d-flex flex-column">
+			</nav>
+			<section class="basegame-content-panel">
 				<div class="d-flex flex-column flex-grow-1 overflow-hidden" id="homePageContent">
 					<div class="d-flex flex-column flex-grow-1 justify-content-center gap-4" id="homePageBlurb">
-						<i18n-text class="fs-3 align-self-center w-50 text-center mx-auto" data-key="basegame_browser_blurb"></i18n-text>
+						<div class="basegame-home-card text-center">
+							<i18n-text data-key="basegame_browser_blurb"></i18n-text>
+						</div>
 						<div class="fs-4 w-75 mx-auto d-none" id="homePageError">
 							<div class="alert alert-warning" role="alert">
 								<div class="row">
@@ -153,8 +285,8 @@
 					<div class="d-flex flex-column flex-grow-1 d-none overflow-custom2 pt-2 mb-2" id="searchContentBox">
 						<div class="px-2 d-flex justify-content-between gap-1 flex-wrap" id="searchContent"></div>
 					</div>
-					<div class="pt-3 border-top" id="searchBox">
-						<div class="input-group input-group-sm my-2 mx-auto w-75">
+					<div class="basegame-search-panel" id="searchBox">
+						<div class="input-group mx-auto w-75">
 							<span class="input-group-text"><i18n-text data-key="find_basegame_match"></i18n-text></span>
 							<input value="" type="text" id="mods__filter" class="form-control mod-row-filter rounded-end">
 							<span id="mods__filter_clear" class="form-control-clear bi bi-eraser form-control-feedback position-absolute d-none" style="right:10px; cursor:pointer; z-index:100; top:calc( 50% - 10px); "></span>
@@ -165,9 +297,9 @@
 				<div class="px-2 overflow-custom2 d-flex justify-content-between gap-1 flex-wrap pb-2" id="bgContent">
 					
 				</div>
-			</div>
+			</section>
 		</div>
-	</div>
+	</main>
 
 <template id="store_item">
 	<div class="text-end storeItemBox">

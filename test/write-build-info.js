@@ -34,5 +34,17 @@ const buildInfo = {
 	version : packageInfo.version,
 }
 
+if ( typeof process.env.FSGMA_GOOGLE_DRIVE_CLIENT_ID === 'string' && process.env.FSGMA_GOOGLE_DRIVE_CLIENT_ID.trim() !== '' ) {
+	buildInfo.googleDriveClientID = process.env.FSGMA_GOOGLE_DRIVE_CLIENT_ID.trim()
+}
+
+if ( typeof process.env.FSGMA_GOOGLE_DRIVE_CLIENT_SECRET === 'string' && process.env.FSGMA_GOOGLE_DRIVE_CLIENT_SECRET.trim() !== '' ) {
+	buildInfo.googleDriveClientSecret = process.env.FSGMA_GOOGLE_DRIVE_CLIENT_SECRET.trim()
+}
+
+if ( typeof process.env.FSGMA_GOOGLE_DRIVE_DEVICE_CLIENT_ID === 'string' && process.env.FSGMA_GOOGLE_DRIVE_DEVICE_CLIENT_ID.trim() !== '' ) {
+	buildInfo.googleDriveDeviceClientID = process.env.FSGMA_GOOGLE_DRIVE_DEVICE_CLIENT_ID.trim()
+}
+
 fs.writeFileSync(path.join(__dirname, '..', 'build-info.json'), `${JSON.stringify(buildInfo, null, 2)}\n`)
 console.log(`Wrote build-info.json ${buildInfo.label}`)

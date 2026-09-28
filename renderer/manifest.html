@@ -132,6 +132,12 @@
 						<span>Copy link</span>
 					</button>
 				</span>
+				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Link Google Drive: connect your Google Drive so Copy link can create a short Drive-backed share link.">
+					<button id="manifestDriveLink" type="button" class="btn btn-sm btn-outline-success manifest-rail-button">
+						<i aria-hidden="true" class="bi bi-google"></i>
+						<span>Link Drive</span>
+					</button>
+				</span>
 				<span class="manifest-rail-tip" data-bs-placement="right" data-bs-toggle="tooltip" tabindex="0" title="Import file: choose a collection manifest file and review what can be installed.">
 					<button id="manifestImportFile" type="button" class="btn btn-sm btn-outline-info manifest-rail-button">
 						<i aria-hidden="true" class="bi bi-file-earmark-arrow-down"></i>
@@ -158,6 +164,14 @@
 				<section id="manifestBusyProgress" class="mb-3 d-none" aria-hidden="true">
 					<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
 						<div id="manifestBusyProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%">Working...</div>
+					</div>
+				</section>
+
+				<section class="manifest-section mb-3">
+					<label for="manifestImportLinkText" class="form-label">Manifest link</label>
+					<div class="input-group">
+						<input id="manifestImportLinkText" type="text" class="form-control" placeholder="Paste a collection link, or leave blank to import from clipboard">
+						<button id="manifestImportLinkTextButton" type="button" class="btn btn-outline-info">Import link</button>
 					</div>
 				</section>
 
@@ -193,6 +207,13 @@
 				<div class="alert alert-dark mt-3 mb-0">
 					Export saves a small collection manifest. Import reads a manifest first so you can review available automatic installs before changing a collection.
 				</div>
+				<div class="alert alert-dark mt-3 mb-0">
+					<h3 class="h5">Google Drive links</h3>
+					<p id="manifestDriveStatus" class="mb-2">Checking Google Drive status...</p>
+					<button id="manifestDrivePanelLink" type="button" class="btn btn-sm btn-outline-success w-100 mb-2">Link Google Drive</button>
+					<button id="manifestDriveOpenEdge" type="button" class="btn btn-sm btn-outline-info w-100 mb-2 d-none">Open sign-in in Edge</button>
+					<button id="manifestDriveDisconnect" type="button" class="btn btn-sm btn-outline-warning w-100">Disconnect Google Drive</button>
+				</div>
 			</aside>
 		</div>
 	</main>
@@ -208,6 +229,7 @@
 					</div>
 					<div class="small text-body-secondary"><template-var>versions</template-var></div>
 					<div class="manifest-install-detail mt-2"><template-var>installDetail</template-var></div>
+					<div class="manifest-version-warning mt-2"><template-var>versionWarning</template-var></div>
 					<div class="small mt-2"><template-var>detail</template-var></div>
 					<button type="button" class="btn btn-primary manifest-source-button d-none mt-3">Open Web Page</button>
 				</div>

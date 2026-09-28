@@ -678,6 +678,41 @@ function ensureModManagementIcons() {
 function modManagementActions() {
 	return [
 		{
+			buttonClass : 'btn-info',
+			description : 'Browse base game vehicles, placeables, brands, categories, attachment joints, and fill types.',
+			icon : 'bi-book',
+			label : 'Base Game Browser',
+			target : 'basegame',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Open and filter the Farming Simulator log file.',
+			icon : 'bi-file-earmark-text',
+			label : 'Game Log',
+			target : 'gamelog',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Manage local save games and save game backups.',
+			icon : 'bi-folder2-open',
+			label : 'Save Game Manager',
+			target : 'savemanage',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Compare a save folder with its backups to track when mods changed.',
+			icon : 'bi-clock-history',
+			label : 'Save Game Mod Tracker',
+			target : 'savetrack',
+		},
+		{
+			buttonClass : 'btn-secondary',
+			description : 'Back up, view, and restore inputBinding.xml configurations.',
+			icon : 'bi-controller',
+			label : 'Input Bindings',
+			target : 'input',
+		},
+		{
 			buttonClass : 'btn-warning',
 			description : 'Check monitored collections and apply available updates.',
 			icon : 'bi-arrow-repeat',
@@ -746,6 +781,16 @@ function ensureModManagementStyles() {
 			font-size: 1.65rem;
 			line-height: 1;
 		}
+		.ma-management-start-logo {
+			background-image: url("img/icon.ico");
+			background-position: center;
+			background-repeat: no-repeat;
+			background-size: contain;
+			display: block;
+			flex: 0 0 auto;
+			height: 2.5rem;
+			width: 2.5rem;
+		}
 		.ma-management-floating-button {
 			position: fixed;
 			left: 0.75rem;
@@ -757,10 +802,82 @@ function ensureModManagementStyles() {
 			box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.45);
 		}
 		.ma-management-menu-action {
+			--ma-menu-accent: var(--bs-secondary);
+			background: var(--bs-tertiary-bg);
+			border: var(--bs-border-width) solid var(--bs-border-color);
+			border-left: 0.35rem solid var(--ma-menu-accent);
+			border-radius: var(--bs-border-radius);
+			color: var(--bs-body-color);
 			display: flex;
 			align-items: center;
-			justify-content: center;
-			gap: 0.6rem;
+			gap: 0.75rem;
+			min-height: 3.35rem;
+			padding: 0.45rem 0.6rem;
+			text-align: left;
+			width: 100%;
+		}
+		.ma-management-menu-action:hover {
+			background: var(--bs-secondary-bg);
+			border-color: var(--bs-border-color);
+			border-left-color: var(--ma-menu-accent);
+			color: var(--bs-body-color);
+		}
+		.ma-management-menu-action .bi {
+			color: var(--ma-menu-accent);
+			flex: 0 0 1.6rem;
+			font-size: 1.3rem;
+			line-height: 1;
+			text-align: center;
+		}
+		.ma-management-menu-text {
+			flex: 1 1 auto;
+			min-width: 0;
+		}
+		.ma-management-menu-title,
+		.ma-management-menu-description {
+			display: block;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.ma-management-menu-title {
+			font-size: 1rem;
+			font-weight: 600;
+			line-height: 1.25;
+		}
+		.ma-management-menu-description {
+			color: var(--bs-secondary-color);
+			font-size: 0.82rem;
+			line-height: 1.2;
+		}
+		.ma-management-menu-chevron {
+			color: var(--bs-secondary-color);
+			flex: 0 0 auto;
+			font-size: 1.25rem;
+		}
+		.ma-management-menu-action.btn-info { --ma-menu-accent: var(--bs-info); }
+		.ma-management-menu-action.btn-secondary { --ma-menu-accent: var(--bs-secondary); }
+		.ma-management-menu-action.btn-warning { --ma-menu-accent: var(--bs-warning); }
+		.ma-management-menu-action.btn-success { --ma-menu-accent: var(--bs-success); }
+		.ma-management-menu-section {
+			border-top: var(--bs-border-width) solid var(--bs-border-color);
+			padding-top: 0.55rem;
+		}
+		.ma-management-menu-section + .ma-management-menu-section {
+			margin-top: 0.55rem;
+		}
+		.ma-management-menu-heading {
+			color: var(--bs-secondary-color);
+			font-size: 0.72rem;
+			font-weight: 700;
+			letter-spacing: 0.04em;
+			margin: 0 0 0.35rem 0;
+			text-transform: uppercase;
+		}
+		.ma-management-menu-list {
+			display: flex;
+			flex-direction: column;
+			gap: 0.4rem;
 		}
 		@media (max-width: 1100px) {
 			.ma-management-rail-tip { flex: 1 1 11rem; }
@@ -774,8 +891,8 @@ function createModManagementButton() {
 	const button = document.createElement('button')
 	button.className = 'btn btn-sm btn-warning ma-management-rail-button'
 	button.type = 'button'
-	button.title = 'Mod Management: open shortcuts for collection updates, Vault tools, sharing, backups, and recent changes.'
-	button.innerHTML = '<i aria-hidden="true" class="bi bi-grid-3x3-gap"></i><span>Mod Management</span>'
+	button.title = 'Menu: open shortcuts for base game data, collection updates, Vault tools, sharing, backups, and recent changes.'
+	button.innerHTML = '<span aria-hidden="true" class="ma-management-start-logo"></span><span>Menu</span>'
 	button.addEventListener('click', () => {
 		const canvas = MA.byId('modManagementCanvas')
 		if ( typeof window.bootstrap === 'undefined' || canvas === null ) { return }
@@ -784,7 +901,28 @@ function createModManagementButton() {
 	return button
 }
 
+function bindManagementDispatchButtons() {
+	for ( const button of document.querySelectorAll('[data-ma-dispatch-window]') ) {
+		if ( button.dataset.maDispatchBound === 'true' ) { continue }
+		button.dataset.maDispatchBound = 'true'
+		button.addEventListener('click', () => {
+			window.operations.dispatch(button.dataset.maDispatchWindow)
+		})
+	}
+}
+
 function addModManagementButton() {
+	const existingButton = document.getElementById('mainModManagementButton')
+	if ( existingButton !== null ) {
+		existingButton.title = 'Menu: open shortcuts for base game data, collection updates, Vault tools, sharing, backups, and recent changes.'
+		existingButton.addEventListener('click', () => {
+			const canvas = MA.byId('modManagementCanvas')
+			if ( typeof window.bootstrap === 'undefined' || canvas === null ) { return }
+			window.bootstrap.Offcanvas.getOrCreateInstance(canvas).show()
+		})
+		return
+	}
+
 	const actionRail = document.querySelector('[class*="action-rail"]')
 	const button = createModManagementButton()
 	if ( actionRail !== null ) {
@@ -795,7 +933,7 @@ function addModManagementButton() {
 		return
 	}
 	button.className = 'btn btn-warning ma-management-floating-button'
-	button.innerHTML = '<i aria-hidden="true" class="bi bi-grid-3x3-gap"></i><span>Mod Management</span>'
+	button.innerHTML = '<span aria-hidden="true" class="ma-management-start-logo"></span><span>Menu</span>'
 	document.body.appendChild(button)
 }
 
@@ -809,23 +947,48 @@ function createModManagementCanvas() {
 	canvas.innerHTML = `
 		<div class="offcanvas-header justify-content-start" style="-webkit-app-region: drag;">
 			<button type="button" style="-webkit-app-region: no-drag; z-index: 1;" class="btn btn-secondary" data-bs-dismiss="offcanvas" aria-label="Close"><i class="bi-x-lg"></i></button>
-			<h5 class="offcanvas-title ps-3 mb-0" id="modManagementCanvasLabel">Mod Management Menu</h5>
+			<h5 class="offcanvas-title ps-3 mb-0" id="modManagementCanvasLabel">Menu</h5>
 		</div>
 		<div class="offcanvas-body full-scroll">
-			<div class="row g-3" id="modManagementCanvasActions"></div>
+			<div id="modManagementCanvasActions"></div>
 		</div>
 	`
 	const actions = canvas.querySelector('#modManagementCanvasActions')
-	for ( const action of modManagementActions() ) {
-		const item = document.createElement('div')
-		item.className = 'col-12'
-		item.innerHTML = `
-			<button class="btn ${action.buttonClass} w-100 p-3 fs-5 ma-management-menu-action" data-dispatch-window="${action.target}" type="button">
-				<i class="bi ${action.icon}" aria-hidden="true"></i><span>${action.label}</span>
-			</button>
-			<div class="small text-body-secondary mt-1">${action.description}</div>
+	const menuActions = modManagementActions()
+	const menuSections = [
+		{
+			actions : menuActions.slice(0, 5),
+			label : 'Reference tools',
+		},
+		{
+			actions : menuActions.slice(5),
+			label : 'MOD MAINTENANCE',
+		},
+	]
+	for ( const section of menuSections ) {
+		const sectionNode = document.createElement('section')
+		sectionNode.className = 'ma-management-menu-section'
+		sectionNode.innerHTML = `
+			<p class="ma-management-menu-heading">${section.label}</p>
+			<div class="ma-management-menu-list"></div>
 		`
-		actions.appendChild(item)
+		const listNode = sectionNode.querySelector('.ma-management-menu-list')
+		for ( const action of section.actions ) {
+			const button = document.createElement('button')
+			button.className = `btn ${action.buttonClass} ma-management-menu-action`
+			button.dataset.dispatchWindow = action.target
+			button.type = 'button'
+			button.innerHTML = `
+				<i class="bi ${action.icon}" aria-hidden="true"></i>
+				<span class="ma-management-menu-text">
+					<span class="ma-management-menu-title">${action.label}</span>
+					<span class="ma-management-menu-description">${action.description}</span>
+				</span>
+				<span class="ma-management-menu-chevron" aria-hidden="true">&rsaquo;</span>
+			`
+			listNode.appendChild(button)
+		}
+		actions.appendChild(sectionNode)
 	}
 	canvas.addEventListener('click', (event) => {
 		const actionButton = event.target.closest('.ma-management-menu-action')
@@ -848,12 +1011,12 @@ function createModManagementCanvas() {
 
 function setupModManagementMenu() {
 	if ( window.operations?.dispatch === undefined ) { return }
-	if ( document.location.href.includes('main.html') ) { return }
 	if ( document.getElementById('modManagementCanvas') !== null ) { return }
 	ensureModManagementIcons()
 	ensureModManagementStyles()
 	createModManagementCanvas()
 	addModManagementButton()
+	bindManagementDispatchButtons()
 }
 
 // MARK: PAGE LOAD

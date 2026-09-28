@@ -11,6 +11,7 @@ const startTime  = Date.now()
 const testList   = [
 	'csvcheck',     // CSV Reader (collection compare)
 	'drivecollectionlink', // Google Drive collection short links
+	'drivemanifestclient', // Google Drive manifest OAuth/API helpers
 	'manifestshare', // Collection manifest share links
 	'sourcecode',   // ESLint Source code
 	'sourcehtml',   // HTML Source

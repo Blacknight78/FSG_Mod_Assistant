@@ -169,43 +169,18 @@ window.main_IPC.receive('loading:current',  (count, inMB) => { window.state.load
 //MARK: top bar event
 function topBarHandlers() {
 	MA.byIdEventIfExists('bottomBar-debug',    () => { window.main_IPC.dispatch('debug') })
-	MA.byIdEventIfExists('topBar-basegame',    () => { window.main_IPC.dispatch('basegame') })
-	MA.byIdEventIfExists('topBar-find',        () => { window.main_IPC.dispatch('find') })
-	MA.byIdEventIfExists('topBar-gamelog',     () => { window.main_IPC.dispatch('gamelog') })
 	MA.byIdEventIfExists('topBar-help',        () => { window.main_IPC.dispatch('help') })
-	MA.byIdEventIfExists('topBar-input',       () => { window.main_IPC.dispatch('input') })
 	MA.byIdEventIfExists('topBar-launch',      () => { window.state.action.launchGame() })
-	MA.byIdEventIfExists('topBar-mini',        () => { window.main_IPC.dispatch('mini') })
 	MA.byIdEventIfExists('topBar-preferences', () => { window.state.prefs.open() })
-	MA.byIdEventIfExists('topBar-savemanage',  () => { window.main_IPC.dispatch('savemanage') })
-	MA.byIdEventIfExists('topBar-savetrack',   () => { window.main_IPC.dispatch('savetrack') })
-	MA.byIdEventIfExists('topBar-tray',        () => { window.main_IPC.minimizeToTray() })
 	MA.byIdEventIfExists('topBar-update',      () => { window.main_IPC.updateApplication() })
 	MA.byIdEventIfExists('appVersionLink',     () => { window.main_IPC.openReleasePage() })
 }
 
-function openModManagementMenu() {
-	bootstrap.Offcanvas.getOrCreateInstance(MA.byId('modManagementCanvas')).show()
-}
-
-function dispatchModManagementWindow(windowName) {
-	const canvas = MA.byId('modManagementCanvas')
-	const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(canvas)
-	const dispatchWindow = () => { window.main_IPC.dispatch(windowName) }
-	if ( canvas.classList.contains('show') ) {
-		canvas.addEventListener('hidden.bs.offcanvas', dispatchWindow, { once : true })
-		offcanvas.hide()
-		return
-	}
-	dispatchWindow()
-}
-
 //MARK: side bar event
 function sideBarHandlers() {
-	MA.byIdEventIfExists('mainModManagementButton', openModManagementMenu)
-	for ( const button of document.querySelectorAll('.mod-management-menu-action') ) {
-		button.addEventListener('click', () => { dispatchModManagementWindow(button.dataset.dispatchWindow) })
-	}
+	MA.byIdEventIfExists('offcanvasVersionClose', () => {
+		bootstrap.Offcanvas.getOrCreateInstance(MA.byId('offcanvas-version')).hide()
+	})
 }
 // MARK: top UI event
 function topUIHandlers() {

@@ -1082,7 +1082,6 @@ class StateManager {
 
 		document.body.setAttribute('data-version', this.flag.currentVersion)
 
-		MA.byId('topBar-mini').clsOrGate(this.flag.miniMode, 'text-info', null)
 		MA.byId('topBar-update').clsShow(this.flag.updateReady)
 		MA.byId('dirty_folders').clsShow(this.flag.folderDirty)
 		MA.byId('folderEditButton').clsOrGate(this.flag.folderEdit, 'btn-primary', 'btn-outline-primary')

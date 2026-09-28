@@ -11,6 +11,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
 	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
@@ -74,72 +75,189 @@
 			user-select: text;
 			white-space: pre;
 		}
+		.gamelog-window {
+			display: flex;
+			flex-direction: column;
+			gap: 0.75rem;
+			height: 100vh;
+			min-height: 0;
+			padding: 0.75rem;
+		}
+		.gamelog-header {
+			-webkit-app-region: drag;
+			border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+			padding-bottom: 0.75rem;
+		}
+		.gamelog-header-grid {
+			align-items: center;
+			display: grid;
+			gap: 1rem;
+			grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 42rem);
+		}
+		.gamelog-title-banner {
+			background: color-mix(in srgb, var(--bs-primary) 70%, var(--bs-body-bg) 30%);
+			border-radius: 0.5rem;
+			color: #fff;
+			font-weight: 700;
+			margin: 0;
+			padding: 0.45rem 1rem;
+			text-align: center;
+		}
+		.gamelog-layout {
+			display: grid;
+			flex: 1 1 auto;
+			gap: 0.75rem;
+			grid-template-columns: 10rem minmax(0, 1fr);
+			min-height: 0;
+		}
+		.gamelog-action-rail,
+		.gamelog-content-panel {
+			background: color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-secondary-bg) 8%);
+			border: var(--bs-border-width) solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			min-height: 0;
+		}
+		.gamelog-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+			overflow: auto;
+			padding: 0.5rem;
+		}
+		.gamelog-rail-button {
+			align-items: center;
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			justify-content: center;
+			line-height: 1.15;
+			min-height: 4.35rem;
+			padding: 0.5rem 0.35rem;
+			text-align: center;
+			white-space: normal;
+		}
+		.gamelog-rail-button .bi {
+			font-size: 1.45rem;
+			line-height: 1;
+		}
+		.gamelog-content-panel {
+			display: flex;
+			flex-direction: column;
+			overflow: hidden;
+		}
+		.gamelog-path-card {
+			background: #111315;
+			border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+			padding: 0.75rem 1rem;
+		}
+		.gamelog-filter-row {
+			padding: 0.75rem 0.75rem 0;
+		}
+		.gamelog-log-frame {
+			flex: 1 1 auto;
+			min-height: 0;
+			overflow: hidden;
+			padding: 0.75rem;
+			position: relative;
+		}
+		@media (max-width: 1000px) {
+			.gamelog-layout,
+			.gamelog-header-grid {
+				grid-template-columns: 1fr;
+			}
+			.gamelog-action-rail {
+				flex-direction: row;
+			}
+		}
 	</style>
 </head>
 <body data-bs-theme="dark" class="overflow-hidden">
-	<div class="container-fluid px-0 user-select-none d-flex flex-column vh-100">
-		<div class="border-bottom bg-body ">
-			<div class="row bg-body border-bottom">
-				<div class="col-12 pt-1" style="-webkit-app-region: drag;">
-					<div class="app-window-brand">
-						<span class="app-window-logo" aria-hidden="true"></span>
-						<h1 class="app-window-name">FSG Mod Assistant</h1>
+	<div class="gamelog-window user-select-none">
+		<header class="gamelog-header">
+			<div class="gamelog-header-grid">
+				<div class="app-window-brand">
+					<span class="app-window-logo" aria-hidden="true"></span>
+					<h1 class="app-window-name">FSG Mod Assistant</h1>
+				</div>
+				<h2 class="gamelog-title-banner">Game Log</h2>
+			</div>
+		</header>
+		<main class="gamelog-layout">
+			<aside class="gamelog-action-rail" aria-label="Window actions">
+				<button data-bs-placement="right" data-bs-toggle="tooltip" title="Auto-detect log file based on game version" type="button" id="logActionAuto" class="btn btn-secondary gamelog-rail-button">
+					<i class="bi bi-magic" aria-hidden="true"></i>
+					<span>Auto</span>
+				</button>
+				<button data-bs-placement="right" data-bs-toggle="tooltip" title="Open new log" type="button" id="logActionOpen" class="btn btn-secondary gamelog-rail-button">
+					<i class="bi bi-folder2-open" aria-hidden="true"></i>
+					<span>Open log</span>
+				</button>
+				<button data-bs-placement="right" data-bs-toggle="tooltip" title="Open log in Explorer" type="button" id="logActionFolder" class="btn btn-secondary gamelog-rail-button">
+					<i class="bi bi-folder-symlink" aria-hidden="true"></i>
+					<span>Show file</span>
+				</button>
+				<button data-bs-placement="right" data-bs-toggle="tooltip" title="Refresh log" type="button" id="logActionRefresh" class="btn btn-secondary gamelog-rail-button">
+					<i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+					<span>Refresh</span>
+				</button>
+				<input type="checkbox" class="btn-check" id="auto_scroll">
+				<label data-bs-placement="right" data-bs-toggle="tooltip" id="auto_scroll_label" title="Auto-scroll to bottom on change" class="btn btn-outline-success gamelog-rail-button" for="auto_scroll">
+					<i class="bi bi-align-bottom" aria-hidden="true"></i>
+					<span>Auto-scroll</span>
+				</label>
+				<button type="button" class="btn btn-outline-light gamelog-rail-button" data-ma-dispatch-window="mod_management">
+					<i class="bi bi-arrow-left" aria-hidden="true"></i>
+					<span>Back</span>
+				</button>
+			</aside>
+			<section class="gamelog-content-panel">
+				<div class="gamelog-path-card">
+					<div class="small text-body-secondary">Log file</div>
+					<span class="fst-italic" id="gameLogPath"></span>
+				</div>
+				<div class="gamelog-filter-row">
+					<div class="input-group input-group-sm btn-group w-100 mb-0">
+						<span class="input-group-text" id="basic-addon1">Show: </span>
+						<button type="button" class="btn btn-outline-light border" id="filterGroupReset">RESET</button>
+						<input type="checkbox" class="btn-check filter_only" id="debug_dupes">
+						<label data-bs-toggle="tooltip" title="Show Duplicate Entries" class="btn btn-outline-success btn-sm border" for="debug_dupes">DUPLICATES</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_other">
+						<label data-bs-toggle="tooltip" title="Everything Else" class="btn btn-outline-success btn-sm border" for="debug_other">OTHER</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_cpad">
+						<label data-bs-toggle="tooltip" title="CoursePlay / AutoDrive" class="btn btn-outline-success btn-sm border" for="debug_cpad">CP / AD</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_mod_loading">
+						<label data-bs-toggle="tooltip" title="Mod Loading" class="btn btn-outline-success btn-sm border" for="debug_mod_loading">MOD LOAD</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_info">
+						<label data-bs-toggle="tooltip" title="Info: messages" class="btn btn-outline-success btn-sm border" for="debug_info">INFO</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_warning">
+						<label data-bs-toggle="tooltip" title="Warning: messages" class="btn btn-outline-success btn-sm border" for="debug_warning">WARNING</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_error">
+						<label data-bs-toggle="tooltip" title="Error: messages" class="btn btn-outline-success btn-sm border" for="debug_error">ERROR</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_lua_error">
+						<label data-bs-toggle="tooltip" title="Lua Errors" class="btn btn-outline-success btn-sm border" for="debug_lua_error">LUA ERROR</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_dev_info">
+						<label data-bs-toggle="tooltip" title="DEV Info" class="btn btn-outline-success btn-sm border" for="debug_dev_info">DEV INFO</label>
+						<input type="checkbox" checked class="btn-check filter_only" id="debug_dev_warning">
+						<label data-bs-toggle="tooltip" title="DEV Warning" class="btn btn-outline-success btn-sm border" for="debug_dev_warning">DEV WARN</label>
 					</div>
-					<span class="ps-4 small fst-italic" id="gameLogPath"></span>
+					<div class="input-group input-group-sm mt-2">
+						<span class="input-group-text">Find In page</span>
+						<span class="input-group-text"><span id="currentFindIndex">0</span> / <span id="currentFindTotal">0</span></span>
+						<input type="text" id="gamelog_find" class="form-control mod-row-filter rounded-end">
+						
+						<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Find Previous" type="button" id="findPrevious" class="btn btn-secondary"><span class="bi bi-arrow-up"></span></button>
+						<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Find Next" type="button" id="findNext" class="btn btn-secondary"><span class="bi bi-arrow-down"></span></button>
+						<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Clear Input" type="button" id="findClear" class="btn btn-secondary"><span class="bi bi-eraser"></span></button>
+					</div>
 				</div>
-				<div class="m-0 px-0 rounded-end-0 btn-group-win_ui d-flex justify-content-end bg-transparent" style="position:absolute; -webkit-app-region: no-drag;">
-					<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Auto-Detect Log File Based on Game Version" type="button" id="logActionAuto" class="rounded-end-0 rounded-top-0 btn-win_ui btn btn-base-ui">AUTO</button>
-					<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Open new log" type="button" id="logActionOpen" class="rounded-0 btn-win_ui btn btn-base-ui"><i class="bi bi-folder2-open"></i></button>
-					<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Open log in Explorer" type="button" id="logActionFolder" class="rounded-0 btn-win_ui btn btn-base-ui"><i class="bi bi-save"></i></button>
-					<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Refresh Log" type="button" id="logActionRefresh" class="rounded-0 btn-win_ui btn btn-base-ui"><i class="bi bi-arrow-clockwise"></i></button>
-					<input type="checkbox" class="rounded-0 btn-win_ui btn-check" id="auto_scroll">
-					<label data-bs-placement="bottom" data-bs-toggle="tooltip" id="auto_scroll_label" title="Auto-Scroll to Bottom on change" class="rounded-0 btn-win_ui btn btn-outline-success border border-0 align-content-center" for="auto_scroll"><i class="bi bi-align-bottom"></i></label>
+				<div class="gamelog-log-frame">
+					<div id="game_log_contain" class="h-100" style="overflow-x: scroll; overflow-y: scroll;">
+						<table style="width: 100%; table-layout: fixed; transform: translate3d(0, 0, 0);" class="p-0 m-0 table table-borderless font-monospace small" id="game_log"></table>
+					</div>
+					<div id="game_log_scroll" class="d-flex flex-column" style="z-index: -1; height: calc(100% - 10px); width: 6px; position:relative; top: -100%; left: calc(100% - 9px); background-color:rgba(0,0,0,0.1)"></div>
 				</div>
-
-			</div>
-			<div class="input-group input-group-sm btn-group w-100 mt-2 mb-0 px-2">
-				<span class="input-group-text" id="basic-addon1">Show: </span>
-				<button type="button" class="btn btn-outline-light border" id="filterGroupReset">RESET</button>
-				<input type="checkbox" class="btn-check filter_only" id="debug_dupes">
-				<label data-bs-toggle="tooltip" title="Show Duplicate Entries" class="btn btn-outline-success btn-sm border" for="debug_dupes">DUPLICATES</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_other">
-				<label data-bs-toggle="tooltip" title="Everything Else" class="btn btn-outline-success btn-sm border" for="debug_other">OTHER</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_cpad">
-				<label data-bs-toggle="tooltip" title="CoursePlay / AutoDrive" class="btn btn-outline-success btn-sm border" for="debug_cpad">CP / AD</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_mod_loading">
-				<label data-bs-toggle="tooltip" title="Mod Loading" class="btn btn-outline-success btn-sm border" for="debug_mod_loading">MOD LOAD</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_info">
-				<label data-bs-toggle="tooltip" title="Info: messages" class="btn btn-outline-success btn-sm border" for="debug_info">INFO</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_warning">
-				<label data-bs-toggle="tooltip" title="Warning: messages" class="btn btn-outline-success btn-sm border" for="debug_warning">WARNING</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_error">
-				<label data-bs-toggle="tooltip" title="Error: messages" class="btn btn-outline-success btn-sm border" for="debug_error">ERROR</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_lua_error">
-				<label data-bs-toggle="tooltip" title="Lua Errors" class="btn btn-outline-success btn-sm border" for="debug_lua_error">LUA ERROR</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_dev_info">
-				<label data-bs-toggle="tooltip" title="DEV Info" class="btn btn-outline-success btn-sm border" for="debug_dev_info">DEV INFO</label>
-				<input type="checkbox" checked class="btn-check filter_only" id="debug_dev_warning">
-				<label data-bs-toggle="tooltip" title="DEV Warning" class="btn btn-outline-success btn-sm border" for="debug_dev_warning">DEV WARN</label>
-			</div>
-			<div class="input-group input-group-sm mb-2 mt-1 px-2">
-				<span class="input-group-text">Find In page</span>
-				<span class="input-group-text"><span id="currentFindIndex">0</span> / <span id="currentFindTotal">0</span></span>
-				<input type="text" id="gamelog_find" class="form-control mod-row-filter rounded-end">
-				
-				<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Find Previous" type="button" id="findPrevious" class="btn btn-secondary"><span class="bi bi-arrow-up"></span></button>
-				<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Find Next" type="button" id="findNext" class="btn btn-secondary"><span class="bi bi-arrow-down"></span></button>
-				<button data-bs-placement="bottom" data-bs-toggle="tooltip" title="Clear Input" type="button" id="findClear" class="btn btn-secondary"><span class="bi bi-eraser"></span></button>
-			</div>
-		</div>
-		<div class="flex-grow-1 overflow-hidden">
-			<div id="game_log_contain" class="h-100" style="overflow-x: scroll; overflow-y: scroll;">
-				<table style="width: 100%; table-layout: fixed; transform: translate3d(0, 0, 0);" class="p-0 m-0 table table-borderless font-monospace small" id="game_log"></table>
-			</div>
-			<div id="game_log_scroll" class="d-flex flex-column" style="z-index: -1; height: calc(100% - 10px); width: 6px; position:relative; top: -100%; left: calc(100% - 9px); background-color:rgba(0,0,0,0.1)"></div>
-		</div>
-
-		
-		
+			</section>
+		</main>
 	</div>
 
 </body>

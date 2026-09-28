@@ -166,11 +166,36 @@ async function measureModUpdatePhase(phase, operation) {
 	}
 }
 const crypto           = require('node:crypto')
+const http             = require('node:http')
 const path             = require('node:path')
 const fs               = require('node:fs')
 const fsPromise        = require('node:fs/promises')
 const zlib             = require('node:zlib')
 const Store            = require('electron-store')
+const {
+	GOOGLE_DEVICE_CODE_URL,
+	GOOGLE_TOKEN_URL,
+	buildAuthCodeTokenBody,
+	buildDriveAuthURL,
+	buildDeviceCodeBody,
+	buildDeviceTokenBody,
+	buildRefreshTokenBody,
+	createPKCEChallenge,
+	createPKCEVerifier,
+	driveCreateURL,
+	driveAnyoneReaderPermission,
+	driveDownloadURL,
+	driveFilesURL,
+	driveFolderMetadata,
+	driveManifestMetadata,
+	driveMultipartBody,
+	drivePermissionURL,
+	driveUploadURL,
+} = require('./lib/driveManifestClient.js')
+const {
+	createDriveCollectionLink,
+	parseDriveCollectionLink,
+} = require('./lib/driveManifestLink.js')
 
 function loadBuildInfo() {
 	try {
@@ -375,6 +400,7 @@ serveIPC.storeSites       = new Store({name : 'mod_source_site', migrations : se
 serveIPC.storeNote        = new Store({name : 'col_notes', clearInvalidConfig : true})
 serveIPC.storeHistory     = new Store({name : 'collection_history', clearInvalidConfig : true})
 serveIPC.storeLibrary     = new Store({name : 'mod_library', clearInvalidConfig : true})
+serveIPC.storeDrive       = new Store({name : 'google_drive', clearInvalidConfig : true})
 
 serveIPC.windowLib.loadSettings()
 logPerformanceDuration('Store and settings load', storeLoadStartedAt)
@@ -1486,17 +1512,51 @@ ipcMain.handle('settings:collection:set',   (_, collectKey, key, value) => {
 	return serveIPC.modCollect.renderCollectNotes(collectKey)
 })
 
+function notifySourceURLChanged(modName, sourceURL) {
+	const payload = {
+		modName    : normalizeVaultModName(modName),
+		sourceInfo : getUpdateSourceInfo(sourceURL),
+		sourceURL  : typeof sourceURL === 'string' ? sourceURL.trim() : '',
+	}
+	serveIPC.windowLib.sendToValidWindow('vault_update', 'settings:sourceChanged', payload)
+	for ( const detailWindow of ['detail19', 'detail22', 'detail25'] ) {
+		serveIPC.windowLib.sendToValidWindow(detailWindow, 'settings:sourceChanged', payload)
+	}
+}
+
 ipcMain.handle('settings:site', (_, mod, site = false) => {
 	if ( site !== false ) {
+		const cleanSourceURL = typeof site === 'string' ? site.trim() : site
 		if ( site === '' || site === null ) {
 			serveIPC.storeSites.delete(mod)
 		} else {
-			serveIPC.storeSites.set(mod, site)
+			serveIPC.storeSites.set(mod, cleanSourceURL)
 		}
+		invalidateModLibrarySummary()
+		notifySourceURLChanged(mod, cleanSourceURL)
 		refreshClientModList()
 	}
 	return serveIPC.storeSites.get(mod, '')
 })
+
+function setSavedModSourceURL(modName, sourceURL) {
+	const cleanModName = normalizeVaultModName(modName)
+	if ( cleanModName === '' ) { throw new Error('Mod name was not recorded for this Vault entry.') }
+	const cleanSourceURL = typeof sourceURL === 'string' ? sourceURL.trim() : ''
+	if ( cleanSourceURL === '' ) {
+		serveIPC.storeSites.delete(cleanModName)
+	} else {
+		serveIPC.storeSites.set(cleanModName, cleanSourceURL)
+	}
+	invalidateModLibrarySummary()
+	notifySourceURLChanged(cleanModName, cleanSourceURL)
+	return {
+		modName    : cleanModName,
+		ok         : true,
+		sourceInfo : getUpdateSourceInfo(cleanSourceURL),
+		sourceURL  : cleanSourceURL,
+	}
+}
 
 const UPDATE_REMOTE_CACHE_MS = 1000 * 60 * 60 * 24
 const UPDATE_REMOTE_FAILURE_CACHE_MS = 1000 * 60 * 5
@@ -3683,6 +3743,8 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 			const sources = Array.isArray(record.sources) ? record.sources : []
 			const isUsed = usedHashes.has(hash) || usedPaths.has(record.filePath)
 			const collections = Array.isArray(record.collections) ? record.collections.filter((collectionName) => currentCollectionNames.has(collectionName)) : []
+			const modNames = normalizedVaultModNames(Array.isArray(record.modNames) && record.modNames.length !== 0 ? record.modNames : record.fileName)
+			const savedSourceURL = modNames.map((modName) => serveIPC.storeSites.get(modName, '')).find((sourceURL) => sourceURL !== '') ?? ''
 			const currentCollections = uniqueCleanArray(normalizedVaultModNames([
 				...(Array.isArray(record.modNames) ? record.modNames : []),
 				record.fileName,
@@ -3717,12 +3779,12 @@ function getModLibraryEntries({ verifyFiles = true } = {}) {
 				modHubURL      : modHubState.url,
 				modHubVersions : Array.isArray(record.modHubVersions) ? record.modHubVersions : [],
 				modIcon      : record.modIcon ?? null,
-				modNames     : normalizedVaultModNames(Array.isArray(record.modNames) && record.modNames.length !== 0 ? record.modNames : record.fileName),
+				modNames,
 				modTypes     : Array.isArray(record.modTypes) ? record.modTypes : [],
 				scriptFiles  : Number.isFinite(record.scriptFiles) ? record.scriptFiles : 0,
 				size         : size,
 				sources      : sources,
-				sourceURL    : record.sourceURL ?? null,
+				sourceURL    : savedSourceURL !== '' ? savedSourceURL : record.sourceURL ?? null,
 				storeItemPreviews : Array.isArray(record.storeItemPreviews) ? record.storeItemPreviews : [],
 				storeItems   : Number.isFinite(record.storeItems) ? record.storeItems : 0,
 				storeItemTypes : Array.isArray(record.storeItemTypes) ?
@@ -5880,6 +5942,522 @@ function createCollectionManifest(collectionKey) {
 	}
 }
 
+const GOOGLE_DRIVE_CLIENT_ID_ENV = 'FSGMA_GOOGLE_DRIVE_CLIENT_ID'
+const GOOGLE_DRIVE_CLIENT_SECRET_ENV = 'FSGMA_GOOGLE_DRIVE_CLIENT_SECRET'
+const GOOGLE_DRIVE_DEVICE_CLIENT_SECRET_ENV = 'FSGMA_GOOGLE_DRIVE_DEVICE_CLIENT_SECRET'
+const GOOGLE_DRIVE_DEVICE_MAX_POLL_MS = 30 * 60 * 1000
+const GOOGLE_DRIVE_DESKTOP_AUTH_TIMEOUT_MS = 5 * 60 * 1000
+const GOOGLE_DRIVE_COLLECTION_FOLDER_NAME = 'FSG Mod Assistant Collection Links'
+
+function configuredGoogleClientID({ storeKey, envKey, buildInfoKey }) {
+	const storedClientID = serveIPC.storeDrive.get(storeKey, '')
+	if ( typeof storedClientID === 'string' && storedClientID.trim() !== '' ) { return storedClientID.trim() }
+	if ( typeof process.env[envKey] === 'string' && process.env[envKey].trim() !== '' ) {
+		return process.env[envKey].trim()
+	}
+	return String(appBuildInfo[buildInfoKey] ?? '').trim()
+}
+
+function configuredGoogleSecret({ storeKey, envKey, buildInfoKey }) {
+	const storedSecret = serveIPC.storeDrive.get(storeKey, '')
+	if ( typeof storedSecret === 'string' && storedSecret.trim() !== '' ) { return storedSecret.trim() }
+	if ( typeof process.env[envKey] === 'string' && process.env[envKey].trim() !== '' ) {
+		return process.env[envKey].trim()
+	}
+	if ( typeof buildInfoKey !== 'string' || buildInfoKey === '' ) { return '' }
+	return String(appBuildInfo[buildInfoKey] ?? '').trim()
+}
+
+function googleDriveClientID() {
+	return configuredGoogleClientID({
+		buildInfoKey : 'googleDriveClientID',
+		envKey       : GOOGLE_DRIVE_CLIENT_ID_ENV,
+		storeKey     : 'clientID',
+	})
+}
+
+function googleDriveClientSecret() {
+	return configuredGoogleSecret({
+		buildInfoKey : 'googleDriveClientSecret',
+		envKey       : GOOGLE_DRIVE_CLIENT_SECRET_ENV,
+		storeKey     : 'clientSecret',
+	})
+}
+
+function googleDriveDeviceClientID() {
+	return configuredGoogleClientID({
+		buildInfoKey : 'googleDriveDeviceClientID',
+		envKey       : 'FSGMA_GOOGLE_DRIVE_DEVICE_CLIENT_ID',
+		storeKey     : 'deviceClientID',
+	})
+}
+
+function googleDriveDeviceClientSecret() {
+	return configuredGoogleSecret({
+		buildInfoKey : null,
+		envKey       : GOOGLE_DRIVE_DEVICE_CLIENT_SECRET_ENV,
+		storeKey     : 'deviceClientSecret',
+	})
+}
+
+function googleDriveActiveClientID(tokens = null) {
+	if ( typeof tokens?.clientID === 'string' && tokens.clientID !== '' ) { return tokens.clientID }
+	return googleDriveClientID() || googleDriveDeviceClientID()
+}
+
+function googleDriveActiveClientSecret(tokens = null) {
+	if ( typeof tokens?.clientSecret === 'string' && tokens.clientSecret !== '' ) { return tokens.clientSecret }
+	return googleDriveClientSecret() || googleDriveDeviceClientSecret()
+}
+
+function googleDriveStatus() {
+	const clientID = googleDriveClientID()
+	const clientSecret = googleDriveClientSecret()
+	const deviceClientID = googleDriveDeviceClientID()
+	const deviceClientSecret = googleDriveDeviceClientSecret()
+	const tokens = serveIPC.storeDrive.get('tokens', null)
+	if ( clientID === '' && deviceClientID === '' && typeof tokens?.refreshToken !== 'string' ) {
+		return {
+			configured : false,
+			linked     : false,
+			message    : `Google Drive sharing needs a Desktop OAuth client ID. Set ${GOOGLE_DRIVE_CLIENT_ID_ENV} for development builds.`,
+			state      : 'not_configured',
+		}
+	}
+	if ( clientID !== '' && clientSecret === '' && typeof tokens?.refreshToken !== 'string' ) {
+		return {
+			configured : false,
+			linked     : false,
+			message    : `Google Drive sharing needs the Desktop OAuth client secret. Set ${GOOGLE_DRIVE_CLIENT_SECRET_ENV} for development builds.`,
+			state      : 'not_configured',
+		}
+	}
+	if ( clientID === '' && deviceClientID !== '' && deviceClientSecret === '' && typeof tokens?.refreshToken !== 'string' ) {
+		return {
+			configured : false,
+			linked     : false,
+			message    : `Google Drive device fallback needs ${GOOGLE_DRIVE_DEVICE_CLIENT_SECRET_ENV}.`,
+			state      : 'not_configured',
+		}
+	}
+	if ( typeof tokens?.refreshToken === 'string' && tokens.refreshToken !== '' ) {
+		const isExpired = Number.isFinite(tokens.expiresAt) && tokens.expiresAt <= Date.now() + 60000
+		const linkedMessage = 'Google Drive is linked. Copied links will be shortened and sent to your Google Drive as a sharing location. This is ONLY used for shortened link sharing.'
+		return {
+			configured : true,
+			expiresAt  : Number.isFinite(tokens.expiresAt) ? tokens.expiresAt : null,
+			linked     : true,
+			message    : linkedMessage,
+			state      : isExpired ? 'token_expired' : 'linked',
+		}
+	}
+	return {
+		configured : true,
+		linked     : false,
+		message    : 'Google Drive is ready to link.',
+		state      : 'not_linked',
+	}
+}
+
+function storeGoogleDriveTokens(
+	tokenPayload,
+	previousTokens = {},
+	clientID = googleDriveActiveClientID(previousTokens),
+	clientSecret = googleDriveActiveClientSecret(previousTokens)
+) {
+	const refreshToken = tokenPayload.refresh_token ?? previousTokens.refreshToken ?? null
+	if ( typeof tokenPayload.access_token !== 'string' || tokenPayload.access_token === '' ) {
+		throw new Error('Google did not return an access token.')
+	}
+	if ( typeof refreshToken !== 'string' || refreshToken === '' ) {
+		throw new Error('Google did not return a refresh token. Disconnect Google Drive and link it again.')
+	}
+	const expiresInMS = Number.isFinite(Number(tokenPayload.expires_in)) ? Number(tokenPayload.expires_in) * 1000 : 3600000
+	const tokens = {
+		accessToken  : tokenPayload.access_token,
+		clientID,
+		clientSecret,
+		expiresAt    : Date.now() + expiresInMS,
+		refreshToken,
+		tokenType    : tokenPayload.token_type ?? 'Bearer',
+	}
+	serveIPC.storeDrive.set('tokens', tokens)
+	return tokens
+}
+
+async function googleTokenRequest(body) {
+	const response = await fetch(GOOGLE_TOKEN_URL, {
+		body,
+		headers : { 'content-type' : 'application/x-www-form-urlencoded' },
+		method  : 'POST',
+	})
+	const text = await response.text()
+	let payload
+	try {
+		payload = JSON.parse(text)
+	} catch {
+		payload = { error_description : text }
+	}
+	if ( !response.ok ) {
+		throw new Error(payload.error_description ?? payload.error ?? `Google token request failed with HTTP ${response.status}`)
+	}
+	serveIPC.log.info('google-drive', `Google token request succeeded grant=${body.get('grant_type')}`)
+	return payload
+}
+
+async function googleDeviceCodeRequest(body) {
+	const response = await fetch(GOOGLE_DEVICE_CODE_URL, {
+		body,
+		headers : { 'content-type' : 'application/x-www-form-urlencoded' },
+		method  : 'POST',
+	})
+	const text = await response.text()
+	let payload
+	try {
+		payload = JSON.parse(text)
+	} catch {
+		payload = { error_description : text }
+	}
+	if ( !response.ok ) {
+		throw new Error(payload.error_description ?? payload.error ?? `Google device-code request failed with HTTP ${response.status}`)
+	}
+	return payload
+}
+
+async function googleDeviceTokenPoll(body) {
+	const response = await fetch(GOOGLE_TOKEN_URL, {
+		body,
+		headers : { 'content-type' : 'application/x-www-form-urlencoded' },
+		method  : 'POST',
+	})
+	const text = await response.text()
+	let payload
+	try {
+		payload = JSON.parse(text)
+	} catch {
+		payload = { error_description : text }
+	}
+	return { ok : response.ok, payload }
+}
+
+function waitMS(ms) {
+	return new Promise((resolve) => { setTimeout(resolve, ms) })
+}
+
+async function refreshGoogleDriveAccessToken(tokens) {
+	const clientID = googleDriveActiveClientID(tokens)
+	const clientSecret = googleDriveActiveClientSecret(tokens)
+	serveIPC.log.info('google-drive', 'Refreshing Google Drive access token')
+	const payload = await googleTokenRequest(buildRefreshTokenBody({ clientID, clientSecret, refreshToken : tokens.refreshToken }))
+	return storeGoogleDriveTokens(payload, tokens, clientID, clientSecret).accessToken
+}
+
+async function googleDriveAccessToken() {
+	const tokens = serveIPC.storeDrive.get('tokens', null)
+	if ( typeof tokens?.accessToken !== 'string' || typeof tokens?.refreshToken !== 'string' ) {
+		throw new Error('Google Drive is not linked yet.')
+	}
+	if ( Number.isFinite(tokens.expiresAt) && tokens.expiresAt > Date.now() + 60000 ) {
+		return tokens.accessToken
+	}
+	return refreshGoogleDriveAccessToken(tokens)
+}
+
+async function googleDriveFetch(url, options = {}, retry = true) {
+	const accessToken = await googleDriveAccessToken()
+	const response = await fetch(url, {
+		...options,
+		headers : {
+			...(options.headers ?? {}),
+			authorization : `Bearer ${accessToken}`,
+		},
+	})
+	if ( response.status === 401 && retry ) {
+		const tokens = serveIPC.storeDrive.get('tokens', null)
+		if ( tokens !== null ) { await refreshGoogleDriveAccessToken(tokens) }
+		return googleDriveFetch(url, options, false)
+	}
+	return response
+}
+
+async function googleDriveJSONResponse(response, fallbackMessage) {
+	const text = await response.text()
+	let payload
+	try {
+		payload = JSON.parse(text)
+	} catch {
+		payload = { error : { message : text } }
+	}
+	if ( !response.ok ) {
+		throw new Error(payload.error?.message ?? fallbackMessage ?? `Google Drive request failed with HTTP ${response.status}`)
+	}
+	return payload
+}
+
+function googleDriveQueryText(value) {
+	return String(value).replace(/\\/gu, '\\\\').replace(/'/gu, '\\\'')
+}
+
+async function findDriveCollectionFolder() {
+	const query = [
+		'mimeType = \'application/vnd.google-apps.folder\'',
+		'trashed = false',
+		`name = '${googleDriveQueryText(GOOGLE_DRIVE_COLLECTION_FOLDER_NAME)}'`,
+		'appProperties has { key=\'fsgModAssistant\' and value=\'collection-link-folder\' }',
+	].join(' and ')
+	const response = await googleDriveFetch(driveFilesURL({
+		fields : ['files(id,name)'],
+		query,
+	}))
+	const payload = await googleDriveJSONResponse(response, `Google Drive folder lookup failed with HTTP ${response.status}`)
+	const folders = Array.isArray(payload.files) ? payload.files : []
+	return folders.find((folder) => typeof folder.id === 'string' && folder.id !== '') ?? null
+}
+
+async function createDriveCollectionFolder() {
+	const response = await googleDriveFetch(driveCreateURL({ fields : ['id', 'name'] }), {
+		body    : JSON.stringify(driveFolderMetadata({ name : GOOGLE_DRIVE_COLLECTION_FOLDER_NAME })),
+		headers : { 'content-type' : 'application/json; charset=UTF-8' },
+		method  : 'POST',
+	})
+	const payload = await googleDriveJSONResponse(response, `Google Drive folder creation failed with HTTP ${response.status}`)
+	if ( typeof payload.id !== 'string' || payload.id === '' ) { throw new Error('Google Drive did not return a folder ID.') }
+	serveIPC.log.info('google-drive', `Drive collection link folder created folderID=${JSON.stringify(payload.id)}`)
+	return payload
+}
+
+async function ensureDriveCollectionFolder() {
+	const existingFolder = await findDriveCollectionFolder()
+	if ( existingFolder !== null ) {
+		serveIPC.log.info('google-drive', `Drive collection link folder found folderID=${JSON.stringify(existingFolder.id)}`)
+		return existingFolder.id
+	}
+	const createdFolder = await createDriveCollectionFolder()
+	return createdFolder.id
+}
+
+async function setDriveManifestReadableByLink(fileID) {
+	const permissionResponse = await googleDriveFetch(drivePermissionURL(fileID), {
+		body    : JSON.stringify(driveAnyoneReaderPermission()),
+		headers : { 'content-type' : 'application/json; charset=UTF-8' },
+		method  : 'POST',
+	})
+	await googleDriveJSONResponse(permissionResponse, `Google Drive sharing failed with HTTP ${permissionResponse.status}`)
+	serveIPC.log.info('google-drive', `Drive manifest sharing permission created fileID=${JSON.stringify(fileID)}`)
+}
+
+async function uploadCollectionManifestToDrive(manifest) {
+	if ( !googleDriveStatus().linked ) { throw new Error('Link Google Drive before copying a short Drive link.') }
+	serveIPC.log.info('google-drive', `Uploading collection manifest to Drive collection=${JSON.stringify(manifest.collection?.name ?? 'Shared collection')} mods=${manifest.mods.length}`)
+	const folderID = await ensureDriveCollectionFolder()
+	const metadata = driveManifestMetadata({
+		appProperties : {
+			collection : manifest.collection?.name ?? 'Shared collection',
+			gameVersion : String(manifest.gameVersion ?? ''),
+		},
+		name : `${safeDownloadFolderName(manifest.collection?.name ?? 'Shared collection')}.fsgcollection.json`,
+		parents : [folderID],
+	})
+	const multipart = driveMultipartBody({ manifest, metadata })
+	const uploadResponse = await googleDriveFetch(driveUploadURL(), {
+		body    : multipart.body,
+		headers : { 'content-type' : multipart.contentType },
+		method  : 'POST',
+	})
+	const uploadPayload = await googleDriveJSONResponse(uploadResponse, `Google Drive upload failed with HTTP ${uploadResponse.status}`)
+	const fileID = uploadPayload.id
+	if ( typeof fileID !== 'string' || fileID === '' ) { throw new Error('Google Drive did not return a file ID.') }
+	serveIPC.log.info('google-drive', `Drive manifest upload complete fileID=${JSON.stringify(fileID)} folderID=${JSON.stringify(folderID)} collection=${JSON.stringify(manifest.collection?.name ?? 'Shared collection')}`)
+	await setDriveManifestReadableByLink(fileID)
+	return {
+		fileID,
+		link : createDriveCollectionLink(fileID),
+		webViewLink : uploadPayload.webViewLink ?? null,
+	}
+}
+
+async function downloadDriveCollectionManifest(fileID) {
+	const publicURL = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileID)}`
+	serveIPC.log.info('google-drive', `Downloading Drive collection manifest fileID=${JSON.stringify(fileID)} auth=${googleDriveStatus().linked}`)
+	const response = googleDriveStatus().linked ?
+		await googleDriveFetch(driveDownloadURL(fileID)) :
+		await fetch(publicURL)
+	const text = await response.text()
+	if ( !response.ok ) {
+		throw new Error(`Google Drive manifest download failed with HTTP ${response.status}.`)
+	}
+	serveIPC.log.info('google-drive', `Drive collection manifest downloaded fileID=${JSON.stringify(fileID)} bytes=${text.length}`)
+	return parseCollectionManifestText(text)
+}
+
+function googleDriveAuthCallbackHTML(statusText) {
+	return `<!doctype html><html><head><meta charset="utf-8"><title>FSG Mod Assistant</title></head><body style="background:#202428;color:#d9e2ef;font-family:system-ui,sans-serif;padding:2rem;"><h1>FSG Mod Assistant</h1><p>${statusText}</p><p>You can close this browser tab and return to FSG Mod Assistant.</p></body></html>`
+}
+
+async function startGoogleDriveLoopbackAuth(state) {
+	let settled = false
+	let timeout = null
+	let codeResolve
+	let codeReject
+	const codePromise = new Promise((resolve, reject) => {
+		codeResolve = resolve
+		codeReject = reject
+	})
+	const server = http.createServer((request, response) => {
+		try {
+			const requestURL = new URL(request.url, `http://${request.headers.host}`)
+			const error = requestURL.searchParams.get('error')
+			const code = requestURL.searchParams.get('code')
+			const returnedState = requestURL.searchParams.get('state')
+			if ( error !== null ) { throw new Error(`Google Drive sign-in failed: ${error}`) }
+			if ( returnedState !== state ) { throw new Error('Google Drive sign-in state did not match.') }
+			if ( typeof code !== 'string' || code === '' ) { throw new Error('Google Drive did not return an authorization code.') }
+			response.writeHead(200, { 'content-type' : 'text/html; charset=utf-8' })
+			response.end(googleDriveAuthCallbackHTML('Google Drive sign-in is complete.'))
+			if ( !settled ) {
+				settled = true
+				clearTimeout(timeout)
+				server.close()
+				codeResolve(code)
+			}
+		} catch (err) {
+			response.writeHead(400, { 'content-type' : 'text/html; charset=utf-8' })
+			response.end(googleDriveAuthCallbackHTML('Google Drive sign-in was not completed.'))
+			if ( !settled ) {
+				settled = true
+				clearTimeout(timeout)
+				server.close()
+				codeReject(err)
+			}
+		}
+	})
+	await new Promise((resolve, reject) => {
+		server.once('error', reject)
+		server.listen(0, '127.0.0.1', resolve)
+	})
+	const address = server.address()
+	if ( typeof address !== 'object' || address === null || !Number.isFinite(address.port) ) {
+		server.close()
+		throw new Error('Could not start Google Drive sign-in callback listener.')
+	}
+	timeout = setTimeout(() => {
+		if ( !settled ) {
+			settled = true
+			server.close()
+			codeReject(new Error('Google Drive sign-in timed out.'))
+		}
+	}, GOOGLE_DRIVE_DESKTOP_AUTH_TIMEOUT_MS)
+	return {
+		codePromise,
+		redirectURI : `http://127.0.0.1:${address.port}`,
+	}
+}
+
+async function linkGoogleDriveDesktop() {
+	const clientID = googleDriveClientID()
+	if ( clientID === '' ) { throw new Error(`Google Drive sharing needs a Desktop OAuth client ID. Set ${GOOGLE_DRIVE_CLIENT_ID_ENV} for development builds.`) }
+	const clientSecret = googleDriveClientSecret()
+	if ( clientSecret === '' ) { throw new Error(`Google Drive sharing needs the Desktop OAuth client secret. Set ${GOOGLE_DRIVE_CLIENT_SECRET_ENV} for development builds.`) }
+	serveIPC.log.info('google-drive', 'Starting Google Drive desktop loopback link flow')
+	const state = crypto.randomBytes(18).toString('base64url')
+	const codeVerifier = createPKCEVerifier()
+	const codeChallenge = createPKCEChallenge(codeVerifier)
+	const { codePromise, redirectURI } = await startGoogleDriveLoopbackAuth(state)
+	const authURL = buildDriveAuthURL({ clientID, codeChallenge, redirectURI, state })
+	serveIPC.windowLib.sendToValidWindow('manifest', 'manifest:driveAuthURL', { authURL })
+	await shell.openExternal(authURL)
+	serveIPC.log.info('google-drive', `Google Drive desktop loopback flow waiting redirectURI=${JSON.stringify(redirectURI)}`)
+	const code = await codePromise
+	const payload = await googleTokenRequest(buildAuthCodeTokenBody({ clientID, clientSecret, code, codeVerifier, redirectURI }))
+	storeGoogleDriveTokens(payload, {}, clientID, clientSecret)
+	serveIPC.log.info('google-drive', 'Google Drive desktop loopback link flow completed')
+	return googleDriveStatus()
+}
+
+async function linkGoogleDriveDevice() {
+	const clientID = googleDriveDeviceClientID()
+	const clientSecret = googleDriveDeviceClientSecret()
+	if ( clientID === '' || clientSecret === '' ) { return googleDriveStatus() }
+	serveIPC.log.info('google-drive', 'Starting Google Drive device-code link flow')
+	const devicePayload = await googleDeviceCodeRequest(buildDeviceCodeBody({ clientID }))
+	const userCode = devicePayload.user_code
+	const verificationURL = devicePayload.verification_url
+	const verificationURLComplete = devicePayload.verification_url_complete
+	const deviceCode = devicePayload.device_code
+	if ( typeof userCode !== 'string' || typeof verificationURL !== 'string' || typeof deviceCode !== 'string' ) {
+		throw new Error('Google did not return a complete device sign-in code.')
+	}
+	const expiresInMS = Math.min(Number(devicePayload.expires_in ?? 1800) * 1000, GOOGLE_DRIVE_DEVICE_MAX_POLL_MS)
+	let intervalMS = Math.max(Number(devicePayload.interval ?? 5), 5) * 1000
+	clipboard.writeText(userCode)
+	const openURL = typeof verificationURLComplete === 'string' && verificationURLComplete !== '' ? verificationURLComplete : verificationURL
+	serveIPC.windowLib.sendToValidWindow('manifest', 'manifest:driveDeviceCode', { userCode, verificationURL, openURL })
+	await shell.openExternal(openURL)
+	serveIPC.log.info('google-drive', `Google Drive device-code flow waiting userCode=${JSON.stringify(userCode)} verificationURL=${JSON.stringify(verificationURL)} openURL=${JSON.stringify(openURL)} expiresInMS=${expiresInMS} intervalMS=${intervalMS}`)
+	const startedAt = Date.now()
+	let pendingLogged = false
+	// Polling Google's device-code endpoint is intentionally sequential; Google controls the required interval.
+	/* eslint-disable no-await-in-loop */
+	while ( Date.now() - startedAt < expiresInMS ) {
+		await waitMS(intervalMS)
+		const tokenResponse = await googleDeviceTokenPoll(buildDeviceTokenBody({ clientID, clientSecret, deviceCode }))
+		if ( tokenResponse.ok ) {
+			storeGoogleDriveTokens(tokenResponse.payload, {}, clientID, clientSecret)
+			serveIPC.log.info('google-drive', 'Google Drive device-code link flow completed')
+			return googleDriveStatus()
+		}
+		const error = tokenResponse.payload.error
+		if ( error === 'authorization_pending' ) {
+			if ( !pendingLogged ) {
+				serveIPC.log.info('google-drive', 'Google Drive device-code flow is still waiting for browser approval')
+				pendingLogged = true
+			}
+			continue
+		}
+		if ( error === 'slow_down' ) {
+			intervalMS += 5000
+			serveIPC.log.info('google-drive', `Google Drive device-code flow slowed polling intervalMS=${intervalMS}`)
+			continue
+		}
+		serveIPC.log.warning('google-drive', `Google Drive device-code token poll failed error=${JSON.stringify(error)} description=${JSON.stringify(tokenResponse.payload.error_description ?? '')}`)
+		if ( error === 'access_denied' ) { throw new Error('Google Drive sign-in was denied.') }
+		if ( error === 'expired_token' ) { throw new Error('Google Drive sign-in code expired. Try Link Drive again.') }
+		throw new Error(tokenResponse.payload.error_description ?? error ?? 'Google Drive sign-in failed.')
+	}
+	/* eslint-enable no-await-in-loop */
+	throw new Error('Google Drive sign-in timed out.')
+}
+
+async function linkGoogleDrive() {
+	try {
+		return await linkGoogleDriveDesktop()
+	} catch (err) {
+		if ( googleDriveDeviceClientID() === '' || googleDriveDeviceClientSecret() === '' ) {
+			throw err
+		}
+		serveIPC.log.warning('google-drive', `Google Drive desktop loopback flow failed; trying device fallback error=${JSON.stringify(err.message)}`)
+		return linkGoogleDriveDevice()
+	}
+}
+
+async function openGoogleDriveURLInEdge(url) {
+	const isDeviceURL = typeof url === 'string' && url.startsWith('https://www.google.com/device')
+	const isOAuthURL = typeof url === 'string' && url.startsWith('https://accounts.google.com/o/oauth2/v2/auth?')
+	if ( !isDeviceURL && !isOAuthURL ) {
+		throw new Error('Only Google Drive sign-in URLs can be opened in Edge from this screen.')
+	}
+	const edgeURL = process.platform === 'win32' ? `microsoft-edge:${url}` : url
+	await shell.openExternal(edgeURL)
+	serveIPC.log.info('google-drive', `Opened Google Drive sign-in URL in Edge url=${JSON.stringify(url)}`)
+	return { ok : true }
+}
+
+function disconnectGoogleDrive() {
+	serveIPC.storeDrive.delete('tokens')
+	serveIPC.log.info('google-drive', 'Google Drive disconnected')
+	return googleDriveStatus()
+}
+
 function validateCollectionManifest(manifest) {
 	if ( manifest?.schema !== COLLECTION_MANIFEST_SCHEMA || manifest?.version !== COLLECTION_MANIFEST_VERSION ) {
 		throw new Error('This is not a supported FSG Mod Assistant collection manifest.')
@@ -7032,9 +7610,24 @@ async function importCollectionManifestFromFile() {
 async function exportCollectionManifest(collectionKey, mode) {
 	const manifest = createCollectionManifest(collectionKey)
 	if ( mode === 'clipboard' ) {
+		const driveStatus = googleDriveStatus()
+		if ( driveStatus.linked ) {
+			const driveResult = await uploadCollectionManifestToDrive(manifest)
+			clipboard.writeText(driveResult.link)
+			return {
+				count : manifest.mods.length,
+				fileID : driveResult.fileID,
+				length : driveResult.link.length,
+				link : driveResult.link,
+				mode,
+				ok   : true,
+				shareMode : 'drive',
+				webViewLink : driveResult.webViewLink,
+			}
+		}
 		const shareCode = collectionManifestShareCode(manifest)
 		clipboard.writeText(shareCode)
-		return { count : manifest.mods.length, length : shareCode.length, mode, ok : true }
+		return { count : manifest.mods.length, driveState : driveStatus.state, length : shareCode.length, link : shareCode, mode, ok : true, shareMode : 'embedded' }
 	}
 
 	const suggestedName = `${safeDownloadFolderName(manifest.collection.name)}.fsgcollection.json`
@@ -7047,8 +7640,23 @@ async function exportCollectionManifest(collectionKey, mode) {
 	return { count : manifest.mods.length, filePath : result.filePath, mode : 'file', ok : true }
 }
 
+async function importCollectionManifestFromText(rawText) {
+	if ( typeof rawText !== 'string' || rawText.trim() === '' ) {
+		throw new Error('Paste a collection manifest link first.')
+	}
+	try {
+		const driveLink = parseDriveCollectionLink(rawText)
+		return resolveCollectionManifest(await downloadDriveCollectionManifest(driveLink.fileID))
+	} catch (err) {
+		if ( err.message.includes('Drive collection link') || err.message.includes('Invalid Google Drive file ID') ) {
+			return resolveCollectionManifest(parseCollectionManifestText(rawText))
+		}
+		throw err
+	}
+}
+
 async function importCollectionManifestFromClipboard() {
-	return resolveCollectionManifest(parseCollectionManifestText(clipboard.readText()))
+	return importCollectionManifestFromText(clipboard.readText())
 }
 
 // MARK: download
@@ -7219,6 +7827,22 @@ ipcMain.handle('manifest:export', async (_, payload) => {
 		return { ok : false, error : err.message }
 	}
 })
+ipcMain.handle('manifest:driveStatus', () => googleDriveStatus())
+ipcMain.handle('manifest:driveLink', async () => {
+	try {
+		return { ...(await linkGoogleDrive()), ok : true }
+	} catch (err) {
+		return { ...googleDriveStatus(), ok : false, error : err.message }
+	}
+})
+ipcMain.handle('manifest:driveDisconnect', () => ({ ...disconnectGoogleDrive(), ok : true }))
+ipcMain.handle('manifest:driveOpenEdge', async (_, url) => {
+	try {
+		return await openGoogleDriveURLInEdge(url)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
 ipcMain.handle('manifest:importFile', async () => {
 	try {
 		return await importCollectionManifestFromFile()
@@ -7229,6 +7853,13 @@ ipcMain.handle('manifest:importFile', async () => {
 ipcMain.handle('manifest:importClipboard', async () => {
 	try {
 		return await importCollectionManifestFromClipboard()
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('manifest:importText', async (_, rawText) => {
+	try {
+		return await importCollectionManifestFromText(rawText)
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
@@ -7394,6 +8025,7 @@ ipcMain.handle('vault:all', (_, payload = {}) => {
 	if ( payload?.force === true ) { invalidateModLibrarySummary() }
 	return getModLibrarySummary(payload?.gameVersion)
 })
+ipcMain.handle('vault:updateSourceURL', (_, payload = {}) => setSavedModSourceURL(payload.modName, payload.sourceURL))
 ipcMain.handle('vault:collections', () => getVaultCollections())
 
 function vaultUpdateMetadataSourceKey(payload = {}) {

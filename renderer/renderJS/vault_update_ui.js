@@ -2,6 +2,9 @@
 
 let candidates = []
 let noSourceRecords = []
+let selectedNoSourceRecord = null
+let noSourceSaveFeedbackTimer = null
+let localSourceSaveModName = null
 let selectedKeys = new Set()
 let isBusy = false
 let isRemoteCheckRunning = false
@@ -350,16 +353,18 @@ function setStatus(message, kind = 'secondary') {
 
 function updatePauseButton() {
 	const button = byID('vaultUpdatesPause')
+	const label = button.querySelector('span')
 	button.disabled = !isRemoteCheckRunning
-	button.textContent = isUpdateCheckPaused ? 'Resume checks' : 'Pause checks'
+	if ( label !== null ) { label.textContent = isUpdateCheckPaused ? 'Resume checks' : 'Pause checks' }
 	button.classList.toggle('btn-warning', isUpdateCheckPaused)
 	button.classList.toggle('btn-outline-warning', !isUpdateCheckPaused)
 }
 
 function updateStopButton() {
 	const button = byID('vaultUpdatesStop')
+	const label = button.querySelector('span')
 	button.disabled = !isRemoteCheckRunning || isUpdateCheckStopped
-	button.textContent = isUpdateCheckStopped ? 'Stopping...' : 'Stop scan'
+	if ( label !== null ) { label.textContent = isUpdateCheckStopped ? 'Stopping...' : 'Stop scan' }
 }
 
 function resumeUpdateChecks() {
@@ -736,16 +741,139 @@ async function openNoSourceDetail(record) {
 	}
 }
 
+async function updateNoSourceEditorHint(sourceURL) {
+	const hint = byID('vaultNoSourceEditHint')
+	if ( hint === null ) { return }
+	const cleanSourceURL = String(sourceURL ?? '').trim()
+	if ( cleanSourceURL === '' ) {
+		hint.className = 'small mt-2 text-body-secondary'
+		hint.textContent = 'No Source URL is saved for this mod.'
+		return
+	}
+	try {
+		const sourceInfo = await window.vault_update_IPC.getSourceInfo(cleanSourceURL)
+		const supported = sourceInfo?.type === 'github' || sourceInfo?.type === 'modhub'
+		hint.className = `small mt-2 ${supported ? 'text-success' : 'text-warning'}`
+		hint.textContent = supported
+			? `${sourceInfo.label} source saved here can be checked by the Vault updater.`
+			: `${sourceInfo?.label ?? 'Manual'} source can be recorded, but it will not be checked automatically.`
+	} catch {
+		hint.className = 'small mt-2 text-warning'
+		hint.textContent = 'Source URL can be saved, but it could not be classified right now.'
+	}
+}
+
+function setNoSourceSaveFeedback(message, kind = 'success') {
+	const feedback = byID('vaultNoSourceSaveFeedback')
+	if ( feedback === null ) { return }
+	clearTimeout(noSourceSaveFeedbackTimer)
+	feedback.className = `alert alert-${kind} py-2`
+	feedback.textContent = message
+	noSourceSaveFeedbackTimer = setTimeout(() => hideNoSourceSaveFeedback(), 10000)
+}
+
+function hideNoSourceSaveFeedback() {
+	clearTimeout(noSourceSaveFeedbackTimer)
+	noSourceSaveFeedbackTimer = null
+	const feedback = byID('vaultNoSourceSaveFeedback')
+	if ( feedback === null ) { return }
+	feedback.className = 'alert py-2 d-none'
+	feedback.textContent = ''
+}
+
+function selectNoSourceRecord(record, { focus = false } = {}) {
+	if ( selectedNoSourceRecord?.hash !== record.hash || selectedNoSourceRecord?.modName !== record.modName ) {
+		hideNoSourceSaveFeedback()
+	}
+	selectedNoSourceRecord = record
+	const editor = byID('vaultNoSourceEditor')
+	const name = byID('vaultNoSourceEditName')
+	const input = byID('vaultNoSourceEditURL')
+	if ( editor === null || name === null || input === null ) { return }
+	editor.classList.remove('d-none')
+	name.textContent = record.modName
+	input.value = record.sourceURL ?? ''
+	updateNoSourceEditorHint(input.value)
+	for ( const row of document.querySelectorAll('.vault-no-source-row') ) {
+		row.classList.toggle('active', row.dataset.hash === record.hash && row.dataset.modName === record.modName)
+	}
+	if ( focus ) {
+		input.focus()
+		input.select()
+	}
+}
+
+async function saveNoSourceURL(sourceURL) {
+	if ( selectedNoSourceRecord === null ) {
+		setStatus('Choose a no-source Vault mod first.', 'warning')
+		return
+	}
+	const record = selectedNoSourceRecord
+	let result = null
+	try {
+		localSourceSaveModName = record.modName
+		result = await window.vault_update_IPC.saveSourceURL({
+			hash      : record.hash,
+			modName   : record.modName,
+			sourceURL,
+		})
+		if ( result?.ok === false ) {
+			throw new Error(result.error ?? 'Unknown error')
+		}
+	} catch (err) {
+		localSourceSaveModName = null
+		setStatus(`Could not save Source URL: ${err.message}`, 'danger')
+		return
+	}
+	setTimeout(() => {
+		if ( localSourceSaveModName === record.modName ) { localSourceSaveModName = null }
+	}, 2000)
+	const sourceInfo = result.sourceInfo ?? {}
+	const supported = sourceInfo.type === 'github' || sourceInfo.type === 'modhub'
+	const feedbackKind = supported || result.sourceURL === '' ? 'success' : 'warning'
+	const feedbackMessage = result.sourceURL === ''
+		? `Source URL cleared for ${result.modName}.`
+		: `Saved ${sourceInfo.label ?? 'source'} link for ${result.modName}.${supported ? ' The Vault updater can now check it automatically.' : ' This link is recorded, but it is not an automatic update source.'}`
+	setNoSourceSaveFeedback(feedbackMessage, feedbackKind)
+	const hint = byID('vaultNoSourceEditHint')
+	if ( hint !== null ) {
+		hint.className = `small mt-2 text-${feedbackKind}`
+		hint.textContent = feedbackMessage
+	}
+	setStatus(
+		result.sourceURL === ''
+			? `Cleared Source URL for ${result.modName}.`
+			: `Saved ${sourceInfo.label ?? 'source'} URL for ${result.modName}.${supported ? ' It can now be checked by the Vault updater.' : ' This source is recorded as manual only.'}`,
+		feedbackKind
+	)
+	await loadCandidates(false, false)
+	if ( byID('vaultNoSourceDialog')?.open ) { reviewNoSourceRecords() }
+}
+
+async function refreshNoSourceAfterSourceChange(payload = {}) {
+	const changedModName = String(payload.modName ?? '').trim()
+	if ( localSourceSaveModName !== null && changedModName.toLocaleLowerCase() === localSourceSaveModName.toLocaleLowerCase() ) {
+		localSourceSaveModName = null
+		return
+	}
+	if ( !byID('vaultNoSourceDialog')?.open || isBusy ) { return }
+	await loadCandidates(false, false)
+	if ( byID('vaultNoSourceDialog')?.open ) { reviewNoSourceRecords() }
+}
+
 function noSourceReviewRow(record) {
 	const row = document.createElement('button')
 	row.className = 'list-group-item list-group-item-action bg-dark text-body border-secondary vault-no-source-row'
 	row.type = 'button'
-	row.title = 'Right-click to open this mod in the details window.'
+	row.dataset.hash = record.hash
+	row.dataset.modName = record.modName
+	row.title = 'Double-click to edit the Source URL. Right-click opens full details.'
+	row.addEventListener('click', () => selectNoSourceRecord(record))
 	row.addEventListener('contextmenu', (event) => {
 		event.preventDefault()
 		openNoSourceDetail(record)
 	})
-	row.addEventListener('dblclick', () => openNoSourceDetail(record))
+	row.addEventListener('dblclick', () => selectNoSourceRecord(record, { focus : true }))
 
 	const wrapper = document.createElement('div')
 	wrapper.className = 'd-flex gap-3 align-items-center'
@@ -801,6 +929,10 @@ function reviewNoSourceRecords() {
 	list.replaceChildren()
 	const records = noSourceRecords.toSorted((left, right) => compareUpdateCandidates(left, right))
 	summary.textContent = `${records.length} Vault mod${records.length === 1 ? '' : 's'} matched the current filters but have no supported update source.`
+	if ( selectedNoSourceRecord !== null ) {
+		selectedNoSourceRecord = records.find((record) => record.hash === selectedNoSourceRecord.hash && record.modName === selectedNoSourceRecord.modName) ?? null
+	}
+	if ( selectedNoSourceRecord === null ) { byID('vaultNoSourceEditor')?.classList.add('d-none') }
 	if ( records.length === 0 ) {
 		const empty = document.createElement('div')
 		empty.className = 'list-group-item bg-dark text-body-secondary border-secondary'
@@ -808,6 +940,7 @@ function reviewNoSourceRecords() {
 		list.append(empty)
 	} else {
 		for ( const record of records ) { list.append(noSourceReviewRow(record)) }
+		if ( selectedNoSourceRecord !== null ) { selectNoSourceRecord(selectedNoSourceRecord) }
 	}
 	if ( !dialog.open ) { dialog.showModal() }
 }
@@ -1497,7 +1630,17 @@ window.addEventListener('DOMContentLoaded', () => {
 	})
 	byID('vaultUpdateStateFilter').addEventListener('change', applyNeedsReviewFilter)
 	byID('vaultUpdateReviewNoSource').addEventListener('click', reviewNoSourceRecords)
-	byID('vaultNoSourceClose').addEventListener('click', () => { byID('vaultNoSourceDialog').close() })
+	byID('vaultNoSourceClose').addEventListener('click', () => {
+		selectedNoSourceRecord = null
+		hideNoSourceSaveFeedback()
+		byID('vaultNoSourceDialog').close()
+	})
+	byID('vaultNoSourceEditURL').addEventListener('input', (event) => updateNoSourceEditorHint(event.target.value))
+	byID('vaultNoSourceSaveURL').addEventListener('click', () => saveNoSourceURL(byID('vaultNoSourceEditURL').value))
+	byID('vaultNoSourceClearURL').addEventListener('click', () => saveNoSourceURL(''))
+	byID('vaultNoSourceOpenDetail').addEventListener('click', () => {
+		if ( selectedNoSourceRecord !== null ) { openNoSourceDetail(selectedNoSourceRecord) }
+	})
 	byID('vaultUpdatesDownloadSelected').addEventListener('click', downloadSelected)
 	byID('vaultUpdatesSelectAll').addEventListener('click', () => setAllSelections(true))
 	byID('vaultUpdatesSelectReady').addEventListener('click', selectReadyUpdates)
@@ -1512,5 +1655,6 @@ window.addEventListener('DOMContentLoaded', () => {
 		filter.addEventListener('change', applyNeedsReviewFilter)
 	}
 	byID('vaultUpdatesBack').addEventListener('click', () => window.vault_update_IPC.dispatchModManagement())
+	window.vault_update_IPC.receive('settings:sourceChanged', (payload) => { refreshNoSourceAfterSourceChange(payload) })
 	loadCandidates(false, false)
 })

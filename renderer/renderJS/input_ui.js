@@ -462,7 +462,7 @@ class windowState {
 		const copy = this.#makeButton('file-plus', 'input_manage_action_copy', 'success')
 
 		view.addEventListener('click', () => {
-			window.input_IPC.loadBindings(item.path).then((result) => this.initViewer(result))
+			this.loadViewer(item.path)
 		})
 		copy.addEventListener('click', () => {
 			MA.byIdValue('input_copy_new', '')
@@ -486,7 +486,7 @@ class windowState {
 		const remove = this.#makeButton('trash3', 'input_manage_action_delete', 'danger')
 
 		view.addEventListener('click', () => {
-			window.input_IPC.loadBindings(item.path).then((result) => this.initViewer(result))
+			this.loadViewer(item.path)
 		})
 		remove.addEventListener('click', () => {
 			MA.byIdText('delete_source_file', item.file)
@@ -619,6 +619,21 @@ class windowState {
 
 	updateList() {
 		window.input_IPC.listBindings().then((result) => { this.populateList(result) })
+	}
+
+	loadViewer(path) {
+		window.input_IPC.loadBindings(path).then((result) => {
+			if ( result === null ) {
+				MA.byIdHTML('bindMap', '<tr><td colspan="6" class="text-center text-danger">Could not read this input binding file.</td></tr>')
+				this.overlay.show()
+				return
+			}
+			this.initViewer(result)
+		}).catch((err) => {
+			window.log?.warning?.(err?.message ?? err)
+			MA.byIdHTML('bindMap', '<tr><td colspan="6" class="text-center text-danger">Could not read this input binding file.</td></tr>')
+			this.overlay.show()
+		})
 	}
 
 	#parseActionData(data) {

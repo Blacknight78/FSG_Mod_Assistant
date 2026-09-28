@@ -131,7 +131,17 @@
 			overflow-y: auto;
 		}
 		.vault-no-source-row {
-			cursor: context-menu;
+			cursor: pointer;
+		}
+		.vault-no-source-row.active {
+			background: #102236 !important;
+			border-color: var(--bs-primary) !important;
+		}
+		.vault-no-source-editor {
+			background: #111315;
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			padding: 0.75rem;
 		}
 		@media (max-width: 1100px) {
 			.vault-update-shell {
@@ -384,8 +394,21 @@
 			<button class="btn btn-sm btn-outline-secondary" id="vaultNoSourceClose" type="button">Close</button>
 		</div>
 		<div class="alert alert-info small">
-			These Vault mods matched the current filters, but the updater could not find a ModHub ID or GitHub source. Right-click a row to open its details window and update the Source URL if needed.
+			These Vault mods matched the current filters, but the updater could not find a ModHub ID or GitHub source. Double-click a row to edit its Source URL here. Right-click a row only when you need the full details window.
 		</div>
+		<div class="vault-no-source-editor mb-3 d-none" id="vaultNoSourceEditor">
+			<div class="small text-body-secondary mb-1">Editing source for</div>
+			<div class="fw-bold mb-2" id="vaultNoSourceEditName"></div>
+			<label class="form-label" for="vaultNoSourceEditURL">Source URL</label>
+			<div class="input-group">
+				<input class="form-control" id="vaultNoSourceEditURL" placeholder="https://github.com/owner/repository or ModHub page" type="url">
+				<button class="btn btn-success" id="vaultNoSourceSaveURL" type="button">Save</button>
+				<button class="btn btn-outline-secondary" id="vaultNoSourceClearURL" type="button">Clear</button>
+				<button class="btn btn-outline-primary" id="vaultNoSourceOpenDetail" type="button">Full details</button>
+			</div>
+			<div class="small mt-2" id="vaultNoSourceEditHint"></div>
+		</div>
+		<div class="alert py-2 d-none" id="vaultNoSourceSaveFeedback"></div>
 		<div class="list-group vault-no-source-list" id="vaultNoSourceList"></div>
 	</dialog>
 </body>

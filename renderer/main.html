@@ -22,11 +22,13 @@
 	<script src="renderJS/util/util_lib.js"></script>
 	<script src="renderJS/main_ui.js"></script>
 	<script src="renderJS/main_ui_lib.js"></script>
+	<script src="renderJS/main_find_panel.js"></script>
 	<script>
 		document.onkeydown = function(event) {
 			const evt = event || window.event
 			if (evt.code === 'F5' ) { window.main_IPC.folder.reload() }
 			if (evt.code === 'F1' ) { window.main_IPC.dispatch('help') }
+			if (evt.code === 'F3' ) { window.dispatchEvent(new CustomEvent('main-find-all:open')) }
 		}
 	</script>
 	<style>
@@ -98,22 +100,6 @@
 		body[data-version="17"] .bdg_no_fs17 { display : none }
 		body[data-version="15"] .bdg_no_fs15 { display : none }
 		body[data-version="13"] .bdg_no_fs13 { display : none }
-
-		body[data-version="17"] #topBar-basegame { display : none }
-		body[data-version="15"] #topBar-basegame { display : none }
-		body[data-version="13"] #topBar-basegame { display : none }
-
-		body[data-version="17"] #topBar-savetrack { display : none }
-		body[data-version="15"] #topBar-savetrack { display : none }
-		body[data-version="13"] #topBar-savetrack { display : none }
-
-		body[data-version="17"] #topBar-savemanage { display : none }
-		body[data-version="15"] #topBar-savemanage { display : none }
-		body[data-version="13"] #topBar-savemanage { display : none }
-
-		body[data-version="17"] #topBar-input { display : none }
-		body[data-version="15"] #topBar-input { display : none }
-		body[data-version="13"] #topBar-input { display : none }
 
 		.btn-check:checked+.btn.btn-selected-mods { background-color: #229b69; }
 
@@ -222,6 +208,21 @@
 			font-size : 1.25rem;
 			width     : 1.5rem;
 		}
+		.main-start-button {
+			justify-content : center;
+			min-height      : 4.6rem;
+		}
+		.main-start-logo,
+		.ma-management-start-logo {
+			background-image    : url("img/icon.ico");
+			background-position : center;
+			background-repeat   : no-repeat;
+			background-size     : contain;
+			display             : block;
+			flex                : 0 0 auto;
+			height              : 2.5rem;
+			width               : 2.5rem;
+		}
 		.main-content-panel {
 			display        : flex;
 			flex-direction : column;
@@ -252,7 +253,46 @@
 			align-items           : center;
 			display               : grid;
 			gap                   : .6rem;
-			grid-template-columns : minmax(14rem, 1fr) auto auto auto;
+			grid-template-columns : minmax(14rem, 1fr) auto auto auto auto;
+		}
+		.main-find-all-button {
+			align-items : center;
+			display     : inline-flex;
+			gap         : .35rem;
+			white-space : nowrap;
+		}
+		.main-find-canvas {
+			--bs-offcanvas-width : min(58rem, calc(100vw - 2rem));
+			background           : color-mix(in srgb, var(--bs-body-bg) 94%, var(--bs-secondary-bg) 6%);
+		}
+		.main-find-header {
+			background    : color-mix(in srgb, var(--bs-body-bg) 90%, var(--bs-primary) 10%);
+			border-bottom : var(--bs-border-width) solid var(--bs-border-color);
+		}
+		.main-find-results {
+			border        : var(--bs-border-width) solid var(--bs-border-color);
+			border-radius : var(--bs-border-radius);
+			flex          : 1 1 auto;
+			min-height    : 0;
+			overflow-y    : auto;
+		}
+		.main-find-table {
+			margin-bottom : 0;
+		}
+		.main-find-table td {
+			vertical-align : middle;
+		}
+		.main-find-icon {
+			height     : 3.5rem;
+			object-fit : contain;
+			width      : 3.5rem;
+		}
+		.main-find-collection {
+			cursor          : pointer;
+			text-decoration : underline dotted;
+		}
+		.main-find-collection:hover {
+			color : var(--bs-info-text-emphasis);
 		}
 		.main-advanced-filter-panel {
 			background    : var(--bs-tertiary-bg);
@@ -574,16 +614,8 @@
 					<span class="ps-2 text-danger d-inline-flex" style="--bs-text-opacity: 0.7;" id="gameRunningBubble"><i class="align-self-center bi bi-circle-fill small"></i></span>
 				</button>
 				<i18n-text type="button" class="btn btn-sm btn-outline-info d-none" id="topBar-update" data-key="update_ready"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-basegame" data-key="base_game_data"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-savetrack" data-key="savegame_track"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-savemanage" data-key="savegame_manage"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-input" data-key="input_manage"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-find" data-key="search_all"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-gamelog" data-key="button_gamelog"></i18n-text>
 				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-preferences" data-key="preferences_button"></i18n-text>
 				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-help" data-key="help_button"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-mini" data-key="mini_mode_button"></i18n-text>
-				<i18n-text type="button" class="btn btn-sm btn-outline-secondary" id="topBar-tray" data-key="min_tray_button"></i18n-text>
 			</div>
 		</div>
 		
@@ -599,9 +631,9 @@
 
 				<div class="main-rail-section border-top pt-3">
 					<div class="main-side-title">Tools</div>
-					<button type="button" id="mainModManagementButton" class="btn btn-warning main-rail-button">
-						<i class="bi bi-grid-3x3-gap"></i>
-						<i18n-text class="small" data-key="update_list">Mod Management</i18n-text>
+					<button type="button" id="mainModManagementButton" class="btn btn-warning main-rail-button main-start-button">
+						<span class="main-start-logo" aria-hidden="true"></span>
+						<span class="small">Menu</span>
 					</button>
 				</div>
 				<div class="main-rail-section main-rail-section-collections border-top pt-3">
@@ -637,6 +669,10 @@
 							<i class="bi bi-sliders"></i>
 							<span class="small">Advanced filters</span>
 							<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-body-secondary shadow text-body" id="tag_filter_full_count">0</span>
+						</button>
+						<button type="button" class="btn btn-sm btn-outline-info main-find-all-button" id="mainFindAllButton" title="Search every collection.">
+							<i class="bi bi-search"></i>
+							<span class="small">Find all</span>
 						</button>
 						<div class="main-selected-summary input-group input-group-sm w-auto" title="Selected mods. Use Ctrl+click to toggle individual mods, Shift+click to select a range, or Alt+click to select only one mod.">
 							<span class="input-group-text bg-secondary text-light border-secondary border-opacity-25">Selected</span>
@@ -713,6 +749,28 @@
 			</div>
 		</footer>
 
+	</div>
+
+	<!-- MARK: find all canvas -->
+	<div class="offcanvas offcanvas-end main-find-canvas" tabindex="-1" id="mainFindAllCanvas" aria-labelledby="mainFindAllCanvasLabel" style="-webkit-app-region: no-drag;">
+		<div class="offcanvas-header main-find-header" style="-webkit-app-region: drag;">
+			<div>
+				<div class="h5 offcanvas-title mb-0" id="mainFindAllCanvasLabel"><i class="bi bi-search"></i> Find all</div>
+				<div class="small text-body-secondary">Search every collection and jump straight to the selected mod.</div>
+			</div>
+			<button type="button" class="btn btn-secondary" data-bs-dismiss="offcanvas" data-bs-target="#mainFindAllCanvas" style="-webkit-app-region: no-drag;" aria-label="Close"><i class="bi-x-lg"></i></button>
+		</div>
+		<div class="offcanvas-body d-flex flex-column gap-2">
+			<div class="input-group input-group-sm">
+				<span class="input-group-text"><i18n-text data-key="filter_only"></i18n-text></span>
+				<input type="text" id="mainFindAllInput" class="form-control" placeholder="Type at least 3 characters to narrow results">
+				<button type="button" class="btn btn-outline-secondary" id="mainFindAllClear" title="Clear search"><i class="bi bi-eraser"></i></button>
+			</div>
+			<div class="small text-body-secondary" id="mainFindAllSummary">Open Find all to load every collection.</div>
+			<div class="main-find-results">
+				<table class="table table-sm table-hover table-striped main-find-table" id="mainFindAllTable"></table>
+			</div>
+		</div>
 	</div>
 
 	<!-- MARK: game launch modal -->
@@ -904,7 +962,7 @@
 	<div class="offcanvas offcanvas-start" tabindex="-1" id="offcanvas-version" style="-webkit-app-region: no-drag; transition: 0.5s" aria-labelledby="offcanvasLabel">
 		<div class="offcanvas-header">
 			<i18n-text class="h5 offcanvas-title" id="offcanvasLabel" data-key="notes_title_version"></i18n-text>
-			<button type="button" class="btn btn-secondary" data-bs-dismiss="offcanvas" data-bs-target="#offcanvas-version" style="z-index: 1;" aria-label="Close"><i class="bi-x-lg"></i></button>
+			<button type="button" class="btn btn-secondary" id="offcanvasVersionClose" data-bs-dismiss="offcanvas" data-bs-target="#offcanvas-version" style="-webkit-app-region: no-drag; pointer-events: auto; z-index: 1;" aria-label="Close"><i class="bi-x-lg"></i></button>
 		</div>
 		<div class="offcanvas-body">
 			<i18n-text data-key="offcanvas_blurb"></i18n-text>
@@ -1051,54 +1109,6 @@
 					</div>
 				</div>
 
-			</div>
-		</div>
-	</div>
-
-	<!-- MARK: mod management menu -->
-	<div class="offcanvas offcanvas-start w-50" tabindex="-1" id="modManagementCanvas" style="-webkit-app-region: no-drag; transition: 0.5s" aria-labelledby="modManagementCanvasLabel">
-		<div class="offcanvas-header justify-content-start" style="-webkit-app-region: drag;">
-			<button id="modManagementCanvasClose" type="button" style="-webkit-app-region: no-drag; z-index: 1;" class="btn btn-secondary" data-bs-dismiss="offcanvas" aria-label="Close"><i class="bi-x-lg"></i></button>
-			<h5 class="offcanvas-title ps-3 mb-0" id="modManagementCanvasLabel">Mod Management Menu</h5>
-		</div>
-		<div class="offcanvas-body full-scroll">
-			<div class="row g-3">
-				<div class="col-12">
-					<button class="btn btn-warning w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="update_candidates" type="button">
-						<i class="bi bi-arrow-repeat me-2"></i>Check Collection Updates
-					</button>
-					<div class="small text-body-secondary mt-1">Check monitored collections and apply available updates.</div>
-				</div>
-				<div class="col-12">
-					<button class="btn btn-warning w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="vault_update" type="button">
-						<i class="bi bi-database-down me-2"></i>Check Vault Updates
-					</button>
-					<div class="small text-body-secondary mt-1">Check stored Vault ZIPs and save newer supported versions into the Vault.</div>
-				</div>
-				<div class="col-12">
-					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="vault" type="button">
-						<i class="bi bi-database me-2"></i>Mod Vault
-					</button>
-					<div class="small text-body-secondary mt-1">Browse stored ZIPs, notes, categories, and cleanup tools.</div>
-				</div>
-				<div class="col-12">
-					<button class="btn btn-success w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="manifest" type="button">
-						<i class="bi bi-box-arrow-up-right me-2"></i>Share or Import a Collection
-					</button>
-					<div class="small text-body-secondary mt-1">Export or import a lightweight collection manifest.</div>
-				</div>
-				<div class="col-12">
-					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="backups" type="button">
-						<i class="bi bi-archive me-2"></i>Collection Backups
-					</button>
-					<div class="small text-body-secondary mt-1">Create, compare, restore, or remove collection backup manifests.</div>
-				</div>
-				<div class="col-12">
-					<button class="btn btn-secondary w-100 p-3 fs-5 mod-management-menu-action" data-dispatch-window="recent_changes" type="button">
-						<i class="bi bi-clock-history me-2"></i>Recent Collection Changes
-					</button>
-					<div class="small text-body-secondary mt-1">Review recent add, update, copy, restore, and disable activity.</div>
-				</div>
 			</div>
 		</div>
 	</div>
@@ -1324,6 +1334,25 @@
 			</div>
 		</div>
 	</div>
+</template>
+
+<template id="main_find_version_entry">
+	<dt class="col-9 mb-1 overflow-hidden main-find-collection"><template-var>name</template-var></dt><dd class="col-3 mb-1 ps-1"><template-var>version</template-var></dd>
+</template>
+
+<template id="main_find_mod_entry">
+	<tr class="mod-entry-row">
+		<td class="p-2" style="width: 4.5rem;">
+			<template-var>icon</template-var>
+		</td>
+		<td>
+			<div class="fw-semibold"><template-var>name</template-var></div>
+			<div class="small text-body-secondary"><template-var>title</template-var> - <em><template-var>author</template-var></em></div>
+		</td>
+		<td class="text-end pe-3">
+			<dl class="small row g-0 versionList mb-0"></dl>
+		</td>
+	</tr>
 </template>
 
 <template id="item_mod">

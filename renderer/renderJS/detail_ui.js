@@ -51,6 +51,7 @@ class windowState {
 	modColUUID = null
 	mod        = null
 	storeInfo  = null
+	sourceSaveFeedbackTimer = null
 
 	constructor() {
 		const constructStartedAt = performance.now()
@@ -60,6 +61,7 @@ class windowState {
 		this.modColUUID = urlParams.get('mod')
 
 		logDetailPerformance('Detail renderer StateManager construction', constructStartedAt, `id=${JSON.stringify(this.modColUUID)}`)
+		window.detail_IPC.receive('settings:sourceChanged', (payload) => this.#handleSourceChanged(payload))
 		this.getMod()
 	}
 
@@ -636,30 +638,76 @@ class windowState {
 		}
 	}
 
+	#sourceSaveFeedbackMessage(sourceURL, sourceInfo = this.#updateSourceInfo(sourceURL)) {
+		const supported = sourceInfo.type === 'github' || sourceInfo.type === 'modhub'
+		return {
+			kind    : supported || sourceURL === '' ? 'success' : 'warning',
+			message : sourceURL === ''
+				? 'Source URL cleared.'
+				: `Saved ${sourceInfo.label ?? 'source'} link.${supported ? ' The updater can check it automatically.' : ' This link is recorded, but it is not an automatic update source.'}`,
+		}
+	}
+
+	#setSourceSaveFeedback(message, kind = 'success') {
+		const feedback = MA.byId('update_source_feedback')
+		if ( feedback === null ) { return }
+		clearTimeout(this.sourceSaveFeedbackTimer)
+		feedback.className = `alert alert-${kind} py-2 mt-2`
+		feedback.textContent = message
+		this.sourceSaveFeedbackTimer = setTimeout(() => this.#hideSourceSaveFeedback(), 10000)
+	}
+
+	#hideSourceSaveFeedback() {
+		clearTimeout(this.sourceSaveFeedbackTimer)
+		this.sourceSaveFeedbackTimer = null
+		const feedback = MA.byId('update_source_feedback')
+		if ( feedback === null ) { return }
+		feedback.className = 'alert py-2 mt-2 d-none'
+		feedback.textContent = ''
+	}
+
+	#applyUpdateSource(value) {
+		MA.byIdValue('update_source_input', value)
+		MA.byIdHTML('update_source', this.#updateSourceHTML(value))
+		MA.byIdHTML('mod_author', this.#authorHTML(value))
+		this.#refreshGitHubVersion(value)
+	}
+
+	#handleSourceChanged(payload = {}) {
+		if ( this.mod === null ) { return }
+		const changedModName = String(payload.modName ?? '').trim().toLocaleLowerCase()
+		if ( changedModName === '' || changedModName !== this.#sourceLookupName().toLocaleLowerCase() ) { return }
+		const sourceURL = typeof payload.sourceURL === 'string' ? payload.sourceURL : ''
+		const currentURL = MA.byIdValue('update_source_input')
+		this.#applyUpdateSource(sourceURL)
+		if ( currentURL !== sourceURL ) {
+			this.#setSourceSaveFeedback('Source URL updated from another window.', 'info')
+		}
+	}
+
 	#updateSourceSave() {
 		const sourceURL = this.#normalizedUpdateSourceURL(MA.byIdValue('update_source_input').trim())
 
 		if ( sourceURL === null ) {
+			this.#hideSourceSaveFeedback()
 			MA.byId('update_source_input').classList.add('is-invalid')
 			return
 		}
 
 		MA.byId('update_source_input').classList.remove('is-invalid')
 		window.settings.site(this.#sourceLookupName(), sourceURL).then((value) => {
-			MA.byIdValue('update_source_input', value)
-			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
-			MA.byIdHTML('mod_author', this.#authorHTML(value))
-			this.#refreshGitHubVersion(value)
+			this.#applyUpdateSource(value)
+			const feedback = this.#sourceSaveFeedbackMessage(value)
+			this.#setSourceSaveFeedback(feedback.message, feedback.kind)
 		})
 	}
 
 	#updateSourceClear() {
 		MA.byId('update_source_input').classList.remove('is-invalid')
 		window.settings.site(this.#sourceLookupName(), '').then((value) => {
-			MA.byIdValue('update_source_input', value)
-			MA.byIdHTML('update_source', this.#updateSourceHTML(value))
-			MA.byIdHTML('mod_author', this.#authorHTML(value))
-			this.#refreshGitHubVersion(value)
+			this.#applyUpdateSource(value)
+			const feedback = this.#sourceSaveFeedbackMessage(value)
+			this.#setSourceSaveFeedback(feedback.message, feedback.kind)
 		})
 	}
 

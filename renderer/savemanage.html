@@ -11,6 +11,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
 	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
 	<link rel="stylesheet" href="inc/fsico.css">
 	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
@@ -28,47 +29,130 @@
 		.table-sm>:not(caption)>*>* {
 			padding: .15rem .25rem;
 		}
+		.utility-window {
+			display: flex;
+			flex-direction: column;
+			gap: 0.75rem;
+			height: 100vh;
+			min-height: 0;
+			padding: 0.75rem;
+		}
+		.utility-header {
+			-webkit-app-region: drag;
+			border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+			padding-bottom: 0.75rem;
+		}
+		.utility-header-grid {
+			align-items: center;
+			display: grid;
+			gap: 1rem;
+			grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 42rem);
+		}
+		.utility-title-banner {
+			background: color-mix(in srgb, var(--bs-primary) 70%, var(--bs-body-bg) 30%);
+			border-radius: 0.5rem;
+			color: #fff;
+			font-weight: 700;
+			margin: 0;
+			padding: 0.45rem 1rem;
+			text-align: center;
+		}
+		.utility-layout {
+			display: grid;
+			flex: 1 1 auto;
+			gap: 0.75rem;
+			grid-template-columns: 10rem minmax(0, 1fr);
+			min-height: 0;
+		}
+		.utility-action-rail,
+		.utility-content-panel {
+			background: color-mix(in srgb, var(--bs-body-bg) 92%, var(--bs-secondary-bg) 8%);
+			border: var(--bs-border-width) solid var(--bs-border-color);
+			border-radius: 0.5rem;
+			min-height: 0;
+		}
+		.utility-action-rail {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+			overflow: auto;
+			padding: 0.5rem;
+		}
+		.utility-rail-button {
+			align-items: center;
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			justify-content: center;
+			line-height: 1.15;
+			min-height: 4.8rem;
+			padding: 0.5rem 0.35rem;
+			text-align: center;
+			white-space: normal;
+		}
+		.utility-content-panel {
+			overflow: auto;
+			padding: 1rem;
+		}
+		.utility-info-card {
+			background: #111315;
+			border: var(--bs-border-width) solid #30363d;
+			border-radius: 0.5rem;
+			padding: 0.9rem 1rem;
+		}
+		@media (max-width: 1000px) {
+			.utility-layout,
+			.utility-header-grid {
+				grid-template-columns: 1fr;
+			}
+			.utility-action-rail {
+				flex-direction: row;
+			}
+		}
 	</style>
 </head>
-<body data-bs-theme="dark" class="overflow-custom2" id="drag_target" style="min-height: 100vh;">
-	<div class="container-fluid px-1 user-select-none">
-		<div class="sticky-top pt-3 pb-2 bg-body border-bottom mb-3" style="-webkit-app-region: drag;">
-			<div class="row w-100 g-0">
-				<div class="col-7" >
-					<div class="app-window-brand">
-						<span class="app-window-logo" aria-hidden="true"></span>
-						<h1 class="app-window-name">FSG Mod Assistant</h1>
+<body data-bs-theme="dark" class="overflow-hidden" id="drag_target">
+	<div class="utility-window user-select-none">
+		<header class="utility-header">
+			<div class="utility-header-grid">
+				<div class="app-window-brand">
+					<span class="app-window-logo" aria-hidden="true"></span>
+					<h1 class="app-window-name">FSG Mod Assistant</h1>
+				</div>
+				<i18n-text class="utility-title-banner h2" data-key="save_manage_title"></i18n-text>
+			</div>
+		</header>
+		<main class="utility-layout">
+			<aside class="utility-action-rail" aria-label="Window actions">
+				<button type="button" class="btn btn-primary utility-rail-button" id="importButton">
+					<i class="bi bi-file-earmark-zip" aria-hidden="true"></i>
+					<i18n-text data-key="save_manage_import"></i18n-text>
+				</button>
+				<button type="button" class="btn btn-outline-light utility-rail-button" data-ma-dispatch-window="mod_management">
+					<i class="bi bi-arrow-left" aria-hidden="true"></i>
+					<span>Back</span>
+				</button>
+			</aside>
+			<section class="utility-content-panel">
+				<i18n-text class="utility-info-card text-center mb-3 w-100 d-block fs-5" data-key="save_manage_blurb"></i18n-text>
+				<ul class="nav nav-tabs" id="savemanageTab" role="tablist">
+					<li class="nav-item" role="presentation">
+						<i18n-text class="nav-link active" id="active-tab" data-bs-target="#active-tab-pane" data-bs-toggle="tab" data-key="save_manage_active"></i18n-text>
+					</li>
+					<li class="nav-item" role="presentation">
+						<i18n-text class="nav-link" id="backup-tab" data-bs-target="#backup-tab-pane" data-bs-toggle="tab" data-key="save_manage_backup"></i18n-text>
+					</li>			
+				</ul>
+				<div class="tab-content" id="savemanageTabContent">
+					<div class="tab-pane fade show active py-4" id="active-tab-pane" role="tabpanel">
+						<div id="active_games" class="row gy-4"></div>
+					</div>
+					<div class="tab-pane fade show py-4" id="backup-tab-pane" role="tabpanel">
+						<div id="backup_games" class="row gy-4"></div>
 					</div>
 				</div>
-				<div class="col-5 pt-4">
-					<i18n-text class="badge bg-primary mx-auto w-100 d-block rounded-3 h4 fs-5" data-key="save_manage_title"></i18n-text>
-				</div>
-			</div>
-			<i18n-text class="text-center mt-2 w-100 px-5 d-block blockquote display-8" data-key="save_manage_blurb"></i18n-text>
-		</div>
-
-		<div class="pb-2 mb-3">
-			<div class="btn-group mx-auto w-75 d-flex">
-				<button type="button" class="btn btn-primary btn-sm border" id="importButton"><i class="bi bi-folder"></i> <i18n-text data-key="save_manage_import"></i18n-text></button>
-			</div>
-		</div>
-
-		<ul class="nav nav-tabs" id="savemanageTab" role="tablist">
-			<li class="nav-item" role="presentation">
-				<i18n-text class="nav-link active" id="active-tab" data-bs-target="#active-tab-pane" data-bs-toggle="tab" data-key="save_manage_active"></i18n-text>
-			</li>
-			<li class="nav-item" role="presentation">
-				<i18n-text class="nav-link" id="backup-tab" data-bs-target="#backup-tab-pane" data-bs-toggle="tab" data-key="save_manage_backup"></i18n-text>
-			</li>			
-		</ul>
-		<div class="tab-content" id="savemanageTabContent">
-			<div class="tab-pane fade show active py-4" id="active-tab-pane" role="tabpanel">
-				<div id="active_games" class="row gy-4"></div>
-			</div>
-			<div class="tab-pane fade show py-4" id="backup-tab-pane" role="tabpanel">
-				<div id="backup_games" class="row gy-4"></div>
-			</div>
-		</div>
+			</section>
+		</main>
 	</div>
 
 	<div class="modal" id="collect_savegame_modal" tabindex="-1">
