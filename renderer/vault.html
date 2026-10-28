@@ -263,6 +263,66 @@
 			display: grid;
 			gap: 0.5rem;
 		}
+		.vault-tag-filter {
+			border-bottom: 1px solid var(--bs-border-color);
+			padding-bottom: 0.75rem;
+			margin-bottom: 0.25rem;
+		}
+		.vault-tag-tree {
+			max-height: 16rem;
+			overflow-y: auto;
+			overscroll-behavior: contain;
+			padding: 0.25rem 0;
+		}
+		.vault-tag-tree-list {
+			list-style: none;
+			margin: 0;
+			padding: 0;
+		}
+		.vault-tag-tree-children {
+			list-style: none;
+			margin: 0 0 0 1rem;
+			padding: 0 0 0 0.55rem;
+			border-left: 1px solid var(--bs-border-color);
+		}
+		.vault-tag-tree-row {
+			min-height: 2.35rem;
+			display: flex;
+			align-items: center;
+			gap: 0.45rem;
+			padding: 0.2rem 0.4rem;
+			border-radius: 0.35rem;
+		}
+		.vault-tag-tree-row.is-selected {
+			background: rgba(var(--bs-primary-rgb), 0.35);
+		}
+		.vault-tag-tree-expand {
+			width: 1.25rem;
+			flex: 0 0 1.25rem;
+			padding: 0;
+			border: 0;
+			background: transparent;
+			color: var(--bs-secondary-color);
+		}
+		.vault-tag-tree-spacer {
+			width: 1.25rem;
+			flex: 0 0 1.25rem;
+		}
+		.vault-tag-tree-label {
+			min-width: 0;
+			flex: 1 1 auto;
+			overflow-wrap: anywhere;
+			cursor: pointer;
+		}
+		.vault-tag-tree-count {
+			color: var(--bs-secondary-color);
+			font-size: 0.85em;
+		}
+		.vault-tag-selected-list {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.35rem;
+		}
 		.vault-selection-bar {
 			position: sticky;
 			bottom: 0.75rem;
@@ -442,6 +502,30 @@
 					<i class="bi bi-question-circle" aria-hidden="true"></i> Selection help
 				</button>
 				<div class="vault-filter-stack">
+					<section class="vault-tag-filter" aria-labelledby="vaultTagFilterHeading">
+						<div class="fw-semibold" id="vaultTagFilterHeading">Find mods</div>
+						<div class="small text-body-secondary mb-2">Filter by tags, sort order and more.</div>
+						<div class="small text-body-secondary mb-2">Selecting a category includes its child categories.</div>
+						<label class="visually-hidden" for="vaultTagTreeSearch">Search tags</label>
+						<input class="form-control form-control-sm mb-2" id="vaultTagTreeSearch" placeholder="Search tags" type="search">
+						<div class="vault-tag-tree" id="vaultTagTree" role="tree" aria-label="Vault tags"></div>
+						<label class="form-label small mt-2 mb-1" for="vaultSortFilter">Sort by</label>
+						<select class="form-select form-select-sm" id="vaultSortFilter">
+							<option selected value="name-asc">Name A-Z</option>
+							<option value="name-desc">Name Z-A</option>
+							<option value="updated-desc">Vault updated newest</option>
+							<option value="updated-asc">Vault updated oldest</option>
+							<option value="size-desc">Size largest</option>
+							<option value="size-asc">Size smallest</option>
+						</select>
+						<div class="form-check form-switch mt-3">
+							<input checked class="form-check-input" id="vaultTagMatchAll" role="switch" type="checkbox">
+							<label class="form-check-label small" for="vaultTagMatchAll" id="vaultTagMatchLabel">Match all selected tags</label>
+						</div>
+						<button class="btn btn-sm btn-info w-100 mt-2" id="vaultTagTreeClear" type="button">Clear filters</button>
+						<div class="small text-body-secondary mt-3 mb-1" id="vaultTagSelectedHeading">Selected tags (0)</div>
+						<div class="vault-tag-selected-list" id="vaultTagSelectedList"></div>
+					</section>
 					<div>
 						<label class="form-label small" for="vaultGameVersionFilter">Game</label>
 						<select class="form-select form-select-sm" id="vaultGameVersionFilter">
@@ -454,20 +538,6 @@
 							<option value="">All collections</option>
 						</select>
 					</div>
-					<div>
-						<label class="form-label small" for="vaultSortFilter">Sort by</label>
-						<select class="form-select form-select-sm" id="vaultSortFilter">
-							<option selected value="name-asc">Name A-Z</option>
-							<option value="name-desc">Name Z-A</option>
-							<option value="updated-desc">Vault updated newest</option>
-							<option value="updated-asc">Vault updated oldest</option>
-							<option value="size-desc">Size largest</option>
-							<option value="size-asc">Size smallest</option>
-						</select>
-					</div>
-					<select aria-label="Custom tag" class="form-select form-select-sm" id="vaultTagFilter">
-						<option value="">All custom tags</option>
-					</select>
 					<select aria-label="Update status" class="form-select form-select-sm" data-bs-placement="top" data-bs-toggle="tooltip" id="vaultUpdateFilter" title="All update states: show every Vault mod. Update available: show only mods where the Vault has no current/local-newer ModHub copy. No known update: hide mods with a known newer ModHub copy.">
 						<option value="">All update states</option>
 						<option value="available">Update available</option>
@@ -493,12 +563,6 @@
 							<label class="form-label small" for="vaultTypeFilter">Internal mod type</label>
 							<select class="form-select form-select-sm" id="vaultTypeFilter">
 								<option value="">All mod types</option>
-							</select>
-						</div>
-						<div>
-							<label class="form-label small" for="vaultModHubCategoryFilter">ModHub category</label>
-							<select class="form-select form-select-sm" id="vaultModHubCategoryFilter">
-								<option value="">All ModHub categories</option>
 							</select>
 						</div>
 						<div>
@@ -951,6 +1015,14 @@
 					<h3 class="h6">Export Mod Manifest</h3>
 					<p class="small text-body-secondary mb-3">Save a JSON Mod Manifest containing every known redownload URL for the ZIPs currently stored in the Vault.</p>
 					<button id="vaultRecoveryManifest" data-import-control type="button" class="btn btn-outline-info w-100"><i class="bi bi-file-earmark-arrow-down" aria-hidden="true"></i> Export Mod Manifest</button>
+				</div>
+			</div>
+			<div class="col-lg-6">
+				<div class="border rounded p-3 h-100">
+					<h3 class="h6">Back up ZIP files</h3>
+					<p class="small text-body-secondary mb-3">Copy all stored versions without an automatic ModHub or GitHub update source to a local, external, or cloud-synced folder. Existing backup files are retained and verified copies are skipped on later runs.</p>
+					<button id="vaultZipBackup" data-import-control type="button" class="btn btn-outline-warning w-100"><i class="bi bi-shield-check" aria-hidden="true"></i> Back up unsupported-source ZIPs</button>
+					<div class="small text-body-secondary mt-2">To restore, open Import / export → From folder, check <strong>Include subfolders</strong>, then click <strong>Choose folder and scan</strong>. In the folder picker, choose the outer backup folder containing <code>vault-zip-backup.json</code> and <code>files</code>. One scan searches <code>files</code> and its hash-named child folders for ZIPs.</div>
 				</div>
 			</div>
 		</div>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<style>
+		.about-page { display: flex; flex-direction: column; gap: 1rem; height: 100vh; padding: 1rem; }
+		.about-header { -webkit-app-region: drag; }
+		.about-card { background: #17191b; border: 1px solid var(--bs-border-color); border-radius: .5rem; padding: 1.25rem; }
+		.about-link { align-items: center; display: flex; font-size: 1.15rem; justify-content: space-between; min-height: 3.5rem; text-align: left; }
+	</style>
+</head>
+<body data-bs-theme="dark" class="overflow-hidden">
+	<main class="about-page user-select-none">
+		<header class="about-header border-bottom pb-3">
+			<div class="app-window-brand">
+				<span class="app-window-logo" aria-hidden="true"></span>
+				<h1 class="app-window-name">FSG Mod Assistant</h1>
+			</div>
+			<h2 class="bg-primary rounded text-center fw-bold mt-3 mb-0 py-2">About</h2>
+		</header>
+		<section class="about-card">
+			<h3 class="h4">FSG Mod Assistant</h3>
+			<p class="mb-0">Manage Farming Simulator mods, collections, updates, and Vault backups in one place.</p>
+		</section>
+		<section class="about-card flex-grow-1">
+			<h3 class="h5 mb-3">Useful links</h3>
+			<div class="d-grid gap-2">
+				<a class="btn btn-outline-info about-link" target="_blank" href="https://fsgmodding.github.io/FSG_Mod_Assistant/">User guide <span aria-hidden="true">↗</span></a>
+				<a class="btn btn-outline-info about-link" target="_blank" href="https://github.com/FSGModding/FSG_Mod_Assistant">Project and source code <span aria-hidden="true">↗</span></a>
+				<a class="btn btn-outline-info about-link" target="_blank" href="https://github.com/FSGModding/FSG_Mod_Assistant/releases">Releases and downloads <span aria-hidden="true">↗</span></a>
+				<a class="btn btn-outline-info about-link" target="_blank" href="https://github.com/FSGModding/FSG_Mod_Assistant/issues">Report a problem <span aria-hidden="true">↗</span></a>
+				<a class="btn btn-outline-secondary about-link" target="_blank" href="https://www.farmsimgame.com/">FSG Modding website <span aria-hidden="true">↗</span></a>
+			</div>
+		</section>
+	</main>
+</body>
+</html>

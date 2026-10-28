@@ -14,6 +14,12 @@ let vaultGameVersions = []
 let vaultGameVersionUserSelected = false
 let vaultNotes = {}
 let vaultTags = {}
+const vaultTagSelections = new Set()
+const vaultExpandedTagNodes = new Set()
+let vaultTagTreeQuery = ''
+let vaultTagMatchMode = 'all'
+let vaultTagNodeIndex = new Map()
+let vaultTagTreeRoots = []
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
 let vaultHealthFilter = ''
@@ -36,6 +42,10 @@ let vaultLockedControls = []
 let vaultTaskLockDepth = 0
 let vaultPreviewItems = []
 let vaultPreviewIndex = 0
+let vaultPreviewGallerySequence = 0
+let vaultPreviewGalleries = new Map()
+let vaultPreviewObserver = null
+const VAULT_FILE_ROW_CHUNK_SIZE = 8
 
 function setVaultWindowTaskBusy(busy) {
 	if ( typeof window.vault_IPC?.setBusy === 'function' ) { window.vault_IPC.setBusy(busy === true) }
@@ -123,6 +133,13 @@ function handleVaultProgress(progress = {}) {
 	if ( progress.operation === 'moveFolder' ) {
 		MA.byIdText('vaultStatus', label)
 	}
+	if ( progress.operation === 'importCollections' ) {
+		MA.byIdText('vaultStatus', label)
+	}
+	if ( progress.operation === 'vaultZipBackup' ) {
+		MA.byIdText('vaultStatus', label)
+		MA.byIdText('vaultImportStatus', label)
+	}
 	if ( progress.operation === 'copyBatchToCollection' ) {
 		const status = MA.byId('vaultBulkCopyStatus')
 		if ( status !== null ) { status.textContent = label }
@@ -202,6 +219,24 @@ function showVaultCloseBlocked(payload = {}) {
 
 function uniqueValues(values) {
 	return [...new Set(values.filter((value) => typeof value === 'string' && value !== ''))]
+}
+
+function modHubCategorySegments(value) {
+	if ( Array.isArray(value) ) { return value.flatMap((part) => modHubCategorySegments(part)) }
+	if ( typeof value !== 'string' || value.trim() === '' ) { return [] }
+	return value.split(/\s+(?:>|-)\s+/u).map((part) => part.trim()).filter((part) => part !== '')
+}
+
+function modHubCategoryPathsForEntries(entries) {
+	const paths = new Map()
+	for ( const entry of entries ) {
+		for ( const value of [...(entry.modHubCategoryPaths ?? []), ...(entry.modHubCategories ?? [])] ) {
+			const segments = modHubCategorySegments(value)
+			if ( segments.length === 0 ) { continue }
+			paths.set(segments.map((segment) => segment.toLocaleLowerCase()).join('/'), segments)
+		}
+	}
+	return [...paths.values()]
 }
 
 function friendlyStoreItemType(value) {
@@ -928,18 +963,46 @@ function storeItemPreviewHTML(previews, maxItems = 6, label = 'Store item previe
 		icon : preview?.icon ?? preview?.url,
 		name : preview?.name || label,
 	}))
-	const encodedGallery = DATA.escapeSpecial(encodeURIComponent(JSON.stringify(gallery)))
+	const galleryID = `vaultPreviewGallery${++vaultPreviewGallerySequence}`
+	vaultPreviewGalleries.set(galleryID, gallery)
 	const imageHTML = gallery.slice(0, maxItems).map((preview, index) => {
-		const iconSource = DATA.escapeSpecial(storePreviewIconSource(preview.icon))
 		const title = DATA.escapeSpecial(preview.name || label)
-		return `<button type="button" class="vault-store-preview-button" data-vault-preview-index="${index}" title="Open preview: ${title}"><img alt="" decoding="async" draggable="false" fetchpriority="low" height="54" src="${iconSource}" width="54"></button>`
+		return `<button type="button" class="vault-store-preview-button" data-vault-preview-index="${index}" title="Open preview: ${title}"><img alt="" data-vault-preview-thumb="${index}" decoding="async" draggable="false" fetchpriority="low" height="54" width="54"></button>`
 	})
 	const remaining = gallery.length - maxItems
 	if ( remaining > 0 ) {
 		imageHTML.push(`<button type="button" class="vault-store-preview-more" data-vault-preview-index="${maxItems}" title="Open all ${gallery.length} previews">+${remaining}</button>`)
 	}
 
-	return `<div class="vault-store-preview mt-2" data-vault-preview-gallery="${encodedGallery}">${imageHTML.join('')}</div>`
+	return `<div class="vault-store-preview mt-2" data-vault-preview-gallery="${galleryID}">${imageHTML.join('')}</div>`
+}
+
+function observeVaultPreviewThumbnails(parent) {
+	const images = parent.querySelectorAll('img[data-vault-preview-thumb]')
+	if ( images.length === 0 ) { return }
+	if ( typeof IntersectionObserver === 'undefined' ) {
+		for ( const image of images ) { loadVaultPreviewThumbnail(image) }
+		return
+	}
+	if ( vaultPreviewObserver === null ) {
+		vaultPreviewObserver = new IntersectionObserver((observed) => {
+			for ( const item of observed ) {
+				if ( !item.isIntersecting ) { continue }
+				loadVaultPreviewThumbnail(item.target)
+				vaultPreviewObserver.unobserve(item.target)
+			}
+		}, { root : MA.byId('vaultList'), rootMargin : '240px 0px' })
+	}
+	for ( const image of images ) { vaultPreviewObserver.observe(image) }
+}
+
+function loadVaultPreviewThumbnail(image) {
+	const galleryID = image.closest('[data-vault-preview-gallery]')?.dataset.vaultPreviewGallery
+	const index = Number.parseInt(image.dataset.vaultPreviewThumb, 10)
+	const preview = vaultPreviewGalleries.get(galleryID)?.[index]
+	if ( preview === undefined ) { return }
+	image.src = storePreviewIconSource(preview.icon)
+	image.removeAttribute('data-vault-preview-thumb')
 }
 
 function modHubScreenshotsHTML(screenshots, maxItems = 6) {
@@ -981,15 +1044,9 @@ function openVaultPreview(event) {
 	if ( trigger === null ) { return false }
 
 	const gallery = trigger.closest('[data-vault-preview-gallery]')
-	const serialized = gallery?.dataset.vaultPreviewGallery
-	if ( !serialized ) { return false }
-
-	try {
-		showVaultPreviewGallery(JSON.parse(decodeURIComponent(serialized)), Number.parseInt(trigger.dataset.vaultPreviewIndex, 10) || 0)
-	} catch (err) {
-		// eslint-disable-next-line no-console
-		console.warn('Unable to open Vault preview gallery', err)
-	}
+	const previews = vaultPreviewGalleries.get(gallery?.dataset.vaultPreviewGallery)
+	if ( !Array.isArray(previews) ) { return false }
+	showVaultPreviewGallery(previews, Number.parseInt(trigger.dataset.vaultPreviewIndex, 10) || 0)
 	return true
 }
 
@@ -1320,6 +1377,7 @@ function groupEntries(entries) {
 		const gameVersions = uniqueValues(group.entries.flatMap((entry) => gameVersionsForEntry(entry)))
 		const gameLabels = gameVersionLabels(gameVersions)
 		const modHubCategories = uniqueValues(group.entries.flatMap((entry) => entry.modHubCategories ?? []))
+		const modHubCategoryPaths = modHubCategoryPathsForEntries(group.entries)
 		const modHubReleasedDates = uniqueValues(group.entries.flatMap((entry) => entry.modHubReleasedDates ?? []))
 		const modTypes = uniqueValues(group.entries.flatMap((entry) => entry.modTypes ?? []))
 		const sources = uniqueValues(group.entries.flatMap((entry) => entry.sources ?? []).map((source) => friendlySourceName(source)))
@@ -1348,6 +1406,7 @@ function groupEntries(entries) {
 			brands.join(' '),
 			equipmentSpecText(equipmentSpecs),
 			modHubCategories.join(' '),
+			modHubCategoryPaths.flat().join(' '),
 			modHubReleasedDates.join(' '),
 			modTypes.join(' '),
 			sources.join(' '),
@@ -1377,6 +1436,7 @@ function groupEntries(entries) {
 			hasUpdate,
 			hasVaultUpdate,
 			modHubCategories,
+			modHubCategoryPaths,
 			modHubReleasedDates,
 			modHubScreenshots,
 			modIcon,
@@ -1441,10 +1501,8 @@ function filterEntries() {
 	const authorFilter = MA.byId('vaultAuthorFilter').value
 	const typeFilter = MA.byId('vaultTypeFilter').value
 	const categoryFilter = MA.byId('vaultCategoryFilter').value
-	const modHubCategoryFilter = MA.byId('vaultModHubCategoryFilter').value
 	const collectionFilter = MA.byId('vaultCollectionFilter').value
 	const gameVersionFilter = MA.byId('vaultGameVersionFilter').value
-	const tagFilter = MA.byId('vaultTagFilter').value
 	const noteFilter = MA.byId('vaultNoteFilter').value
 	const rollbackFilter = MA.byId('vaultRollbackFilter').value
 	const brandFilter = MA.byId('vaultBrandFilter').value
@@ -1454,6 +1512,7 @@ function filterEntries() {
 	const updateFilter = MA.byId('vaultUpdateFilter').value
 	const updatedFilter = MA.byId('vaultUpdatedFilter').value
 	const sortMode = MA.byId('vaultSortFilter').value
+	const selectedTagKeys = [...vaultTagSelections]
 	const groups = groupEntries(vaultEntries)
 	// Each independent Vault filter contributes one simple predicate branch.
 	// eslint-disable-next-line complexity
@@ -1466,10 +1525,11 @@ function filterEntries() {
 		(storeItemTypeFilter === '' || group.storeItemTypes.includes(storeItemTypeFilter)) &&
 		rangeMatches(group.equipmentSpecs, horsepowerFilter, 'horsepowerMin', 'horsepowerMax') &&
 		rangeMatches(group.equipmentSpecs, priceFilter, 'priceMin', 'priceMax') &&
-		(modHubCategoryFilter === '' || group.modHubCategories.includes(modHubCategoryFilter)) &&
+		(selectedTagKeys.length === 0 || (vaultTagMatchMode === 'all' ?
+			selectedTagKeys.every((key) => vaultGroupMatchesTag(group, key)) :
+			selectedTagKeys.some((key) => vaultGroupMatchesTag(group, key)))) &&
 		(collectionFilter === '' || group.collectionFilterNames.includes(collectionFilter)) &&
 		(gameVersionFilter === '' || group.gameVersions.includes(gameVersionFilter)) &&
-		(tagFilter === '' || group.customTags.includes(tagFilter)) &&
 		(vaultSourceFilter === '' || group.sourceTypes.includes(vaultSourceFilter)) &&
 		groupHasHealthIssue(group, vaultHealthFilter) &&
 		(noteFilter === '' || (noteFilter === 'with' && group.hasNote) || (noteFilter === 'without' && !group.hasNote)) &&
@@ -1527,7 +1587,10 @@ function setSourceFilter(sourceType, shouldRender = true) {
 function clearQuickFilters(shouldRender = true) {
 	MA.byId('vaultTextFilter').value = ''
 	MA.byId('vaultCollectionFilter').value = ''
-	MA.byId('vaultTagFilter').value = ''
+	vaultTagSelections.clear()
+	vaultTagTreeQuery = ''
+	MA.byId('vaultTagTreeSearch').value = ''
+	renderVaultTagTree(true)
 	MA.byId('vaultNoteFilter').value = ''
 	MA.byId('vaultRollbackFilter').value = ''
 	MA.byId('vaultUpdateFilter').value = ''
@@ -1540,7 +1603,6 @@ function clearAdvancedFilters(shouldRender = true) {
 	MA.byId('vaultTypeFilter').value = ''
 	MA.byId('vaultBrandFilter').value = ''
 	MA.byId('vaultCategoryFilter').value = ''
-	MA.byId('vaultModHubCategoryFilter').value = ''
 	MA.byId('vaultHorsepowerFilter').value = ''
 	MA.byId('vaultPriceFilter').value = ''
 	MA.byId('vaultStoreItemTypeFilter').value = ''
@@ -1594,9 +1656,10 @@ function versionLabel(entry) {
 	return `Version ${version}`
 }
 
-async function renderFileRows(entries, groupIndex, customTags = []) {
+async function renderFileRows(entries, groupIndex, customTags = [], startIndex = 0) {
 	// eslint-disable-next-line complexity
-	const rows = await Promise.all(entries.map(async (entry, entryIndex) => {
+	const rows = await Promise.all(entries.map(async (entry, localIndex) => {
+		const entryIndex = startIndex + localIndex
 		const size = await DATA.bytesToHR(entry.size ?? 0)
 		const detailsId = `vaultDetails_${groupIndex}_${entryIndex}`
 		const modHubDisplay = modHubStatusDisplay(entry)
@@ -1674,15 +1737,39 @@ async function ensureVaultGroupRows(body) {
 	if ( typeof groupData === 'undefined' ) { return }
 
 	body.dataset.loading = 'true'
-	body.innerHTML = '<div class="text-body-secondary p-3">Loading stored ZIP details...</div>'
+	const startedAt = performance.now()
+	body.innerHTML = `<div class="text-body-secondary p-3">Loading stored ZIP details (0 of ${groupData.entries.length.toLocaleString()})...</div>`
 	await nextFrame()
-	const rows = await renderFileRows(groupData.entries, groupData.groupIndex, groupData.customTags)
-	if ( !body.isConnected ) { return }
-	body.innerHTML = rows
+	let renderedCount = 0
+	for ( let startIndex = 0; startIndex < groupData.entries.length; startIndex += VAULT_FILE_ROW_CHUNK_SIZE ) {
+		const entries = groupData.entries.slice(startIndex, startIndex + VAULT_FILE_ROW_CHUNK_SIZE)
+		const rows = await renderFileRows(entries, groupData.groupIndex, groupData.customTags, startIndex)
+		if ( !body.isConnected ) { return }
+		if ( startIndex === 0 ) { body.replaceChildren() }
+		const fragment = document.createElement('div')
+		fragment.innerHTML = rows
+		const addedRows = [...fragment.children]
+		body.append(...addedRows)
+		for ( const row of addedRows ) { observeVaultPreviewThumbnails(row) }
+		enableTooltipElements(addedRows.flatMap((row) => [
+			...row.querySelectorAll('[data-bs-toggle="tooltip"]'),
+			...row.querySelectorAll('button[title]'),
+		]))
+		renderedCount += entries.length
+		if ( startIndex + VAULT_FILE_ROW_CHUNK_SIZE < groupData.entries.length ) {
+			const loadingStatus = document.createElement('div')
+			loadingStatus.className = 'small text-body-secondary p-2 vault-file-rows-progress'
+			loadingStatus.textContent = `Loaded ${renderedCount.toLocaleString()} of ${groupData.entries.length.toLocaleString()} stored ZIP details...`
+			body.querySelector('.vault-file-rows-progress')?.remove()
+			body.append(loadingStatus)
+			await nextFrame()
+			loadingStatus.remove()
+		}
+	}
 	body.dataset.loaded = 'true'
 	delete body.dataset.loading
-	enableTooltips(body)
 	updateVaultSelectionControls()
+	logVaultPerformance(`Vault group expansion took ${(performance.now() - startedAt).toFixed(1)} ms versions=${groupData.entries.length.toString()} rendered=${renderedCount.toString()} chunkSize=${VAULT_FILE_ROW_CHUNK_SIZE.toString()}`)
 }
 
 function fillSelect(selectID, values, firstLabel) {
@@ -1723,10 +1810,6 @@ function fillGameVersionSelect() {
 	}
 }
 
-function vaultTagFilterValues() {
-	return uniqueValues(groupEntries(vaultEntries).flatMap((group) => group.customTags))
-}
-
 function vaultCollectionFilterValues() {
 	return uniqueValues([
 		...vaultCollections.map((collection) => collection.name),
@@ -1739,11 +1822,226 @@ function refreshFilterOptions() {
 	fillSelect('vaultAuthorFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.authors ?? [])), 'All authors')
 	fillSelect('vaultBrandFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.itemBrands ?? [])), 'All manufacturers/brands')
 	fillSelect('vaultCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.itemCategories ?? [])), 'All internal categories')
-	fillSelect('vaultModHubCategoryFilter', uniqueValues(vaultEntries.flatMap((entry) => entry.modHubCategories ?? [])), 'All ModHub categories')
 	fillSelect('vaultCollectionFilter', vaultCollectionFilterValues(), 'All collections')
 	fillGameVersionSelect()
-	fillSelect('vaultTagFilter', vaultTagFilterValues(), 'All custom tags')
 	fillSelect('vaultStoreItemTypeFilter', friendlyStoreItemTypes(vaultEntries.flatMap((entry) => entry.storeItemTypes ?? [])), 'All store-item types')
+	renderVaultTagTree()
+}
+
+function vaultTagFilterKey(type, value) {
+	return `${type}:${encodeURIComponent(value)}`
+}
+
+function newVaultTagTreeNode(type, label, path, key) {
+	return { children : new Map(), groupIDs : new Set(), key, label, path, type }
+}
+
+function buildVaultTagTree() {
+	const roots = new Map()
+	vaultTagNodeIndex = new Map()
+	const customRoot = newVaultTagTreeNode('custom-root', 'My tags', [], 'custom-root')
+	const groups = groupEntries(vaultEntries)
+	for ( const group of groups ) {
+		const groupID = vaultNoteKey(group.modName)
+		for ( const categoryPath of group.modHubCategoryPaths ) {
+			let siblings = roots
+			let path = []
+			for ( const label of categoryPath ) {
+				path = [...path, label]
+				const segmentKey = normalValue(label)
+				let node = siblings.get(segmentKey)
+				if ( node === undefined ) {
+					const key = vaultTagFilterKey('modhub', JSON.stringify(path.map(normalValue)))
+					node = newVaultTagTreeNode('modhub', label, path, key)
+					siblings.set(segmentKey, node)
+					vaultTagNodeIndex.set(key, node)
+				}
+				node.groupIDs.add(groupID)
+				siblings = node.children
+			}
+		}
+		for ( const tag of group.customTags ) {
+			const tagKey = normalValue(tag)
+			let node = customRoot.children.get(tagKey)
+			if ( node === undefined ) {
+				const key = vaultTagFilterKey('custom', tagKey)
+				node = newVaultTagTreeNode('custom', tag, [tag], key)
+				customRoot.children.set(tagKey, node)
+				vaultTagNodeIndex.set(key, node)
+			}
+			node.groupIDs.add(groupID)
+			customRoot.groupIDs.add(groupID)
+		}
+	}
+	if ( customRoot.children.size > 0 ) { roots.set('\uffffcustom-tags', customRoot) }
+	return [...roots.values()].toSorted((left, right) => left.label.localeCompare(right.label))
+}
+
+function vaultTagNodeMatchesQuery(node, query) {
+	if ( query === '' ) { return true }
+	if ( normalValue(node.label).includes(query) ) { return true }
+	return [...node.children.values()].some((child) => vaultTagNodeMatchesQuery(child, query))
+}
+
+function vaultTagHasSelectedDescendant(node) {
+	for ( const child of node.children.values() ) {
+		if ( vaultTagSelections.has(child.key) || vaultTagHasSelectedDescendant(child) ) { return true }
+	}
+	return false
+}
+
+function makeVaultTagTreeRow(node, depth) {
+	const item = document.createElement('li')
+	item.setAttribute('role', 'treeitem')
+	item.setAttribute('aria-level', (depth + 1).toString())
+	const row = document.createElement('div')
+	row.className = 'vault-tag-tree-row'
+	row.classList.toggle('is-selected', vaultTagSelections.has(node.key))
+	const hasSelectedDescendant = vaultTagHasSelectedDescendant(node)
+	if ( node.children.size > 0 ) {
+		const expand = document.createElement('button')
+		expand.className = 'vault-tag-tree-expand'
+		expand.type = 'button'
+		expand.setAttribute('aria-label', `${vaultExpandedTagNodes.has(node.key) ? 'Collapse' : 'Expand'} ${node.label}`)
+		expand.setAttribute('aria-expanded', vaultExpandedTagNodes.has(node.key).toString())
+		expand.innerHTML = `<i class="bi bi-chevron-${vaultExpandedTagNodes.has(node.key) ? 'down' : 'right'}" aria-hidden="true"></i>`
+		expand.addEventListener('click', () => {
+			if ( vaultExpandedTagNodes.has(node.key) ) { vaultExpandedTagNodes.delete(node.key) }
+			else { vaultExpandedTagNodes.add(node.key) }
+			renderVaultTagTree()
+		})
+		row.appendChild(expand)
+	} else {
+		const spacer = document.createElement('span')
+		spacer.className = 'vault-tag-tree-spacer'
+		row.appendChild(spacer)
+	}
+	const checkbox = document.createElement('input')
+	checkbox.className = 'form-check-input m-0'
+	checkbox.type = 'checkbox'
+	checkbox.id = `vaultTag-${node.key.replaceAll(/[^a-z\d_-]/giu, '_')}`
+	checkbox.checked = vaultTagSelections.has(node.key)
+	checkbox.indeterminate = !checkbox.checked && hasSelectedDescendant
+	checkbox.dataset.tagKey = node.key
+	checkbox.setAttribute('aria-label', `Filter by ${node.path.join(' › ')}${checkbox.indeterminate ? '. A child tag is selected.' : ''}`)
+	row.appendChild(checkbox)
+	const label = document.createElement('label')
+	label.className = 'vault-tag-tree-label'
+	label.htmlFor = checkbox.id
+	label.textContent = node.label
+	row.appendChild(label)
+	const count = document.createElement('span')
+	count.className = 'vault-tag-tree-count'
+	count.textContent = node.groupIDs.size.toLocaleString()
+	row.appendChild(count)
+	item.appendChild(row)
+	const query = normalValue(vaultTagTreeQuery)
+	const shouldExpand = query !== '' || vaultExpandedTagNodes.has(node.key)
+	if ( node.children.size > 0 && shouldExpand ) {
+		const children = document.createElement('ul')
+		children.className = 'vault-tag-tree-children'
+		children.setAttribute('role', 'group')
+		for ( const child of [...node.children.values()].toSorted((left, right) => left.label.localeCompare(right.label)) ) {
+			if ( vaultTagNodeMatchesQuery(child, query) ) { children.appendChild(makeVaultTagTreeRow(child, depth + 1)) }
+		}
+		item.appendChild(children)
+	}
+	return item
+}
+
+function renderVaultTagSelections() {
+	const list = MA.byId('vaultTagSelectedList')
+	list.replaceChildren()
+	MA.byIdText('vaultTagSelectedHeading', `Selected tags (${vaultTagSelections.size})`)
+	for ( const key of vaultTagSelections ) {
+		const node = vaultTagNodeIndex.get(key)
+		if ( node === undefined ) { continue }
+		const chip = document.createElement('button')
+		chip.className = 'btn btn-sm btn-outline-info rounded-pill'
+		chip.type = 'button'
+		chip.title = `Remove ${node.path.join(' › ')} filter`
+		chip.textContent = `${node.path.join(' › ')}  ×`
+		chip.addEventListener('click', () => {
+			vaultTagSelections.delete(key)
+			renderVaultTagTree()
+			renderFilteredVault()
+		})
+		list.appendChild(chip)
+	}
+}
+
+function renderVaultTagTree(rebuild = false) {
+	const tree = MA.byId('vaultTagTree')
+	if ( tree === null ) { return }
+	if ( rebuild || vaultTagTreeRoots.length === 0 ) { vaultTagTreeRoots = buildVaultTagTree() }
+	for ( const key of [...vaultTagSelections] ) {
+		if ( !vaultTagNodeIndex.has(key) ) { vaultTagSelections.delete(key) }
+	}
+	tree.replaceChildren()
+	const query = normalValue(vaultTagTreeQuery)
+	const list = document.createElement('ul')
+	list.className = 'vault-tag-tree-list'
+	list.setAttribute('role', 'group')
+	for ( const node of vaultTagTreeRoots ) {
+		if ( !vaultTagNodeMatchesQuery(node, query) ) { continue }
+		if ( node.type === 'custom-root' ) {
+			const item = document.createElement('li')
+			item.setAttribute('role', 'treeitem')
+			item.setAttribute('aria-level', '1')
+			const row = document.createElement('div')
+			row.className = 'vault-tag-tree-row'
+			const expand = document.createElement('button')
+			expand.className = 'vault-tag-tree-expand'
+			expand.type = 'button'
+			expand.setAttribute('aria-label', `${vaultExpandedTagNodes.has(node.key) ? 'Collapse' : 'Expand'} ${node.label}`)
+			expand.setAttribute('aria-expanded', vaultExpandedTagNodes.has(node.key).toString())
+			expand.innerHTML = `<i class="bi bi-chevron-${vaultExpandedTagNodes.has(node.key) ? 'down' : 'right'}" aria-hidden="true"></i>`
+			expand.addEventListener('click', () => {
+				if ( vaultExpandedTagNodes.has(node.key) ) { vaultExpandedTagNodes.delete(node.key) }
+				else { vaultExpandedTagNodes.add(node.key) }
+				renderVaultTagTree()
+			})
+			row.appendChild(expand)
+			const heading = document.createElement('span')
+			heading.className = 'vault-tag-tree-label text-body-secondary'
+			heading.textContent = `My tags (${node.children.size.toLocaleString()})`
+			row.appendChild(heading)
+			item.appendChild(row)
+			if ( query !== '' || vaultExpandedTagNodes.has(node.key) ) {
+				const children = document.createElement('ul')
+				children.className = 'vault-tag-tree-children'
+				children.setAttribute('role', 'group')
+				for ( const child of [...node.children.values()].toSorted((left, right) => left.label.localeCompare(right.label)) ) {
+					if ( vaultTagNodeMatchesQuery(child, query) ) { children.appendChild(makeVaultTagTreeRow(child, 1)) }
+				}
+				item.appendChild(children)
+			}
+			list.appendChild(item)
+		} else {
+			list.appendChild(makeVaultTagTreeRow(node, 0))
+		}
+	}
+	if ( list.childElementCount === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'small text-body-secondary p-2'
+		empty.textContent = query === '' ? 'No tags found in the Vault.' : 'No tags match this search.'
+		tree.appendChild(empty)
+	} else {
+		tree.appendChild(list)
+	}
+	MA.byId('vaultTagMatchAll').checked = vaultTagMatchMode === 'all'
+	MA.byIdText('vaultTagMatchLabel', `Match ${vaultTagMatchMode} selected tags`)
+	renderVaultTagSelections()
+}
+
+function vaultGroupMatchesTag(group, key) {
+	const node = vaultTagNodeIndex.get(key)
+	if ( node === undefined ) { return false }
+	if ( node.type === 'custom' ) { return group.customTags.some((tag) => normalValue(tag) === normalValue(node.label)) }
+	if ( node.type !== 'modhub' ) { return false }
+	return group.modHubCategoryPaths.some((path) =>
+		path.length >= node.path.length && node.path.every((segment, index) => normalValue(path[index]) === normalValue(segment))
+	)
 }
 
 async function renderCleanupPanel() {
@@ -1956,6 +2254,7 @@ async function appendVaultGroups(startIndex, endIndex, expectedRenderSequence = 
 				...node.querySelectorAll('[data-bs-toggle="tooltip"]'),
 				...node.querySelectorAll('button[title]')
 			)
+			observeVaultPreviewThumbnails(node)
 			fragment.appendChild(node)
 			appendedCount++
 		}
@@ -1975,6 +2274,10 @@ async function renderVault(groups, { keepVisibleLimit = false } = {}) {
 	if ( !keepVisibleLimit ) { vaultVisibleGroupLimit = VAULT_RENDER_BATCH_SIZE }
 
 	MA.byId('vaultList').innerHTML = ''
+	vaultPreviewObserver?.disconnect()
+	vaultPreviewObserver = null
+	vaultPreviewGalleries = new Map()
+	vaultPreviewGallerySequence = 0
 	vaultGroupRows = new Map()
 	MA.byId('vaultShowMoreWrap').classList.add('d-none')
 	MA.byId('vaultShowMore').disabled = true
@@ -2059,6 +2362,37 @@ async function exportVaultRecoveryManifest() {
 		setStatus(`Exported Mod Manifest for ${result.modCount} Vault mod${result.modCount === 1 ? '' : 's'}: ${result.filePath}.${missingText}`)
 	} catch (err) {
 		setStatus(`Mod Manifest export failed: ${err.message}`)
+	} finally {
+		endVaultBusy()
+		setButtonState(button, false, originalText)
+	}
+}
+
+async function backupVaultUnsupportedSourceZIPs() {
+	const button = MA.byId('vaultZipBackup')
+	const originalText = button.textContent
+	const setStatus = (message) => {
+		MA.byIdText('vaultStatus', message)
+		MA.byIdText('vaultImportStatus', message)
+	}
+	setButtonState(button, true, 'Preparing backup...')
+	setStatus('Choose where to save the Vault ZIP backup...')
+	beginVaultBusy('Choose a backup folder...', null)
+	try {
+		const result = await window.vault_IPC.backupWithoutAutomaticSource()
+		if ( result === null || result.cancelled === true ) {
+			setStatus('Vault ZIP backup cancelled. No backup files were changed.')
+			return
+		}
+		if ( result.ok === false ) {
+			setStatus(`Vault ZIP backup failed: ${result.error ?? 'Unknown error'}`)
+			return
+		}
+		const sizeText = await DATA.bytesToHR(result.totalBytes ?? 0)
+		const errorText = result.errors?.length > 0 ? ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be backed up; the first issue: ${result.errors[0].fileName} — ${result.errors[0].reason}` : ''
+		setStatus(`Vault ZIP backup ${result.ok ? 'completed' : 'finished with errors'}: ${result.copied} copied, ${result.alreadyPresent} already verified, ${result.errors?.length ?? 0} skipped or failed. ${result.totalFiles} unsupported-source ZIPs checked (${sizeText}). Backup folder: ${result.backupFolder}.${errorText}`)
+	} catch (err) {
+		setStatus(`Vault ZIP backup failed: ${err.message}`)
 	} finally {
 		endVaultBusy()
 		setButtonState(button, false, originalText)
@@ -2389,7 +2723,7 @@ async function saveVaultTags(button, shouldClear = false) {
 		status.textContent = savedTags.length === 0 ? 'Tags cleared.' : 'Tags saved.'
 		MA.byIdText('vaultStatus', savedTags.length === 0 ? `Cleared custom tags for ${modName}.` : `Saved custom tags for ${modName}.`)
 		refreshFilterOptions()
-		if ( MA.byId('vaultTextFilter').value.trim() !== '' || MA.byId('vaultTagFilter').value !== '' ) {
+		if ( MA.byId('vaultTextFilter').value.trim() !== '' || vaultTagSelections.size > 0 ) {
 			await renderFilteredVault({ keepVisibleLimit : true })
 		}
 	} catch (err) {
@@ -2960,9 +3294,31 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultTypeFilter').addEventListener('change', () => { renderFilteredVault() })
 	MA.byId('vaultBrandFilter').addEventListener('change', () => { renderFilteredVault() })
 	MA.byId('vaultCategoryFilter').addEventListener('change', () => { renderFilteredVault() })
-	MA.byId('vaultModHubCategoryFilter').addEventListener('change', () => { renderFilteredVault() })
 	MA.byId('vaultCollectionFilter').addEventListener('change', () => { renderFilteredVault() })
-	MA.byId('vaultTagFilter').addEventListener('change', () => { renderFilteredVault() })
+	MA.byId('vaultTagTreeSearch').addEventListener('input', (event) => {
+		vaultTagTreeQuery = event.target.value
+		renderVaultTagTree()
+	})
+	MA.byId('vaultTagTree').addEventListener('change', (event) => {
+		const checkbox = event.target.closest('input[data-tag-key]')
+		if ( checkbox === null ) { return }
+		if ( checkbox.checked ) { vaultTagSelections.add(checkbox.dataset.tagKey) }
+		else { vaultTagSelections.delete(checkbox.dataset.tagKey) }
+		renderVaultTagTree()
+		renderFilteredVault()
+	})
+	MA.byId('vaultTagMatchAll').addEventListener('change', (event) => {
+		vaultTagMatchMode = event.target.checked ? 'all' : 'any'
+		renderVaultTagTree()
+		renderFilteredVault()
+	})
+	MA.byId('vaultTagTreeClear').addEventListener('click', () => {
+		vaultTagSelections.clear()
+		vaultTagTreeQuery = ''
+		MA.byId('vaultTagTreeSearch').value = ''
+		renderVaultTagTree()
+		renderFilteredVault()
+	})
 	MA.byId('vaultGameVersionFilter').addEventListener('change', () => {
 		vaultGameVersionUserSelected = true
 		loadVaultPreservingView()
@@ -2990,6 +3346,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	MA.byId('vaultRefreshModHub').addEventListener('click', refreshModHubCategories)
 	MA.byId('vaultOpenFolder').addEventListener('click', openVaultFolder)
 	MA.byId('vaultRecoveryManifest').addEventListener('click', exportVaultRecoveryManifest)
+	MA.byId('vaultZipBackup').addEventListener('click', backupVaultUnsupportedSourceZIPs)
 	MA.byId('vaultMoveFolder').addEventListener('click', moveVaultFolder)
 	MA.byId('vaultWipeForTesting').addEventListener('click', wipeVaultForTesting)
 	MA.byId('vaultCleanupList').addEventListener('change', (event) => {

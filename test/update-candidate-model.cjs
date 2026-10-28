@@ -34,6 +34,13 @@ assert.equal(vaultSources[0].sourceURL, 'https://www.farming-simulator.com/mod.p
 assert.equal(vaultSources[2].sourceType, 'github')
 assert.equal(model.compareVersions('1.2.10', '1.2.9') > 0, true)
 assert.equal(model.newestVersion(['1.0.0', '1.2.0', '1.1.0']), '1.2.0')
+assert.deepEqual(JSON.parse(JSON.stringify(model.compareCatalogueVersion(['1.0.0', '1.2.0'], '1.2.0'))), {
+	catalogueVersion : '1.2.0',
+	localVersion     : '1.2.0',
+	needsDetails     : false,
+})
+assert.equal(model.compareCatalogueVersion(['1.2.0'], '1.3.0').needsDetails, true)
+assert.equal(model.compareCatalogueVersion(['unknown'], '1.3.0'), null)
 assert.equal(model.reviewReasonLabels(['manualOnly', 'repositoryZip', 'unknown']).join('|'), 'Manual download only|Repository ZIP, check before installing|unknown')
 assert.equal(model.isUpdateAvailable(new Set(['1.0.0']), '1.1.0'), true)
 assert.equal(model.isUpdateAvailable(new Set(['1.1.0']), '1.0.0'), false)

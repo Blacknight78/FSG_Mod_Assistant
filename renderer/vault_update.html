@@ -126,6 +126,15 @@
 			color: var(--bs-body-color);
 		}
 		.vault-no-source-dialog::backdrop { background: rgba(0, 0, 0, 0.72); }
+		.vault-update-task-dialog {
+			width: min(92vw, 42rem);
+			padding: 1.5rem;
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.75rem;
+			background: var(--bs-body-bg);
+			color: var(--bs-body-color);
+		}
+		.vault-update-task-dialog::backdrop { background: rgba(0, 0, 0, 0.78); }
 		.vault-no-source-list {
 			max-height: 58vh;
 			overflow-y: auto;
@@ -259,8 +268,17 @@
 						</div>
 					</div>
 				</div>
-				<div class="alert alert-secondary mb-3" id="vaultUpdateSelection">0 update(s) selected. Downloads are stored in the Vault only.</div>
+				<div class="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
+					<div class="alert alert-secondary mb-0 flex-grow-1" id="vaultUpdateSelection"><span id="vaultUpdateSelectionText">0 update(s) selected. Downloads are stored in the Vault only.</span></div>
+					<button class="btn btn-outline-success" id="vaultUpdateSelectAllVisible" type="button">Select all visible updates</button>
+				</div>
 				<div class="mb-3 d-none" id="vaultDownloadResults"></div>
+				<div class="input-group mb-2">
+					<label class="input-group-text" for="vaultUpdateSearch">Search updates</label>
+					<input autocomplete="off" class="form-control" id="vaultUpdateSearch" placeholder="Search mod name, filename, tags, or source" type="search">
+					<button class="btn btn-outline-secondary" id="vaultUpdateSearchClear" title="Clear update search" type="button">Clear</button>
+				</div>
+				<div class="small text-body-secondary mb-2 d-none" id="vaultUpdateSearchNoMatches" role="status">No updates match this search.</div>
 				<div class="list-group my-0" id="vaultUpdateList"></div>
 			</main>
 			<aside class="vault-update-side-panel" aria-label="Vault update filters and selection">
@@ -339,11 +357,14 @@
 						<label class="form-check-label" for="vaultIncludeIgnoredUpdates">Include ignored updates</label>
 					</div>
 				</div>
+				<div class="mb-3">
+					<button class="btn btn-sm btn-outline-warning w-100" id="vaultUpdateManageIgnoreList" type="button">Manage update ignore list</button>
+					<div class="small text-body-secondary mt-1">Ignored mods are skipped before any update-source checks.</div>
+				</div>
 				<div class="d-none border-top pt-3" id="vaultUpdateSelectionControls">
 					<div class="small text-body-secondary mb-1">Current selection</div>
 					<button class="btn btn-secondary disabled w-100 mb-2" type="button" id="vaultUpdatesSelectedCount">Selected: 0</button>
 					<div class="d-grid gap-2">
-						<button class="btn btn-sm btn-outline-success" type="button" id="vaultUpdatesSelectAll">Select All</button>
 						<button class="btn btn-sm btn-outline-info" data-bs-placement="bottom" data-bs-toggle="tooltip" title="Select only visible updates that are ready to download without review warnings." type="button" id="vaultUpdatesSelectReady">Select Ready</button>
 						<button class="btn btn-sm btn-outline-secondary" type="button" id="vaultUpdatesSelectNone">Select None</button>
 					</div>
@@ -385,6 +406,38 @@
 			</aside>
 		</div>
 	</div>
+	<dialog class="vault-update-task-dialog" id="vaultUpdateTaskDialog" aria-labelledby="vaultUpdateTaskTitle">
+		<div class="d-flex align-items-center gap-3 mb-3">
+			<div class="spinner-border text-info flex-shrink-0" aria-hidden="true"></div>
+			<div>
+				<h2 class="h4 mb-1" id="vaultUpdateTaskTitle">Vault updater working</h2>
+				<div class="text-body-secondary" id="vaultUpdateTaskMessage">Preparing update task...</div>
+			</div>
+		</div>
+		<div class="fw-semibold mb-2" id="vaultUpdateTaskCurrent">Getting ready...</div>
+		<div class="progress progress-readable mb-3" role="progressbar" aria-label="Vault updater progress" aria-valuemin="0" aria-valuemax="100">
+			<div class="progress-bar progress-bar-striped progress-bar-animated" id="vaultUpdateTaskBar" style="width: 0%"></div>
+			<div class="progress-readable-label" id="vaultUpdateTaskPercent">0%</div>
+		</div>
+		<div class="d-flex justify-content-between gap-3 text-body-secondary flex-wrap">
+			<span id="vaultUpdateTaskCount">0 of 0 complete</span>
+			<span id="vaultUpdateTaskTiming">Elapsed 0:00 · Remaining time calculating…</span>
+		</div>
+	</dialog>
+	<dialog class="vault-no-source-dialog" id="vaultUpdateIgnoreDialog">
+		<div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+			<div>
+				<h2 class="h4 mb-1">Update ignore list</h2>
+				<div class="small text-body-secondary" id="vaultUpdateIgnoreSummary">Loading ignored mods...</div>
+			</div>
+			<button class="btn btn-sm btn-outline-secondary" id="vaultUpdateIgnoreClose" type="button">Close</button>
+		</div>
+		<div class="alert alert-info small">Mods on this list are skipped before the updater contacts ModHub or GitHub. Search your Vault to add or remove a mod.</div>
+		<label class="form-label" for="vaultUpdateIgnoreSearch">Find a Vault mod</label>
+		<input autocomplete="off" class="form-control mb-3" id="vaultUpdateIgnoreSearch" placeholder="Search by mod name, filename, or collection" type="search">
+		<div class="list-group vault-no-source-list" id="vaultUpdateIgnoreRows"></div>
+		<div class="small text-body-secondary mt-2" id="vaultUpdateIgnoreFeedback" role="status"></div>
+	</dialog>
 	<dialog class="vault-no-source-dialog" id="vaultNoSourceDialog">
 		<div class="d-flex justify-content-between align-items-start gap-3 mb-3">
 			<div>

@@ -19,6 +19,7 @@ class windowState {
 	filter_last     = ''
 	filter_length   = 0
 	locale          = 'en'
+	filterTimer     = null
 
 	doL10N(item) {
 		let returnText = item?.[this.locale]
@@ -37,7 +38,13 @@ class windowState {
 		})
 
 		MA.byIdEventIfExists('mods__filter', window.find_IPC.inputContext, 'contextmenu')
-		MA.byIdEventIfExists('mods__filter', () => { this.doFilter() }, 'keyup')
+		MA.byIdEventIfExists('mods__filter', () => {
+			if ( this.filterTimer !== null ) { clearTimeout(this.filterTimer) }
+			this.filterTimer = setTimeout(() => {
+				this.filterTimer = null
+				this.doFilter()
+			}, 100)
+		}, 'input')
 
 		// MARK: force filter
 		window.find_IPC.receive('find:filterText', (text) => {
@@ -53,7 +60,7 @@ class windowState {
 		MA.byId('mods__filter_clear').clsHide(filter_this === '')
 
 		if ( filter_this === this.filter_last ) { return }
-		if ( filter_this.length <= 2 && this.filter_length !== this.fullList_sort.length ) {
+		if ( filter_this.length <= 2 ) {
 			this.fullList_filter = new Set(this.fullList_sort)
 			this.filter_length = this.fullList_filter.size
 			this.filter_last   = filter_this
@@ -69,12 +76,10 @@ class windowState {
 			}
 		}
 
-		if ( filter_new.size !== this.filter_length ) {
-			this.fullList_filter = filter_new
-			this.filter_length = this.fullList_filter.size
-			this.filter_last   = filter_this
-			this.buildDisplay()
-		}
+		this.fullList_filter = filter_new
+		this.filter_length = this.fullList_filter.size
+		this.filter_last   = filter_this
+		this.buildDisplay()
 	}
 
 	// MARK: buildObject [data]

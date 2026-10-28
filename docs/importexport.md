@@ -8,6 +8,24 @@ Mod Assistant does not try to be a full featured file manager, but it does have 
 
 ## Import
 
+### Restore ZIPs from a Vault backup
+
+The Vault ZIP backup contains the original ZIP files as well as a JSON index. Its folder layout looks like this:
+
+```text
+Your backup folder/
+├── vault-zip-backup.json
+└── files/
+    └── hash-named folder/
+        └── mod-name.zip
+```
+
+To restore the ZIPs, open **Vault → Import / export → From folder** and turn on **Include subfolders**. Click **Choose folder and scan**. In the folder picker, choose the **outer backup folder** containing both `vault-zip-backup.json` and `files`. One scan searches the `files` folder and its nested hash folders; you do not need to scan each child folder separately. The JSON index is ignored by the ZIP scan.
+
+After the scan, review the found ZIPs, select the ones you want, and choose **Import selected**. ZIPs already present in the Vault will be identified during the review.
+
+---
+
 To add mods directly to Mod Assistant, you have 2 options - direct download and drag-and-drop.
 
 ### Direct Download

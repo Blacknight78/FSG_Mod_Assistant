@@ -127,6 +127,18 @@ window.UpdateCandidateModel = (() => {
 			.sort((left, right) => compareVersions(right, left))[0] ?? 'unknown'
 	}
 
+	function compareCatalogueVersion(localVersions, catalogueVersion) {
+		const localVersion = newestVersion(localVersions)
+		if ( versionParts(localVersion).length === 0 || versionParts(catalogueVersion).length === 0 ) { return null }
+		const comparison = compareVersions(localVersion, catalogueVersion)
+		if ( !Number.isFinite(comparison) ) { return null }
+		return {
+			catalogueVersion,
+			localVersion,
+			needsDetails : comparison < 0,
+		}
+	}
+
 	function modHubReleasedLabel(value) {
 		const released = typeof value === 'string' ? value.trim() : ''
 		return released === '' ? 'not recorded' : released
@@ -370,6 +382,7 @@ window.UpdateCandidateModel = (() => {
 		candidateUpdateState,
 		collectionRemoteDecision,
 		collectionReviewReasons,
+		compareCatalogueVersion,
 		compareVersions,
 		isManualSourceType,
 		isUpdateAvailable,

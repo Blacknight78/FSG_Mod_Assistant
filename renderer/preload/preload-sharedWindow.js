@@ -126,7 +126,7 @@ const pageAPI = {
 		functions : {
 			dispatch        : (win) => {
 				const knownWindows = new Set([
-					'basegame', 'changelog', 'compare', 'debug',
+					'about', 'basegame', 'changelog', 'compare', 'debug',
 					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input',
 					'manifest', 'notes', 'recent_changes',
 					'resolve', 'savemanage', 'savetrack',
@@ -219,6 +219,7 @@ const pageAPI = {
 			'loading:total',
 			'app:closeBlocked',
 			'app:confirmRequest',
+			'app:notice',
 			'mods:list',
 			'mods:site',
 			'select:list',
@@ -321,17 +322,20 @@ const pageAPI = {
 		functions : {
 			dispatchModManagement : () => ipcRenderer.send('dispatch:mod_management'),
 			downloadToVaultSelected : (downloads) => ipcRenderer.invoke('vault:updateDownloadSelected', downloads),
+			prepareCollectionsForUpdateScan : () => ipcRenderer.invoke('vault:prepareCollectionsForUpdateScan'),
 			getGitHub : (url, force = false) => ipcRenderer.invoke('settings:site:githubLatest', url, force),
 			getModHub : (modHubID, force = false) => ipcRenderer.invoke('settings:site:modHubLatest', modHubID, force),
+			getModHubCatalogue : (modHubIDs) => ipcRenderer.invoke('vault:updateModHubCatalogue', modHubIDs),
 			getSourceInfo : (url) => ipcRenderer.invoke('settings:site:sourceInfo', url),
 			getVault : () => ipcRenderer.invoke('vault:all'),
 			logPerformance : (payload) => ipcRenderer.invoke('vault:updateCheckPerformance', payload),
 			openDetail : (payload) => ipcRenderer.invoke('vault:openDetail', payload),
 			openURL : (url) => ipcRenderer.send('win:openURL', url),
+			saveTags : (payload) => ipcRenderer.invoke('vault:saveTags', payload),
 			saveSourceURL : (payload) => ipcRenderer.invoke('vault:updateSourceURL', payload),
 			updateScanMetadata : (payload) => ipcRenderer.invoke('vault:updateScanMetadata', payload),
 		},
-		validAsync : new Set(['settings:sourceChanged']),
+		validAsync : new Set(['settings:sourceChanged', 'vault:updateTaskProgress']),
 	},
 	'manifest' : {
 		functions : {
@@ -379,6 +383,7 @@ const pageAPI = {
 	'vault' : {
 		functions : {
 			all        : (payload = {}) => ipcRenderer.invoke('vault:all', payload),
+		backupWithoutAutomaticSource : () => ipcRenderer.invoke('vault:backupWithoutAutomaticSource'),
 			cleanupUnused : (payload) => ipcRenderer.invoke('vault:cleanupUnused', payload),
 			collections : () => ipcRenderer.invoke('vault:collections'),
 			context    : (payload) => ipcRenderer.send('context:vault', payload),
@@ -431,6 +436,20 @@ if ( typeof pageAPI[pageName] !== 'undefined' ) {
 			},
 		}
 	)
+}
+
+if ( pageName === 'gamelog' ) {
+	contextBridge.exposeInMainWorld('debug_IPC', {
+		all : () => ipcRenderer.invoke('debug:all'),
+		context : () => ipcRenderer.send('context:copy'),
+		openPerformanceLog : () => ipcRenderer.invoke('settings:openPerformanceLog'),
+		performanceSummary : () => ipcRenderer.invoke('settings:performanceSummary'),
+		receive : (channel, func) => {
+			if ( channel === 'debug:item' || channel === 'logs:view' ) {
+				ipcRenderer.on(channel, (_, ...args) => func(...args))
+			}
+		},
+	})
 }
 
 contextBridge.exposeInMainWorld(

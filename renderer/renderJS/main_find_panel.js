@@ -17,6 +17,7 @@ class MainFindAllPanel {
 	isLoaded        = false
 	isLoading       = false
 	locale          = 'en'
+	filterTimer     = null
 
 	constructor() {
 		this.canvas = MA.byId('mainFindAllCanvas')
@@ -24,13 +25,21 @@ class MainFindAllPanel {
 
 		this.canvasInstance = bootstrap.Offcanvas.getOrCreateInstance(this.canvas)
 
-		MA.byIdEventIfExists('mainFindAllButton', () => { this.open() })
+		MA.byIdEventIfExists('mainFindAllButton', () => {
+			this.open(MA.byIdValue('filter_input'))
+		})
 		MA.byIdEventIfExists('mainFindAllClear', () => {
 			MA.byIdValue('mainFindAllInput', '')
 			this.doFilter()
 		})
 		MA.byIdEventIfExists('mainFindAllInput', () => { window.main_IPC.findInputContext() }, 'contextmenu')
-		MA.byIdEventIfExists('mainFindAllInput', () => { this.doFilter() }, 'keyup')
+		MA.byIdEventIfExists('mainFindAllInput', () => {
+			if ( this.filterTimer !== null ) { clearTimeout(this.filterTimer) }
+			this.filterTimer = setTimeout(() => {
+				this.filterTimer = null
+				this.doFilter()
+			}, 100)
+		}, 'input')
 
 		window.addEventListener('main-find-all:open', () => { this.open() })
 		this.canvas.addEventListener('shown.bs.offcanvas', () => {
@@ -46,9 +55,15 @@ class MainFindAllPanel {
 		return DATA.escapeSpecial(returnText)
 	}
 
-	open() {
+	open(searchText = null) {
+		if ( typeof searchText === 'string' ) {
+			MA.byIdValue('mainFindAllInput', searchText.trim())
+		}
 		this.canvasInstance.show()
-		if ( this.isLoaded || this.isLoading ) { return }
+		if ( this.isLoaded || this.isLoading ) {
+			this.doFilter()
+			return
+		}
 		this.load()
 	}
 
@@ -72,7 +87,7 @@ class MainFindAllPanel {
 		MA.byId('mainFindAllClear').disabled = filterThis === ''
 
 		if ( filterThis === this.filter_last ) { return }
-		if ( filterThis.length <= 2 && this.filter_length !== this.fullList_sort.length ) {
+		if ( filterThis.length <= 2 ) {
 			this.fullList_filter = new Set(this.fullList_sort)
 			this.filter_length = this.fullList_filter.size
 			this.filter_last   = filterThis
@@ -88,12 +103,10 @@ class MainFindAllPanel {
 			}
 		}
 
-		if ( filterNew.size !== this.filter_length ) {
-			this.fullList_filter = filterNew
-			this.filter_length = this.fullList_filter.size
-			this.filter_last   = filterThis
-			this.buildDisplay()
-		}
+		this.fullList_filter = filterNew
+		this.filter_length = this.fullList_filter.size
+		this.filter_last   = filterThis
+		this.buildDisplay()
 	}
 
 	buildObject(response) {
@@ -138,7 +151,8 @@ class MainFindAllPanel {
 		this.fullList_filter = new Set(this.fullList_sort)
 		this.filter_length   = this.fullList_filter.size
 
-		this.buildDisplay()
+		this.filter_last = null
+		this.doFilter()
 	}
 
 	buildDisplay() {

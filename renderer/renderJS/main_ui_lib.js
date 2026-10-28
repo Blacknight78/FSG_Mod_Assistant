@@ -2583,7 +2583,7 @@ class StateManager {
 			this.track.pendingSearchFocus = true
 			try {
 				const result = await window.main_IPC.files.disableSelected([modID])
-				if ( result.failed > 0 ) { MA.alert(`${result.failed} mod(s) could not be disabled.`) }
+				if ( result.failed > 0 ) { window.showAppNotice(`${result.failed} mod(s) could not be disabled.`, 'Could not disable mod') }
 			} catch (err) {
 				this.track.pendingSearchFocus = false
 				MA.alert(`Disable failed: ${err.message}`)

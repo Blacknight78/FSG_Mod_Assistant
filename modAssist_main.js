@@ -20,6 +20,8 @@ const { serveIPC }     = require('./lib/modUtilLib.js')
 const { funcLib }      = require('./lib/modAssist_func_lib.js')
 const { EventEmitter } = require('node:events')
 const { AsyncLocalStorage } = require('node:async_hooks')
+const { Transform } = require('node:stream')
+const { pipeline } = require('node:stream/promises')
 const remoteCheckDiagnostics = new AsyncLocalStorage()
 const modUpdateDiagnostics = new AsyncLocalStorage()
 const vaultMutationContext = new AsyncLocalStorage()
@@ -905,7 +907,7 @@ ipcMain.on('context:mod', async (event, modID, modIDs) => {
 			'button_gamelog__title',
 			() => {
 				funcLib.gameSet.setGameLog(thisPath)
-				serveIPC.windowLib.createNamedWindow('gamelog')
+				serveIPC.windowLib.createNamedWindow('gamelog', { view : 'game' })
 			},
 			'log'
 		))
@@ -1103,6 +1105,10 @@ ipcMain.on('context:collection', async (event, collection) => {
 				let progressTotal = null
 				let lastProgressAt = 0
 				const progressCallback = (progress) => {
+					if ( progress.stage === 'folderScan' ) {
+						sendMainLoading('titles', 'Refreshing collection folders', progress.label, '')
+						return
+					}
 					if ( progressTotal !== progress.total ) {
 						progressTotal = progress.total
 						sendMainLoading('total', progress.total)
@@ -1125,15 +1131,15 @@ ipcMain.on('context:collection', async (event, collection) => {
 					const errorText = result.errors.length === 0 ? '' : `\n\n${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be added.`
 					const skippedText = result.skipReasons === null ? '' : `\nSkipped reasons:\nMissing path: ${result.skipReasons.missingPath}\nFolder: ${result.skipReasons.folder}\nNon-ZIP: ${result.skipReasons.nonZip}\nMissing file: ${result.skipReasons.missingFile}`
 					sendMainLoading('hide')
-					serveIPC.windowLib.doDialogBox('main', {
+					serveIPC.windowLib.sendToValidWindow('main', 'app:notice', {
+						title   : 'Vault scan complete',
 						message : `Scanned ${collectionName} into the Vault.\n\nScanned: ${result.scanned}\nUpdated Vault records: ${result.imported}\nSkipped: ${result.skipped}${skippedText}${errorText}`,
-						type    : result.errors.length === 0 ? 'info' : 'warning',
 					})
 				} catch (err) {
 					sendMainLoading('hide')
-					serveIPC.windowLib.doDialogBox('main', {
+					serveIPC.windowLib.sendToValidWindow('main', 'app:notice', {
+						title   : 'Vault scan failed',
 						message : `Vault scan failed for ${collectionName}.\n\n${err.message}`,
-						type    : 'warning',
 					})
 				} finally {
 					sendMainLoading('hide')
@@ -1199,7 +1205,7 @@ ipcMain.handle('gamelog:get',     () => funcLib.gameSet.streamGameLog())
 ipcMain.handle('gamelog:getFile', () => funcLib.prefs.gameLogFile())
 ipcMain.handle('gamelog:scanCollection', async (_, payload) => scanGameLogCollectionIssues(payload))
 ipcMain.on('gamelog:folder',   () => shell.showItemInFolder(funcLib.prefs.gameLogFile()) )
-ipcMain.on('dispatch:gamelog', () => { serveIPC.windowLib.createNamedWindow('gamelog') })
+ipcMain.on('dispatch:gamelog', () => { serveIPC.windowLib.createNamedWindow('gamelog', { view : 'game' }) })
 ipcMain.on('dispatch:history', () => { serveIPC.windowLib.createNamedWindow('history') })
 ipcMain.on('dispatch:vault', () => {
 	serveIPC.windowLib.createNamedWindow('vault')
@@ -1696,6 +1702,30 @@ ipcMain.handle('settings:site:githubLatest', async (_, sourceURL, force = false)
 	measuredRemoteUpdate(`github:v2:${sourceURL}`, force, () => getGitHubLatestUpdate(sourceURL)))
 ipcMain.handle('settings:site:modHubLatest', async (_, modHubID, force = false) =>
 	measuredRemoteUpdate(`modhub:${modHubID}`, force, () => getModHubLatestUpdate(modHubID, force)))
+ipcMain.handle('vault:updateModHubCatalogue', (_, modHubIDs = []) => {
+	const cachePaths = [funcLib.modHub.path_22, funcLib.modHub.path_25]
+	const cacheTimes = cachePaths.map((cachePath) => {
+		if ( typeof cachePath !== 'string' || !fs.existsSync(cachePath) ) { return null }
+		try { return fs.statSync(cachePath).mtimeMs } catch { return null }
+	})
+	const fresh = cacheTimes.every((modifiedAt) => Number.isFinite(modifiedAt)) &&
+		Math.min(...cacheTimes) >= Date.now() - (7 * 60 * 60 * 1000)
+	const versions = {}
+	const pageVersions = {}
+	const categories = {}
+	for ( const rawID of Array.isArray(modHubIDs) ? modHubIDs : [] ) {
+		const modHubID = Number(rawID)
+		if ( !Number.isSafeInteger(modHubID) || modHubID <= 0 ) { continue }
+		const version = serveIPC.modCollect.modHubVersionModHubId(modHubID)
+		if ( typeof version === 'string' && version.trim() !== '' ) { versions[modHubID] = version.trim() }
+		const metadata = getCachedModHubMetadata(modHubID)
+		if ( metadata?.ok === true && typeof metadata.version === 'string' && metadata.version.trim() !== '' ) {
+			pageVersions[modHubID] = metadata.version.trim()
+		}
+		if ( typeof metadata?.category === 'string' && metadata.category.trim() !== '' ) { categories[modHubID] = metadata.category.trim() }
+	}
+	return { categories, fresh, pageVersions, versions }
+})
 ipcMain.handle('settings:site:sourceInfo', (_, sourceURL) => getUpdateSourceInfo(sourceURL))
 ipcMain.handle('vault:updateCheckPerformance', (_, payload = {}) => {
 	const durationMS = Number.isFinite(payload.durationMS) ? payload.durationMS.toFixed(1) : '0.0'
@@ -2483,6 +2513,7 @@ function extractModHubScreenshots(html, limit = 24) {
 	return screenshots
 }
 
+// eslint-disable-next-line complexity
 async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 	if ( modHubID === null || typeof modHubID === 'undefined' ) { return null }
 
@@ -2494,7 +2525,8 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 		modHubCacheFresh(cached) &&
 		Object.prototype.hasOwnProperty.call(cached, 'authorURL') &&
 		Object.prototype.hasOwnProperty.call(cached, 'released') &&
-		Object.prototype.hasOwnProperty.call(cached, 'screenshots')
+		Object.prototype.hasOwnProperty.call(cached, 'screenshots') &&
+		Object.prototype.hasOwnProperty.call(cached, 'category')
 	) { return cached }
 
 	const url = funcLib.general.doModHub(idString)
@@ -2524,7 +2556,7 @@ async function fetchModHubMetadata(modHubID, { force = false } = {}) {
 		if ( compactText.some((line) => /^Error: Mod not found$/iu.test(line)) ) { throw new Error('modhub_listing_not_found') }
 		const category = extractModHubCategory(html, compactText)
 		metadata.category = category
-		metadata.categoryPath = category === null ? [] : [category]
+		metadata.categoryPath = category === null ? [] : category.split(/\s+-\s+/u).map((part) => part.trim()).filter((part) => part !== '')
 		metadata.authorURL = extractModHubAuthorURL(html)
 		metadata.author = extractModHubDetail(compactText, 'author')
 		metadata.downloadURL = extractModHubDownloadURL(html)
@@ -2563,7 +2595,8 @@ async function getModHubLatestUpdate(modHubID, force = false) {
 			typeof cached?.downloadURL === 'undefined' ||
 			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'authorURL') ||
 			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'released') ||
-			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'screenshots'),
+			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'screenshots') ||
+			!Object.prototype.hasOwnProperty.call(cached ?? {}, 'category'),
 	})
 	if ( metadata?.ok !== true || typeof metadata.version !== 'string' ) {
 		return { ok : false, error : metadata?.error ?? 'modhub_metadata_unavailable' }
@@ -2573,6 +2606,8 @@ async function getModHubLatestUpdate(modHubID, force = false) {
 	return {
 		authorURL : metadata.authorURL,
 		assetName,
+		category : metadata.category,
+		categoryPath : metadata.categoryPath ?? [],
 		downloadURL : metadata.downloadURL,
 		hasDownload : typeof metadata.downloadURL === 'string' && typeof assetName === 'string' && assetName.toLowerCase().endsWith('.zip'),
 		modHubID    : metadata.id,
@@ -3421,6 +3456,7 @@ async function registerModLibraryFileImpl(filePath, metadata = {}, suppliedTimin
 	}
 
 	stepStartedAt = performance.now()
+	const modHubCategoryPath = Array.isArray(metadata.modHubCategoryPath) ? metadata.modHubCategoryPath.join(' > ') : ''
 	const nextRecord = {
 		...existingRecord,
 		collections : uniqueCleanArray([...(existingRecord.collections ?? []), metadata.collectionName]),
@@ -3436,7 +3472,7 @@ async function registerModLibraryFileImpl(filePath, metadata = {}, suppliedTimin
 		authors      : uniqueCleanArray([...(existingRecord.authors ?? []), metadata.author]),
 		mapConfigFiles : uniqueCleanArray([...(existingRecord.mapConfigFiles ?? []), metadata.mapConfigFile]),
 		modHubCategories : uniqueCleanArray([...(existingRecord.modHubCategories ?? []), metadata.modHubCategory]),
-		modHubCategoryPaths : uniqueCleanArray([...(existingRecord.modHubCategoryPaths ?? []), ...(metadata.modHubCategoryPath ?? [])]),
+		modHubCategoryPaths : uniqueCleanArray([...(existingRecord.modHubCategoryPaths ?? []), modHubCategoryPath]),
 		modHubIDs      : uniqueCleanArray([...(existingRecord.modHubIDs ?? []), metadata.modHubID === null || typeof metadata.modHubID === 'undefined' ? null : metadata.modHubID.toString()]),
 		modHubReleasedDates : uniqueCleanArray([...(existingRecord.modHubReleasedDates ?? []), metadata.modHubReleased]),
 		modHubScreenshots : mergeModHubScreenshots([existingRecord.modHubScreenshots ?? [], metadata.modHubScreenshots ?? []]),
@@ -4635,7 +4671,26 @@ function finishDeferredVaultCollectionCopyScan({ collectionKey = '', copiedCount
 }
 
 async function importCollectionsToVault(progressCallback = null, collectionKey = null) {
-	return withVaultMutation(() => importCollectionsToVaultImpl(progressCallback, collectionKey))
+	return withVaultMutation(async () => {
+		if ( serveIPC.isFoldersDirty ) {
+			progressCallback?.({
+				current : 0,
+				label : 'Collection changes are pending; rescanning all tracked folders before the Vault scan.',
+				stage : 'folderScan',
+				total : 1,
+				value : null,
+			})
+			await processModFoldersAndWait()
+			progressCallback?.({
+				current : 1,
+				label : 'Tracked folders refreshed; preparing the Vault import.',
+				stage : 'folderScan',
+				total : 1,
+				value : 100,
+			})
+		}
+		return importCollectionsToVaultImpl(progressCallback, collectionKey)
+	})
 }
 
 // eslint-disable-next-line complexity
@@ -4962,7 +5017,7 @@ async function refreshVaultModHubMetadataImpl(progressCallback = null) {
 			const metadata = getCachedModHubMetadata(modHubID)
 			if ( typeof metadata?.category === 'string' && metadata.category !== '' ) {
 				categories.push(metadata.category)
-				categoryPaths.push(...(metadata.categoryPath ?? [metadata.category]))
+				categoryPaths.push((metadata.categoryPath ?? [metadata.category]).join(' > '))
 			}
 			if ( typeof metadata?.author === 'string' && metadata.author !== '' ) { authors.push(metadata.author) }
 			if ( typeof metadata?.released === 'string' && metadata.released !== '' ) { releasedDates.push(metadata.released) }
@@ -5827,6 +5882,240 @@ async function exportVaultRecoveryManifest(event) {
 		ok       : true,
 		sourceCoverage : manifest.sourceCoverage,
 	}
+}
+
+const VAULT_ZIP_BACKUP_SCHEMA = 'fsg-mod-assistant.vault-zip-backup'
+const VAULT_ZIP_BACKUP_VERSION = 1
+
+function vaultBackupSourceURL(record = {}) {
+	if ( typeof record.sourceURL === 'string' && record.sourceURL.trim() !== '' ) { return record.sourceURL.trim() }
+	for ( const modName of normalizedVaultModNames(record.modNames ?? record.fileName) ) {
+		const sourceURL = serveIPC.storeSites.get(modName, '')
+		if ( typeof sourceURL === 'string' && sourceURL.trim() !== '' ) { return sourceURL.trim() }
+	}
+	return ''
+}
+
+function hasAutomaticVaultUpdateSource(record = {}) {
+	if ( safeModArray(record.modHubIDs).length !== 0 ) { return true }
+	const sourceURL = vaultBackupSourceURL(record)
+	return sourceURL !== '' && getUpdateSourceInfo(sourceURL).canAutoDownload === true
+}
+
+function safeVaultBackupFileName(value) {
+	const originalName = String(value ?? 'mod.zip').split(/[\\/]/u).at(-1) ?? 'mod.zip'
+	let safeName = originalName
+		.replace(/[<>:"/\\|?*\x00-\x1f]/gu, '_')
+		.replace(/[. ]+$/u, '')
+		.trim()
+	if ( safeName === '' || safeName === '.' || safeName === '..' ) { safeName = 'mod.zip' }
+	if ( /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(safeName) ) { safeName = `_${safeName}` }
+	const zipBaseName = safeName.toLocaleLowerCase().endsWith('.zip') ? safeName.slice(0, -4) : safeName
+	return `${zipBaseName.slice(0, 176)}.zip`
+}
+
+function sendVaultZipBackupProgress(event, progress) {
+	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'vaultZipBackup', ...progress }) }
+}
+
+function vaultZipBackupRecord(hash, record, relativePath, size, backupMtimeMs) {
+	return {
+		authors       : safeModArray(record.authors),
+		backupMtimeMs,
+		fileName      : safeVaultBackupFileName(record.fileName),
+		gameVersions  : Array.isArray(record.gameVersions) ? record.gameVersions : [],
+		hash,
+		modNames      : normalizedVaultModNames(record.modNames ?? record.fileName),
+		relativePath,
+		size,
+		sourceURL     : vaultBackupSourceURL(record),
+		verifiedAt    : new Date().toISOString(),
+		versions      : safeModArray(record.versions),
+	}
+}
+
+async function copyVaultBackupArchive(sourcePath, targetPath, expectedHash, onBytes = null) {
+	const hash = crypto.createHash('sha256')
+	let copiedBytes = 0
+	const hashAndMeasure = new Transform({
+		transform(chunk, encoding, callback) {
+			hash.update(chunk)
+			copiedBytes += chunk.length
+			onBytes?.(copiedBytes)
+			callback(null, chunk)
+		},
+	})
+	await pipeline(
+		fs.createReadStream(sourcePath),
+		hashAndMeasure,
+		fs.createWriteStream(targetPath, { flags : 'wx' })
+	)
+	const actualHash = hash.digest('hex')
+	if ( actualHash !== expectedHash ) {
+		throw new Error(`Copied file hash mismatch: expected ${expectedHash}, received ${actualHash}.`)
+	}
+	return { copiedBytes, hash : actualHash }
+}
+
+async function backupVaultModsWithoutAutomaticSourceImpl(event, backupFolder) {
+	const startedAt = performance.now()
+	const vaultFolder = modLibraryFolder()
+	if ( isPathInsideFolder(backupFolder, vaultFolder) ) {
+		throw new Error('Choose a backup folder outside the active Vault folder.')
+	}
+
+	const manifestPath = path.join(backupFolder, 'vault-zip-backup.json')
+	let previousManifest = null
+	if ( fs.existsSync(manifestPath) ) {
+		previousManifest = JSON.parse(await fsPromise.readFile(manifestPath, 'utf8'))
+		if ( previousManifest?.schema !== VAULT_ZIP_BACKUP_SCHEMA || previousManifest?.version !== VAULT_ZIP_BACKUP_VERSION || !Array.isArray(previousManifest.files) ) {
+			throw new Error('The selected folder contains a different or damaged Vault backup manifest. Choose another folder or repair that backup first.')
+		}
+	}
+
+	const existingFiles = new Map((previousManifest?.files ?? []).filter((item) => typeof item?.hash === 'string').map((item) => [item.hash, item]))
+	const records = getStoredModLibraryRecords()
+	const skippedMissing = []
+	const candidates = []
+	for ( const [storedHash, record] of Object.entries(records) ) {
+		if ( hasAutomaticVaultUpdateSource(record) ) { continue }
+		const hash = storedHash.toLocaleLowerCase()
+		if ( !/^[a-f\d]{64}$/u.test(hash) ) {
+			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Invalid Vault hash.' })
+			continue
+		}
+		const sourcePath = record.filePath
+		if ( typeof sourcePath !== 'string' || !fs.existsSync(sourcePath) ) {
+			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Vault ZIP is missing.' })
+			continue
+		}
+		const sourceStat = await fsPromise.stat(sourcePath)
+		if ( !sourceStat.isFile() ) {
+			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Vault path is not a file.' })
+			continue
+		}
+		candidates.push({ hash, record, size : sourceStat.size, sourcePath })
+	}
+
+	const totalBytes = candidates.reduce((sum, item) => sum + item.size, 0)
+	const totalFiles = candidates.length
+	const filesRoot = path.join(backupFolder, 'files')
+	await fsPromise.mkdir(filesRoot, { recursive : true })
+	let copied = 0
+	let alreadyPresent = 0
+	let completedBytes = 0
+	const errors = [...skippedMissing]
+	const backupFiles = new Map(existingFiles)
+	let lastProgressAt = 0
+	const emitProgress = (index, item = null, currentBytes = 0, force = false) => {
+		const now = Date.now()
+		if ( !force && now - lastProgressAt < 250 ) { return }
+		lastProgressAt = now
+		const percent = totalBytes > 0 ? ((completedBytes + currentBytes) / totalBytes) * 100 : (totalFiles === 0 ? 100 : (index / totalFiles) * 100)
+		const fileLabel = item === null ? '' : `: ${safeVaultBackupFileName(item.record.fileName)}`
+		sendVaultZipBackupProgress(event, {
+			current : index,
+			label   : `Backing up unsupported-source ZIPs ${Math.min(index + 1, totalFiles)} of ${totalFiles}${fileLabel}`,
+			total   : totalFiles,
+			value   : Math.max(0, Math.min(100, percent)),
+		})
+	}
+	emitProgress(0, candidates[0] ?? null, 0, true)
+
+	for ( const [index, item] of candidates.entries() ) {
+		const { hash, record, size, sourcePath } = item
+		const prior = existingFiles.get(hash)
+		const relativePath = path.join('files', hash, safeVaultBackupFileName(record.fileName))
+		const targetPath = path.resolve(backupFolder, relativePath)
+		if ( sameFileSystemPath(targetPath, filesRoot) || !isPathInsideFolder(targetPath, filesRoot) ) {
+			errors.push({ fileName : record.fileName ?? hash, reason : 'Unsafe backup path in manifest.' })
+			continue
+		}
+
+		try {
+			await fsPromise.mkdir(path.dirname(targetPath), { recursive : true })
+			let targetExists = fs.existsSync(targetPath)
+			let targetStat = targetExists ? await fsPromise.stat(targetPath) : null
+			let targetVerified = targetExists === true && targetStat?.isFile() === true &&
+				prior?.hash === hash &&
+				prior.size === size &&
+				prior.backupMtimeMs === targetStat?.mtimeMs
+
+			if ( targetExists && !targetVerified && targetStat?.size === size ) {
+				targetVerified = await sha256File(targetPath) === hash
+			}
+
+			if ( targetVerified ) {
+				alreadyPresent++
+				completedBytes += size
+				targetStat = targetStat ?? await fsPromise.stat(targetPath)
+				backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, targetStat.mtimeMs))
+				emitProgress(index + 1, item, 0, true)
+				continue
+			}
+
+			const temporaryPath = `${targetPath}.partial`
+			await fsPromise.rm(temporaryPath, { force : true })
+			const copyResult = await copyVaultBackupArchive(sourcePath, temporaryPath, hash, (currentBytes) => {
+				emitProgress(index, item, currentBytes)
+			})
+			if ( copyResult.copiedBytes !== size ) {
+				throw new Error(`The copied size changed during backup (${copyResult.copiedBytes} of ${size} bytes).`)
+			}
+			await fsPromise.rm(targetPath, { force : true })
+			await fsPromise.rename(temporaryPath, targetPath)
+			targetStat = await fsPromise.stat(targetPath)
+			backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, targetStat.mtimeMs))
+			copied++
+			completedBytes += size
+			emitProgress(index + 1, item, 0, true)
+		} catch (err) {
+			await fsPromise.rm(`${targetPath}.partial`, { force : true }).catch(() => {})
+			errors.push({ fileName : record.fileName ?? hash, reason : err.message })
+			serveIPC.log.warning('mod-vault', `Vault ZIP backup failed for ${JSON.stringify(record.fileName ?? hash)}`, err.message)
+			emitProgress(index + 1, item, 0, true)
+		}
+	}
+
+	const manifest = {
+		createdAt : previousManifest?.createdAt ?? new Date().toISOString(),
+		files     : [...backupFiles.values()].toSorted((first, second) => first.fileName.localeCompare(second.fileName)),
+		schema    : VAULT_ZIP_BACKUP_SCHEMA,
+		scope     : 'Vault ZIP files without an automatic ModHub or GitHub update source; existing backup files are retained.',
+		updatedAt : new Date().toISOString(),
+		version   : VAULT_ZIP_BACKUP_VERSION,
+	}
+	const manifestTempPath = `${manifestPath}.partial`
+	await fsPromise.writeFile(manifestTempPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+	await fsPromise.rename(manifestTempPath, manifestPath)
+	emitProgress(totalFiles, null, 0, true)
+	serveIPC.log.info('performance', `Vault unsupported-source ZIP backup took ${(performance.now() - startedAt).toFixed(1)} ms candidates=${totalFiles} copied=${copied} existing=${alreadyPresent} errors=${errors.length} bytes=${totalBytes}`)
+	return {
+		alreadyPresent,
+		backupFolder,
+		copied,
+		errors,
+		manifestPath,
+		modCount : candidates.length + skippedMissing.length,
+		ok       : errors.length === 0,
+		totalFiles,
+		totalBytes,
+	}
+}
+
+async function backupVaultModsWithoutAutomaticSource(event) {
+	const dialogResult = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+		defaultPath : serveIPC.storeSet.get('vaultZipBackupFolder', app.getPath('documents')),
+		properties  : ['openDirectory', 'createDirectory'],
+		title       : 'Choose Vault ZIP backup folder',
+	})
+	if ( dialogResult.canceled || typeof dialogResult.filePaths[0] !== 'string' ) { return { cancelled : true, ok : true } }
+	const backupFolder = path.resolve(dialogResult.filePaths[0])
+	if ( isPathInsideFolder(backupFolder, modLibraryFolder()) ) {
+		throw new Error('Choose a backup folder outside the active Vault folder.')
+	}
+	serveIPC.storeSet.set('vaultZipBackupFolder', backupFolder)
+	return withVaultMutation(() => backupVaultModsWithoutAutomaticSourceImpl(event, backupFolder), true)
 }
 
 function vaultRecoveryManifestURLs(manifest) {
@@ -8045,6 +8334,8 @@ function vaultUpdateScanMetadataRecord(payload = {}) {
 		modHubID       : Number.isInteger(payload.modHubID) ? payload.modHubID : null,
 		ok             : remote.ok === true,
 		released       : remote.released ?? null,
+		category       : remote.category ?? null,
+		categoryPath   : Array.isArray(remote.categoryPath) ? remote.categoryPath : [],
 		screenshots    : mergeModHubScreenshots([remote.screenshots ?? []]),
 		sourceType     : payload.sourceType ?? null,
 		sourceURL      : payload.sourceURL ?? remote.url ?? null,
@@ -8081,6 +8372,7 @@ function updateVaultScanMetadataBatch(updates = []) {
 	return { count, ok : true }
 }
 
+// eslint-disable-next-line complexity
 function applyVaultScanMetadataUpdate(records, payload = {}) {
 	const hashes = Array.isArray(payload.hashes) ? payload.hashes.filter((hash) => typeof hash === 'string' && hash !== '') : []
 	const sourceKey = vaultUpdateMetadataSourceKey(payload)
@@ -8096,6 +8388,11 @@ function applyVaultScanMetadataUpdate(records, payload = {}) {
 		if ( payload.sourceType === 'modhub' && scanMetadata.ok ) {
 			record.modHubIDs = uniqueCleanArray([...(record.modHubIDs ?? []), payload.modHubID === null || typeof payload.modHubID === 'undefined' ? null : payload.modHubID.toString()])
 			record.modHubReleasedDates = uniqueCleanArray([...(record.modHubReleasedDates ?? []), scanMetadata.released])
+			if ( typeof scanMetadata.category === 'string' && scanMetadata.category !== '' ) {
+				record.modHubCategories = uniqueCleanArray([...(record.modHubCategories ?? []), scanMetadata.category])
+			}
+			const categoryPath = Array.isArray(scanMetadata.categoryPath) ? scanMetadata.categoryPath.join(' > ') : ''
+			if ( categoryPath !== '' ) { record.modHubCategoryPaths = uniqueCleanArray([...(record.modHubCategoryPaths ?? []), categoryPath]) }
 			record.modHubScreenshots = mergeModHubScreenshots([record.modHubScreenshots ?? [], scanMetadata.screenshots ?? []])
 			record.modHubVersions = uniqueCleanArray([...(record.modHubVersions ?? []), scanMetadata.version])
 		}
@@ -8165,21 +8462,97 @@ function vaultUpdateDownloadBatchResult(results) {
 	}
 }
 
-ipcMain.handle('vault:updateDownloadSelected', async (_, downloads) => {
+ipcMain.handle('vault:updateDownloadSelected', async (event, downloads) => {
 	try {
 		if ( !Array.isArray(downloads) || downloads.length === 0 ) {
 			return { ok : false, error : 'No downloadable Vault updates were selected.' }
 		}
 		const results = []
-		for ( const download of downloads ) {
+		const startedAt = Date.now()
+		for ( const [index, download] of downloads.entries() ) {
+			if ( !event.sender.isDestroyed() ) {
+				event.sender.send('vault:updateTaskProgress', {
+					current : index,
+					modName : download.modName,
+					phase : 'downloading',
+					state : 'starting',
+					total : downloads.length,
+				})
+			}
 			// eslint-disable-next-line no-await-in-loop
-			results.push(await downloadVaultUpdateWithResult(download))
+			const result = await downloadVaultUpdateWithResult(download)
+			results.push(result)
+			if ( !event.sender.isDestroyed() ) {
+				const current = index + 1
+				const elapsedMS = Date.now() - startedAt
+				event.sender.send('vault:updateTaskProgress', {
+					current,
+					elapsedMS,
+					modName : download.modName,
+					phase : 'downloading',
+					state : result.ok ? 'complete' : 'failed',
+					total : downloads.length,
+				})
+			}
 		}
 		invalidateModLibrarySummary()
 		return vaultUpdateDownloadBatchResult(results)
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
+})
+ipcMain.handle('vault:prepareCollectionsForUpdateScan', async (event) => {
+	if ( !serveIPC.isFoldersDirty ) { return { changed : false } }
+	return withVaultMutation(async () => {
+		if ( !serveIPC.isFoldersDirty ) { return { changed : false } }
+		const sendProgress = (progress) => {
+			if ( event.sender.isDestroyed() ) { return }
+			event.sender.send('vault:updateTaskProgress', progress)
+		}
+		sendProgress({
+			current : 0,
+			message : 'Collection folder changes are pending. Rescanning all tracked collections before checking updates.',
+			modName : 'Refreshing tracked collection folders',
+			phase : 'collections',
+			state : 'working',
+			total : 1,
+		})
+		await processModFoldersAndWait()
+		sendProgress({
+			current : 1,
+			message : 'Folder scan complete. Adding all tracked collection mods to the Vault before checking update sources.',
+			modName : 'Tracked collection folders refreshed',
+			phase : 'collections',
+			state : 'complete',
+			total : 1,
+		})
+		const importResult = await importCollectionsToVault((progress) => {
+			sendProgress({
+				current : progress.current,
+				message : 'Importing all eligible ZIP mods from tracked collections into the Vault.',
+				modName : `Adding collection mods to the Vault (${progress.label})`,
+				phase : 'collections',
+				state : 'working',
+				total : progress.total,
+			})
+		})
+		sendProgress({
+			current : importResult.scanned,
+			message : 'Collection refresh complete. Preparing the Vault update scan.',
+			modName : 'Collection mods added to Vault',
+			phase : 'collections',
+			state : 'complete',
+			total : importResult.scanned,
+		})
+		return {
+			changed : true,
+			collections : serveIPC.modCollect.collections.size,
+			imported : importResult.imported,
+			errors : importResult.errors.length,
+			scanned : importResult.scanned,
+			skipped : importResult.skipped,
+		}
+	}, true)
 })
 ipcMain.handle('vault:copyPreview', async (_, payload) => {
 	try {
@@ -8222,6 +8595,13 @@ ipcMain.handle('vault:copyToCollection', async (_, payload) => {
 ipcMain.handle('vault:exportRecoveryManifest', async (event) => {
 	try {
 		return await exportVaultRecoveryManifest(event)
+	} catch (err) {
+		return { ok : false, error : err.message }
+	}
+})
+ipcMain.handle('vault:backupWithoutAutomaticSource', async (event) => {
+	try {
+		return await backupVaultModsWithoutAutomaticSource(event)
 	} catch (err) {
 		return { ok : false, error : err.message }
 	}
@@ -8486,7 +8866,7 @@ ipcMain.on('debug:log', (_e, level, process, ...args) => { serveIPC.log[level](p
 ipcMain.handle('debug:all', () => serveIPC.log.htmlLog )
 ipcMain.on('dispatch:debug', () => {
 	serveIPC.isDebugDanger = false
-	serveIPC.windowLib.createNamedWindow('debug')
+	serveIPC.windowLib.createNamedWindow('gamelog', { view : 'assistant' })
 })
 
 // MARK: misc window.
@@ -8496,7 +8876,8 @@ ipcMain.on('select:withText', (_, id, txt) => {
 	serveIPC.windowLib.sendAndFocusValid('main', 'select:withText', id, txt)
 })
 ipcMain.on('dispatch:game', ()         => { funcLib.gameLauncher() })
-ipcMain.on('dispatch:help', ()         => { shell.openExternal('https://fsgmodding.github.io/FSG_Mod_Assistant/') })
+ipcMain.on('dispatch:about', ()        => { serveIPC.windowLib.createNamedWindow('about') })
+ipcMain.on('dispatch:help', ()         => { serveIPC.windowLib.createNamedWindow('about') })
 ipcMain.on('main:openReleasePage', () => {
 	const appVersion = app.getVersion().toString()
 	const releaseTag = appVersion.startsWith('v') ? appVersion : `v${appVersion}`
@@ -8822,7 +9203,7 @@ app.whenReady().then(() => {
 		})
 		serveIPC.windowLib.win.main.on('close', guardMainWindowClose)
 
-		serveIPC.log.on('logAdded', (level, item) => { serveIPC.windowLib.sendToValidWindow('debug', 'debug:item', level, item) })
+		serveIPC.log.on('logAdded', (level, item) => { serveIPC.windowLib.sendToValidWindow('gamelog', 'debug:item', level, item) })
 
 		app.on('quit',     () => {
 			flushUpdateMetadataCache()

@@ -110,6 +110,20 @@ window.main_IPC.receive('app:closeBlocked', (payload = {}) => {
 	bootstrap.Modal.getOrCreateInstance(modalNode, { backdrop : 'static' }).show()
 })
 
+window.showAppNotice = (message, title = 'FSG Mod Assistant') => {
+	const modalNode = MA.byId('app_notice_modal')
+	const titleNode = MA.byId('appNoticeTitle')
+	const messageNode = MA.byId('appNoticeMessage')
+	if ( modalNode === null || titleNode === null || messageNode === null ) { return }
+	titleNode.textContent = title
+	messageNode.textContent = message
+	bootstrap.Modal.getOrCreateInstance(modalNode).show()
+}
+
+window.main_IPC.receive('app:notice', (payload = {}) => {
+	window.showAppNotice(payload.message ?? '', payload.title ?? 'FSG Mod Assistant')
+})
+
 window.main_IPC.receive('app:confirmRequest', (payload = {}) => {
 	const modalNode = MA.byId('app_confirm_modal')
 	const titleNode = MA.byId('appConfirmTitle')
@@ -169,7 +183,7 @@ window.main_IPC.receive('loading:current',  (count, inMB) => { window.state.load
 //MARK: top bar event
 function topBarHandlers() {
 	MA.byIdEventIfExists('bottomBar-debug',    () => { window.main_IPC.dispatch('debug') })
-	MA.byIdEventIfExists('topBar-help',        () => { window.main_IPC.dispatch('help') })
+	MA.byIdEventIfExists('topBar-about',       () => { window.main_IPC.dispatch('about') })
 	MA.byIdEventIfExists('topBar-launch',      () => { window.state.action.launchGame() })
 	MA.byIdEventIfExists('topBar-preferences', () => { window.state.prefs.open() })
 	MA.byIdEventIfExists('topBar-update',      () => { window.main_IPC.updateApplication() })
@@ -187,7 +201,7 @@ function topUIHandlers() {
 	MA.byIdEventIfExists('modSortOrder', () => { window.state.changeSort() }, 'change')
 	MA.byIdEventIfExists('modFindType',  () => { window.state.filter.findType()}, 'change')
 	MA.byIdEventIfExists('filter_input', () => { window.main_IPC.contextInput() }, 'contextmenu')
-	MA.byIdEventIfExists('filter_input', () => { window.state.filter.findTerm() }, 'keyup')
+	MA.byIdEventIfExists('filter_input', () => { window.state.filter.findTerm() }, 'input')
 	MA.byIdEventIfExists('filter_input', () => { window.state.filter.findTerm() }, 'blur')
 	MA.byIdEventIfExists('filter_clear', () => { window.state.filter.findClear() }, 'click')
 

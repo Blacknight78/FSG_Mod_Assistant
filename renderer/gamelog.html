@@ -16,6 +16,7 @@
 	<link rel="stylesheet" href="inc/src/overrides.css">
 	<script src="inc/bootstrap.bundle.min.js"></script>
 	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/debug_ui.js"></script>
 	<script src="renderJS/gamelog_ui.js"></script>
 
 	<style>
@@ -94,6 +95,8 @@
 			gap: 1rem;
 			grid-template-columns: minmax(18rem, 1fr) minmax(18rem, 42rem);
 		}
+		.log-window-tabs { -webkit-app-region: no-drag; }
+		.assistant-log-entry { white-space: pre; user-select: text; }
 		.gamelog-title-banner {
 			background: color-mix(in srgb, var(--bs-primary) 70%, var(--bs-body-bg) 30%);
 			border-radius: 0.5rem;
@@ -179,10 +182,18 @@
 					<span class="app-window-logo" aria-hidden="true"></span>
 					<h1 class="app-window-name">FSG Mod Assistant</h1>
 				</div>
-				<h2 class="gamelog-title-banner">Game Log</h2>
+				<h2 class="gamelog-title-banner">Logs &amp; Diagnostics</h2>
+			</div>
+			<div class="btn-group btn-group-sm w-100 mt-2 log-window-tabs" role="group" aria-label="Log views">
+				<input type="radio" class="btn-check log-window-tab" name="log_window_tab" id="log_tab_game" value="game" checked>
+				<label class="btn btn-outline-info" for="log_tab_game">Game Log</label>
+				<input type="radio" class="btn-check log-window-tab" name="log_window_tab" id="log_tab_assistant" value="assistant">
+				<label class="btn btn-outline-info" for="log_tab_assistant">Assistant Log</label>
+				<input type="radio" class="btn-check log-window-tab" name="log_window_tab" id="log_tab_performance" value="performance">
+				<label class="btn btn-outline-info" for="log_tab_performance">Performance</label>
 			</div>
 		</header>
-		<main class="gamelog-layout">
+		<section class="gamelog-layout log-window-panel" id="gameLogPanel" aria-label="Game log">
 			<aside class="gamelog-action-rail" aria-label="Window actions">
 				<button data-bs-placement="right" data-bs-toggle="tooltip" title="Auto-detect log file based on game version" type="button" id="logActionAuto" class="btn btn-secondary gamelog-rail-button">
 					<i class="bi bi-magic" aria-hidden="true"></i>
@@ -257,7 +268,37 @@
 					<div id="game_log_scroll" class="d-flex flex-column" style="z-index: -1; height: calc(100% - 10px); width: 6px; position:relative; top: -100%; left: calc(100% - 9px); background-color:rgba(0,0,0,0.1)"></div>
 				</div>
 			</section>
-		</main>
+		</section>
+		<section class="gamelog-content-panel log-window-panel d-none" id="assistantLogPanel" aria-label="Assistant log">
+			<div class="gamelog-filter-row">
+				<div class="input-group input-group-sm btn-group w-100 mb-0">
+					<span class="input-group-text">Show:</span>
+					<button type="button" class="btn btn-outline-light border" id="debug_reset">RESET</button>
+					<input type="checkbox" class="btn-check assistant_filter_only" id="assistant_debug_debug"><label class="btn btn-outline-success border" for="assistant_debug_debug">DEBUG</label>
+					<input type="checkbox" checked class="btn-check assistant_filter_only" id="assistant_debug_info"><label class="btn btn-outline-success border" for="assistant_debug_info">INFO</label>
+					<input type="checkbox" checked class="btn-check assistant_filter_only" id="assistant_debug_notice"><label class="btn btn-outline-success border" for="assistant_debug_notice">NOTICE</label>
+					<input type="checkbox" checked class="btn-check assistant_filter_only" id="assistant_debug_warning"><label class="btn btn-outline-success border" for="assistant_debug_warning">WARNING</label>
+					<input type="checkbox" checked class="btn-check assistant_filter_only" id="assistant_debug_danger"><label class="btn btn-outline-success border" for="assistant_debug_danger">DANGER</label>
+				</div>
+			</div>
+			<div class="overflow-auto p-2 font-monospace small flex-grow-1" id="debugPanelLog"><div id="debug_log"></div></div>
+		</section>
+		<section class="gamelog-content-panel log-window-panel d-none" id="performancePanel" aria-label="Performance">
+			<div class="container-fluid px-3 py-3 overflow-auto">
+				<div class="row gx-3 gy-3">
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">Main window visible</div><div class="fs-5" id="performanceMainVisible">--</div></div></div>
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">Folder scan</div><div class="fs-5" id="performanceFolderScan">--</div></div></div>
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">Renderer refresh</div><div class="fs-5" id="performanceRendererUpdate">--</div></div></div>
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">Vault index</div><div class="fs-5" id="performanceVaultIndex">--</div></div></div>
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">Vault copy</div><div class="fs-5" id="performanceVaultCopy">--</div></div></div>
+					<div class="col-sm-6"><div class="border rounded p-3"><div class="small text-body-secondary">ModHub refresh</div><div class="fs-5" id="performanceModHubRefresh">--</div></div></div>
+					<div class="col-12 small text-body-secondary user-select-text" id="performanceLogPath">Log file: --</div>
+					<div class="col-md-6"><button class="btn btn-outline-info w-100" id="performanceRefresh" type="button">Refresh performance summary</button></div>
+					<div class="col-md-6"><button class="btn btn-outline-secondary w-100" id="performanceOpenLog" type="button">Open performance log</button></div>
+					<div class="col-12 small" id="performanceStatus" role="status"></div>
+				</div>
+			</div>
+		</section>
 	</div>
 
 </body>

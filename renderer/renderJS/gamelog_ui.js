@@ -9,10 +9,24 @@
 
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
-	window.state = new windowState()
+	window.gameLogState = new GameLogWindowState()
+	for ( const tab of MA.queryA('input.log-window-tab') ) {
+		tab.addEventListener('change', () => { window.setLogWindowView(tab.value) })
+	}
+	window.debug_IPC.receive('logs:view', (view) => {
+		const tab = MA.byId(`log_tab_${view}`)
+		if ( tab ) { tab.checked = true; window.setLogWindowView(view) }
+	})
 })
 
-class windowState {
+window.setLogWindowView = (view) => {
+	for ( const panel of MA.queryA('.log-window-panel') ) {
+		panel.classList.toggle('d-none', panel.id !== ({ game : 'gameLogPanel', assistant : 'assistantLogPanel', performance : 'performancePanel' }[view] ?? 'gameLogPanel'))
+	}
+	if ( view === 'performance' ) { window.debugState.loadPerformanceSummary() }
+}
+
+class GameLogWindowState {
 	autoUpdateTimeSeconds = 15
 	dataCache             = []
 	findCache             = []

@@ -11,7 +11,7 @@
 window.operations.receive('select:all', () => {
 	const selection = window.getSelection()
 	const range     = document.createRange()
-	const target = MA.byId('debugPanelPerformance').classList.contains('d-none') ? MA.byId('debug_log') : MA.byId('debugPanelPerformance')
+	const target = MA.byId('performancePanel').classList.contains('d-none') ? MA.byId('debug_log') : MA.byId('performancePanel')
 	range.selectNodeContents(target)
 	selection.removeAllRanges()
 	selection.addRange(range)
@@ -19,10 +19,10 @@ window.operations.receive('select:all', () => {
 
 // MARK: PAGE LOAD
 window.addEventListener('DOMContentLoaded', () => {
-	window.state = new windowState()
+	window.debugState = new DebugWindowState()
 })
 
-class windowState {
+class DebugWindowState {
 	levelStyleSheet = null
 	levelNames      = new Set(['debug', 'info', 'notice', 'warning', 'danger'])
 	
@@ -33,12 +33,12 @@ class windowState {
 	}
 
 	init() {
-		for ( const element of MA.queryA('input.filter_only') ) {
+		for ( const element of MA.queryA('input.assistant_filter_only') ) {
 			element.addEventListener('change', (e) => {
-				const thisLevel = e.target.id.replace(/^debug_/, '')
+				const thisLevel = e.target.id.replace(/^assistant_debug_/, '')
 
 				for ( const [index, cssRule] of Object.entries(this.levelStyleSheet.cssRules) ) {
-					if ( cssRule.selectorText.endsWith(thisLevel) ) {
+					if ( cssRule.selectorText.endsWith(`.${thisLevel}`) ) {
 						this.levelStyleSheet.deleteRule(index)
 						break
 					}
@@ -67,11 +67,8 @@ class windowState {
 	}
 
 	setView(view) {
-		const isPerformance = view === 'performance'
-		MA.byId('debugPanelLog').classList.toggle('d-none', isPerformance)
-		MA.byId('debugPanelPerformance').classList.toggle('d-none', !isPerformance)
-		MA.queryF('.debug-toolbar-log').classList.toggle('d-none', isPerformance)
-		if ( isPerformance ) { this.loadPerformanceSummary() }
+		window.setLogWindowView(view)
+		if ( view === 'performance' ) { this.loadPerformanceSummary() }
 	}
 
 	performanceText(metric) {
@@ -149,7 +146,7 @@ class windowState {
 			this.levelStyleSheet.deleteRule(0)
 		}
 		for ( const thisLevel of this.levelNames ) {
-			MA.byId(`debug_${thisLevel}`).checked = thisLevel !== 'debug'
+			MA.byId(`assistant_debug_${thisLevel}`).checked = thisLevel !== 'debug'
 		}
 		this.initialViewRules()
 	}

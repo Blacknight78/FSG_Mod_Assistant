@@ -4,6 +4,8 @@ let candidates = []
 let noSourceRecords = []
 let selectedNoSourceRecord = null
 let noSourceSaveFeedbackTimer = null
+let updateIgnoreMods = []
+let updaterTaskStartedAt = 0
 let localSourceSaveModName = null
 let selectedKeys = new Set()
 let isBusy = false
@@ -16,6 +18,7 @@ let lastSkippedCount = 0
 const selectedAutoTagKeys = new Set()
 const selectedCustomTags = new Set()
 const autoTagLabels = new Map()
+const autoTagParentKeys = new Map()
 const REMOTE_CHECK_CONCURRENCY = 12
 const UPDATE_IGNORE_TAG = 'ignore updates'
 const PACKAGE_MISMATCH_STORAGE_KEY = 'fsg.vaultUpdatePackageMismatches.v1'
@@ -23,11 +26,88 @@ const UPDATE_PROFILE_STORAGE_KEY = 'fsg.vaultUpdateProfiles.v1'
 
 const byID = (id) => document.getElementById(id)
 
+async function checkVaultUpdateSource(group, force, catalogueVersions, cachedPageVersions) {
+	if ( group.sourceType === 'modhub' && group.isModHubPrefab ) {
+		return {
+			catalogueDetailLookup : false,
+			remote : {
+				category : group.modHubCategory ?? 'Prefab',
+				checkDiagnostics : { cache : 'prefab', durationMS : 0, http403or429 : 0, httpErrors : 0, parseMS : 0, requestMS : 0, requests : 0, requestTimeouts : 0 },
+				hasDownload : false,
+				modHubID : group.modHubID,
+				ok : true,
+				source : 'modhub',
+				url : group.sourceURL,
+				version : null,
+			},
+		}
+	}
+	if ( group.sourceType === 'modhub' && !force ) {
+		const catalogueVersion = catalogueVersions[group.modHubID]
+		const cachedPageVersion = cachedPageVersions[group.modHubID]
+		const knownModHubVersion = newestVersion([catalogueVersion, cachedPageVersion])
+		const catalogueComparison = compareCatalogueVersion(group.localVersions, knownModHubVersion)
+		if ( catalogueComparison !== null && !catalogueComparison.needsDetails ) {
+			return {
+				catalogueDetailLookup : false,
+				remote : {
+					checkDiagnostics : { cache : 'catalogue', durationMS : 0, http403or429 : 0, httpErrors : 0, parseMS : 0, requestMS : 0, requests : 0, requestTimeouts : 0 },
+					hasDownload : false,
+					modHubID : group.modHubID,
+					ok : true,
+					source : 'modhub',
+					url : group.sourceURL,
+					version : knownModHubVersion,
+				},
+			}
+		}
+		if ( catalogueComparison !== null ) {
+			let details
+			try {
+				details = await window.vault_update_IPC.getModHub(group.modHubID, true)
+			} catch (err) {
+				details = { error : err.message, ok : false }
+			}
+			if ( details.ok === true ) {
+				const latestKnownVersion = newestVersion([catalogueVersion, cachedPageVersion, details.version])
+				const cachedOrCatalogueIsNewer = typeof details.version === 'string' &&
+					compareVersions(latestKnownVersion, details.version) > 0
+				return {
+					catalogueDetailLookup : true,
+					remote : cachedOrCatalogueIsNewer
+						? { ...details, catalogueVersion, pageVersion : details.version, version : latestKnownVersion }
+						: details,
+				}
+			}
+			return {
+				catalogueDetailLookup : true,
+				remote : {
+					checkDiagnostics : { ...details.checkDiagnostics, cache : 'catalogue-fallback' },
+					detailError : details.error ?? 'ModHub page details were unavailable.',
+					detailsUnavailable : true,
+					hasDownload : false,
+					modHubID : group.modHubID,
+					ok : true,
+					source : 'modhub',
+					url : group.sourceURL,
+					version : knownModHubVersion,
+				},
+			}
+		}
+	}
+
+	const remote = await (group.sourceType === 'modhub'
+		? window.vault_update_IPC.getModHub(group.modHubID, force)
+		: window.vault_update_IPC.getGitHub(group.sourceURL, force))
+	return { catalogueDetailLookup : false, remote }
+}
+
 const {
 	applyVaultReviewState,
 	candidateStateCounts,
 	candidateGroupKey,
 	candidateUpdateState,
+	compareCatalogueVersion,
 	compareVersions,
 	modHubReleasedLabel,
 	newestVersion,
@@ -40,6 +120,7 @@ const {
 } = UpdateCandidateModel
 
 function sourceBadgeLabel(candidate) {
+	if ( candidate.isModHubPrefab ) { return 'ModHub prefab' }
 	if ( candidate.sourceType === 'modhub' ) { return 'ModHub update' }
 	if ( candidate.sourceType === 'github' && candidate.downloadSource === 'repositoryFile' ) { return 'GitHub repository ZIP' }
 	if ( candidate.sourceType === 'github' ) { return 'GitHub release' }
@@ -65,6 +146,10 @@ function packageMismatchKey(candidate) {
 }
 
 function applyPackageMismatchState(candidate) {
+	if ( candidate.isModHubPrefab ) {
+		candidate.packageMismatch = null
+		return candidate
+	}
 	const key = packageMismatchKey(candidate)
 	candidate.packageMismatch = key === '' ? null : packageMismatchStates()[key] ?? null
 	return candidate
@@ -267,6 +352,7 @@ function clearVaultUpdateFilters() {
 	byID('vaultUpdateCollectionFilter').value = ''
 	byID('vaultUpdateSortFilter').value = 'name-asc'
 	byID('vaultUpdateStateFilter').value = ''
+	byID('vaultUpdateSearch').value = ''
 	byID('vaultIncludeIgnoredUpdates').checked = false
 	byID('vaultNeedsReviewOnly').checked = false
 	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) {
@@ -282,13 +368,33 @@ function clearVaultUpdateFilters() {
 function visibleCandidates() {
 	const needsReviewOnly = byID('vaultNeedsReviewOnly')?.checked === true
 	const stateFilter = byID('vaultUpdateStateFilter')?.value ?? ''
+	const searchText = byID('vaultUpdateSearch')?.value.trim().toLocaleLowerCase() ?? ''
 	const selectedReasons = selectedReviewReasons()
 	return candidates.filter((candidate) => {
+		if ( searchText !== '' && !candidateSearchText(candidate).includes(searchText) ) { return false }
 		if ( stateFilter !== '' && candidateUpdateState(candidate) !== stateFilter ) { return false }
-		if ( !needsReviewOnly ) { return true }
-		if ( candidate.needsReview !== true ) { return false }
-		return selectedReasons.length === 0 || selectedReasons.some((reason) => candidate.reviewReasons.includes(reason))
+		if ( needsReviewOnly ) {
+			if ( candidate.needsReview !== true ) { return false }
+			if ( selectedReasons.length !== 0 && !selectedReasons.some((reason) => candidate.reviewReasons.includes(reason)) ) { return false }
+		}
+		return true
 	})
+}
+
+function candidateSearchText(candidate) {
+	return [
+		candidate.assetName,
+		candidate.autoTags?.map((tag) => tag.label).join(' '),
+		candidate.fileName,
+		candidate.localVersion,
+		candidate.modHubCategory,
+		candidate.modName,
+		candidate.pageURL,
+		candidate.remoteVersion,
+		candidate.sourceType,
+		candidate.sourceURL,
+		candidate.tags?.join(' '),
+	].filter((value) => typeof value === 'string').join(' ').toLocaleLowerCase()
 }
 
 function selectedCandidates() {
@@ -299,7 +405,8 @@ function selectedCandidates() {
 function syncSelectionCheckboxes() {
 	for ( const checkbox of document.querySelectorAll('.vault-update-select-checkbox') ) {
 		checkbox.checked = selectedKeys.has(checkbox.dataset.candidateKey ?? '')
-		checkbox.disabled = isBusy
+		const candidate = candidates.find((item) => item.key === checkbox.dataset.candidateKey)
+		checkbox.disabled = isBusy || candidate?.isModHubPrefab === true
 	}
 }
 
@@ -313,6 +420,7 @@ function applyNeedsReviewFilter() {
 	for ( const card of document.querySelectorAll('.vault-update-card') ) {
 		card.classList.toggle('d-none', !visibleKeys.has(card.dataset.candidateKey ?? ''))
 	}
+	byID('vaultUpdateSearchNoMatches').classList.toggle('d-none', candidates.length === 0 || visibleKeys.size !== 0)
 	updateSelectionText()
 }
 
@@ -326,6 +434,7 @@ function setBusy(value, label = '') {
 	byID('vaultUpdateProfileName').disabled = value
 	byID('vaultUpdateSortFilter').disabled = value
 	byID('vaultIncludeIgnoredUpdates').disabled = value
+	byID('vaultUpdateSearch').disabled = value
 	for ( const element of document.querySelectorAll('.vault-update-filter-input') ) {
 		element.disabled = value
 	}
@@ -343,6 +452,66 @@ function setProgress(percent, label) {
 	byID('vaultUpdatesProgress').style.width = `${Math.max(0, Math.min(100, percent))}%`
 	byID('vaultUpdatesProgress').textContent = ''
 	byID('vaultUpdatesProgressLabel').textContent = label
+}
+
+function formatTaskDuration(milliseconds) {
+	const seconds = Math.max(0, Math.round(milliseconds / 1000))
+	const hours = Math.floor(seconds / 3600)
+	const minutes = Math.floor((seconds % 3600) / 60)
+	const remainder = seconds % 60
+	return hours > 0
+		? `${hours}:${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`
+		: `${minutes}:${remainder.toString().padStart(2, '0')}`
+}
+
+function showUpdaterProgress(title, message, total) {
+	updaterTaskStartedAt = performance.now()
+	byID('vaultUpdateTaskTitle').textContent = title
+	byID('vaultUpdateTaskMessage').textContent = message
+	byID('vaultUpdateTaskCurrent').textContent = 'Preparing...'
+	byID('vaultUpdateTaskCount').textContent = `0 of ${total} complete`
+	byID('vaultUpdateTaskTiming').textContent = 'Elapsed 0:00 · Remaining time calculating…'
+	byID('vaultUpdateTaskBar').style.width = '0%'
+	byID('vaultUpdateTaskPercent').textContent = '0%'
+	if ( !byID('vaultUpdateTaskDialog').open ) { byID('vaultUpdateTaskDialog').showModal() }
+}
+
+function updateUpdaterProgress({ current = 0, total = 0, currentName = '', phase = '', elapsedMS = null, state = '' } = {}) {
+	const safeTotal = Math.max(0, total)
+	const done = Math.max(0, Math.min(current, safeTotal))
+	const percent = safeTotal === 0 ? 0 : Math.round((done / safeTotal) * 100)
+	const elapsed = elapsedMS ?? (performance.now() - updaterTaskStartedAt)
+	const remaining = done > 0 && safeTotal > done ? (elapsed / done) * (safeTotal - done) : null
+	const visiblePercent = phase === 'checking' && done >= safeTotal && safeTotal > 0 ? 96 : percent
+	byID('vaultUpdateTaskBar').style.width = `${visiblePercent}%`
+	byID('vaultUpdateTaskPercent').textContent = `${visiblePercent}%`
+	byID('vaultUpdateTaskCount').textContent = `${done} of ${safeTotal} complete`
+	byID('vaultUpdateTaskTiming').textContent = `Elapsed ${formatTaskDuration(elapsed)} · ${remaining === null ? (phase === 'checking' && done >= safeTotal && safeTotal > 0 ? 'Finishing up…' : 'Remaining time calculating…') : `About ${formatTaskDuration(remaining)} remaining`}`
+	const label = currentName === '' ? '' : ` ${currentName}`
+	byID('vaultUpdateTaskCurrent').textContent = state === 'starting'
+		? `${phase === 'downloading' ? 'Downloading' : 'Checking'}${label}...`
+		: state === 'failed'
+			? `Finished ${currentName} with an issue`
+			: state === 'working'
+				? `${phase === 'checking' ? 'Checking updates' : 'Working'}: ${currentName || 'in progress'}`
+				: state === 'finalizing'
+					? 'Saving update check results...'
+			: currentName !== '' ? `Finished ${currentName}` : `${phase === 'checking' ? 'Checking updates' : 'Working'}...`
+}
+
+function hideUpdaterProgress() {
+	const dialog = byID('vaultUpdateTaskDialog')
+	if ( dialog.open ) { dialog.close() }
+}
+
+function receiveUpdaterProgress(progress) {
+	if ( !byID('vaultUpdateTaskDialog').open ) {
+		showUpdaterProgress('Saving updates to the Vault', 'Downloading and checking selected mod files.', progress.total ?? 0)
+	}
+	if ( typeof progress.message === 'string' && progress.message !== '' ) {
+		byID('vaultUpdateTaskMessage').textContent = progress.message
+	}
+	updateUpdaterProgress({ ...progress, currentName : progress.modName })
 }
 
 function setStatus(message, kind = 'secondary') {
@@ -462,6 +631,108 @@ function hasIgnoreUpdateTag(tags) {
 	return tags.some((tag) => String(tag ?? '').trim().toLocaleLowerCase() === UPDATE_IGNORE_TAG)
 }
 
+async function loadUpdateIgnoreMods() {
+	const vault = await window.vault_update_IPC.getVault()
+	const entries = Array.isArray(vault.entries) ? vault.entries : (Array.isArray(vault.records) ? vault.records : [])
+	const byName = new Map()
+	for ( const record of entries ) {
+		const modName = vaultRecordModName(record)
+		const key = vaultTagKey(modName)
+		if ( key === '' ) { continue }
+		const item = byName.get(key) ?? { collections : new Set(), files : new Set(), modName, tags : tagsForVaultRecord(record, vault.tags ?? {}) }
+		for ( const collection of collectionNamesForRecord(record) ) { item.collections.add(collection) }
+		if ( record.fileName ) { item.files.add(record.fileName) }
+		byName.set(key, item)
+	}
+	updateIgnoreMods = [...byName.values()].map((item) => ({
+		...item,
+		collections : [...item.collections],
+		files : [...item.files],
+		ignored : hasIgnoreUpdateTag(item.tags),
+	})).sort((a, b) => a.modName.localeCompare(b.modName))
+	return updateIgnoreMods
+}
+
+function renderUpdateIgnoreList() {
+	const query = byID('vaultUpdateIgnoreSearch').value.trim().toLocaleLowerCase()
+	const ignored = updateIgnoreMods.filter((item) => item.ignored)
+	const matches = (query === '' ? ignored : updateIgnoreMods.filter((item) =>
+		[item.modName, ...item.files, ...item.collections].some((value) => value.toLocaleLowerCase().includes(query))))
+	const shown = matches.slice(0, 150)
+	byID('vaultUpdateIgnoreSummary').textContent = `${ignored.length} mod${ignored.length === 1 ? '' : 's'} ignored; ${updateIgnoreMods.length} Vault mods available to manage.`
+	const list = byID('vaultUpdateIgnoreRows')
+	list.replaceChildren()
+	if ( shown.length === 0 ) {
+		const empty = document.createElement('div')
+		empty.className = 'list-group-item bg-dark text-body-secondary'
+		empty.textContent = query === '' ? 'No mods are currently ignored.' : 'No Vault mods match that search.'
+		list.append(empty)
+		return
+	}
+	for ( const item of shown ) {
+		const row = document.createElement('div')
+		row.className = 'list-group-item bg-dark text-body'
+		const header = document.createElement('div')
+		header.className = 'd-flex justify-content-between align-items-start gap-3'
+		const info = document.createElement('div')
+		const name = document.createElement('div')
+		name.className = 'fw-semibold'
+		name.textContent = item.modName
+		info.append(name)
+		const meta = document.createElement('div')
+		meta.className = 'small text-body-secondary'
+		meta.textContent = [...item.files, ...item.collections].join(' · ') || 'Vault mod'
+		info.append(meta)
+		header.append(info)
+		const action = document.createElement('button')
+		action.type = 'button'
+		action.className = item.ignored ? 'btn btn-sm btn-outline-secondary flex-shrink-0' : 'btn btn-sm btn-outline-warning flex-shrink-0'
+		action.textContent = item.ignored ? 'Remove from ignore list' : 'Ignore future checks'
+		action.disabled = isBusy
+		action.addEventListener('click', () => { void setUpdateIgnored(item, !item.ignored) })
+		header.append(action)
+		row.append(header)
+		list.append(row)
+	}
+	if ( matches.length > shown.length ) {
+		const more = document.createElement('div')
+		more.className = 'small text-body-secondary mt-2'
+		more.textContent = `Showing the first ${shown.length} of ${matches.length} matches. Refine your search to see a specific mod.`
+		list.append(more)
+	}
+}
+
+async function setUpdateIgnored(item, shouldIgnore) {
+	const feedback = byID('vaultUpdateIgnoreFeedback')
+	feedback.textContent = ''
+	try {
+		const vault = await window.vault_update_IPC.getVault()
+		const current = vault.tags?.[vaultTagKey(item.modName)]?.tags
+		const tags = Array.isArray(current) ? current.filter((tag) => String(tag ?? '').trim().toLocaleLowerCase() !== UPDATE_IGNORE_TAG) : []
+		if ( shouldIgnore ) { tags.push('Ignore Updates') }
+		const result = await window.vault_update_IPC.saveTags({ modName : item.modName, tags })
+		if ( result?.ok !== true ) { throw new Error(result?.error ?? 'Could not save the update ignore list.') }
+		feedback.textContent = shouldIgnore ? `${item.modName} will be skipped by future update scans.` : `${item.modName} will be included in future update scans.`
+		await loadUpdateIgnoreMods()
+		renderUpdateIgnoreList()
+		await loadCandidates(false, false)
+	} catch (error) {
+		feedback.textContent = `Could not update the ignore list: ${error.message}`
+	}
+}
+
+function openUpdateIgnoreList() {
+	byID('vaultUpdateIgnoreFeedback').textContent = ''
+	byID('vaultUpdateIgnoreSearch').value = ''
+	void loadUpdateIgnoreMods().then(() => {
+		renderUpdateIgnoreList()
+		byID('vaultUpdateIgnoreDialog').showModal()
+	}).catch((error) => {
+		byID('vaultUpdateIgnoreFeedback').textContent = `Could not load the ignore list: ${error.message}`
+		byID('vaultUpdateIgnoreDialog').showModal()
+	})
+}
+
 function uniqueStrings(values) {
 	return [...new Set(values.filter((value) => typeof value === 'string' && value.trim() !== '').map((value) => value.trim()))]
 }
@@ -470,10 +741,34 @@ function autoTag(key, label, group) {
 	return { group, key : `${group}:${key}`, label }
 }
 
+function modHubCategoryPathsForRecord(record) {
+	const paths = new Map()
+	for ( const value of [...(record.modHubCategoryPaths ?? []), ...(record.modHubCategories ?? [])] ) {
+		const parts = (Array.isArray(value) ? value : [value])
+			.filter((part) => typeof part === 'string' && part.trim() !== '')
+			.flatMap((part) => part.split(/\s+(?:>|-)\s+/u).map((segment) => segment.trim()).filter(Boolean))
+		if ( parts.length !== 0 ) { paths.set(parts.map((part) => part.toLocaleLowerCase()).join('/'), parts) }
+	}
+	return [...paths.values()]
+}
+
 function autoTagsForVaultRecord(record) {
 	const sources = sourcesForVaultRecord(record).map((source) => autoTag(source.sourceType, sourceLabel(source.sourceType), 'source'))
+	const modHubCategoryTags = new Map()
+	for ( const categoryPath of modHubCategoryPathsForRecord(record) ) {
+		const parent = categoryPath[0]
+		const parentTag = autoTag(parent, parent, 'modhub')
+		modHubCategoryTags.set(parentTag.key, parentTag)
+		if ( categoryPath.length > 1 ) {
+			const child = categoryPath[1]
+			const childTag = autoTag(`${parent}/${child}`, child, 'modhubChild')
+			childTag.parentKey = parentTag.key
+			childTag.parentLabel = parent
+			modHubCategoryTags.set(childTag.key, childTag)
+		}
+	}
 	return [
-		...uniqueStrings(record.modHubCategories ?? []).map((value) => autoTag(value, value, 'modhub')),
+		...modHubCategoryTags.values(),
 		...uniqueStrings(record.itemCategories ?? []).map((value) => autoTag(value, value, 'category')),
 		...uniqueStrings(record.itemBrands ?? []).map((value) => autoTag(value, value, 'brand')),
 		...uniqueStrings(record.modTypes ?? []).map((value) => autoTag(value, value, 'type')),
@@ -592,6 +887,7 @@ function autoTagGroupLabel(group) {
 		brand     : 'Manufacturer / brand',
 		category  : 'Internal store category',
 		modhub    : 'ModHub category',
+		modhubChild : 'ModHub subcategories',
 		source    : 'Update source',
 		storeItem : 'Store-item type',
 		type      : 'Internal mod type',
@@ -602,13 +898,19 @@ function fillAutoTagFilter(vaultEntries = []) {
 	const menu = byID('vaultUpdateAutoTagFilterMenu')
 	const tagsByGroup = new Map()
 	autoTagLabels.clear()
+	autoTagParentKeys.clear()
 	for ( const tag of vaultEntries.flatMap((record) => autoTagsForVaultRecord(record)) ) {
 		if ( !tagsByGroup.has(tag.group) ) { tagsByGroup.set(tag.group, new Map()) }
 		tagsByGroup.get(tag.group).set(tag.key, tag)
-		autoTagLabels.set(tag.key, tag.label)
+		autoTagLabels.set(tag.key, tag.group === 'modhubChild' ? `${tag.parentLabel} › ${tag.label}` : tag.label)
+		if ( typeof tag.parentKey === 'string' ) { autoTagParentKeys.set(tag.key, tag.parentKey) }
 	}
 	for ( const key of selectedAutoTagKeys ) {
 		if ( !autoTagLabels.has(key) ) { selectedAutoTagKeys.delete(key) }
+	}
+	const selectedModHubParents = new Set([...selectedAutoTagKeys].filter((key) => key.startsWith('modhub:')))
+	for ( const [key, parentKey] of autoTagParentKeys ) {
+		if ( !selectedModHubParents.has(parentKey) ) { selectedAutoTagKeys.delete(key) }
 	}
 
 	menu.replaceChildren()
@@ -624,12 +926,18 @@ function fillAutoTagFilter(vaultEntries = []) {
 		header.textContent = autoTagGroupLabel(group)
 		menu.append(header)
 		for ( const [index, tag] of [...tagsByGroup.get(group).values()].toSorted((left, right) => left.label.localeCompare(right.label)).entries() ) {
+			if ( tag.group === 'modhubChild' && !selectedModHubParents.has(tag.parentKey) ) { continue }
 			menu.append(makeFilterCheckbox({
 				checked : selectedAutoTagKeys.has(tag.key),
 				id      : checkboxID('vault-update-auto-tag', tag.key, index),
-				label   : tag.label,
+				label   : tag.group === 'modhubChild' ? `↳ ${tag.label}` : tag.label,
 				onChange : (event) => {
-					if ( event.currentTarget.checked ) { selectedAutoTagKeys.add(tag.key) } else { selectedAutoTagKeys.delete(tag.key) }
+					if ( event.currentTarget.checked ) {
+						selectedAutoTagKeys.add(tag.key)
+						if ( tag.group === 'modhubChild' && selectedAutoTagKeys.has(tag.parentKey) ) {
+							setFilterMatchMode('vaultUpdateAutoTagMode', 'all')
+						}
+					} else { selectedAutoTagKeys.delete(tag.key) }
 					updateTagFilterSummaries()
 					loadCandidates(false, false)
 				},
@@ -945,6 +1253,7 @@ function reviewNoSourceRecords() {
 	if ( !dialog.open ) { dialog.showModal() }
 }
 
+// eslint-disable-next-line complexity
 function cardFor(candidate) {
 	const card = document.createElement('div')
 	card.className = 'card mb-3 bg-dark border-secondary vault-update-card'
@@ -967,7 +1276,7 @@ function cardFor(candidate) {
 	check.className = 'form-check-input m-0 vault-update-select-checkbox'
 	check.dataset.candidateKey = candidate.key
 	check.checked = selectedKeys.has(candidate.key)
-	check.disabled = isBusy
+	check.disabled = isBusy || candidate.isModHubPrefab === true
 	check.addEventListener('change', () => {
 		if ( check.checked ) { selectedKeys.add(candidate.key) } else { selectedKeys.delete(candidate.key) }
 		updateSelectionText()
@@ -996,7 +1305,9 @@ function cardFor(candidate) {
 
 	const detail = document.createElement('div')
 	detail.className = 'text-body-secondary'
-	detail.textContent = `${sourceLabel(candidate.sourceType)} | Vault ${candidate.localVersion} -> Latest ${candidate.remoteVersion}`
+	detail.textContent = candidate.isModHubPrefab
+		? 'ModHub Prefab | Manual check only'
+		: `${sourceLabel(candidate.sourceType)} | Vault ${candidate.localVersion} -> Latest ${candidate.remoteVersion}`
 	contentColumn.append(detail)
 
 	const actionColumn = document.createElement('div')
@@ -1005,8 +1316,12 @@ function cardFor(candidate) {
 
 	const versionBadges = document.createElement('div')
 	versionBadges.className = 'mb-2'
-	addBadge(versionBadges, `Vault ${candidate.localVersion}`, 'text-bg-secondary me-2')
-	addBadge(versionBadges, `${sourceLabel(candidate.sourceType)} ${candidate.remoteVersion}`, 'text-bg-warning')
+	if ( candidate.isModHubPrefab ) {
+		addBadge(versionBadges, 'Manual check only', 'text-bg-secondary')
+	} else {
+		addBadge(versionBadges, `Vault ${candidate.localVersion}`, 'text-bg-secondary me-2')
+		addBadge(versionBadges, `${sourceLabel(candidate.sourceType)} ${candidate.remoteVersion}`, 'text-bg-warning')
+	}
 	actionColumn.append(versionBadges)
 
 	const sourceBadges = document.createElement('div')
@@ -1038,15 +1353,17 @@ function cardFor(candidate) {
 	}
 
 	const updateStatus = document.createElement('div')
-	updateStatus.className = candidate.packageMismatch === null ? 'text-warning mb-3' : 'text-danger mb-3'
-	updateStatus.textContent = candidate.packageMismatch === null
-		? 'Update may be available'
-		: packageMismatchMessage(candidate.packageMismatch, candidate.remoteVersion)
+	updateStatus.className = candidate.isModHubPrefab ? 'text-body-secondary mb-3' : candidate.packageMismatch === null ? 'text-warning mb-3' : 'text-danger mb-3'
+	updateStatus.textContent = candidate.isModHubPrefab
+		? 'This is a prefab asset for map makers, not a playable mod. Its ZIP has no modDesc version, so the updater cannot compare, install, or update it automatically.'
+		: candidate.packageMismatch === null
+			? 'Update may be available'
+			: packageMismatchMessage(candidate.packageMismatch, candidate.remoteVersion)
 	actionColumn.append(updateStatus)
 
 	const availability = document.createElement('div')
 	availability.className = 'small mb-3'
-	addBadge(availability, candidate.downloadURL ? 'ZIP download available' : 'Manual download only', candidate.downloadURL ? 'text-bg-success me-2' : 'text-bg-secondary me-2')
+	addBadge(availability, candidate.isModHubPrefab ? 'Prefab download on ModHub' : candidate.downloadURL ? 'ZIP download available' : 'Manual download only', candidate.downloadURL ? 'text-bg-success me-2' : 'text-bg-secondary me-2')
 	if ( candidate.downloadURL ) {
 		availability.append(document.createTextNode(candidate.assetName ?? candidate.fileName))
 	}
@@ -1054,14 +1371,23 @@ function cardFor(candidate) {
 
 	const openButton = document.createElement('button')
 	openButton.className = 'btn btn-primary w-100'
-	openButton.textContent = 'Open Web Page'
+	openButton.textContent = candidate.isModHubPrefab ? 'Open ModHub page' : 'Open Web Page'
 	openButton.addEventListener('click', () => window.vault_update_IPC.openURL(candidate.pageURL))
 	actionColumn.append(openButton)
+	const ignoreButton = document.createElement('button')
+	ignoreButton.type = 'button'
+	ignoreButton.className = 'btn btn-outline-warning w-100 mt-2'
+	ignoreButton.textContent = candidate.isUpdateIgnored ? 'Remove from ignore list' : 'Ignore future checks'
+	ignoreButton.disabled = isBusy
+	ignoreButton.addEventListener('click', () => { void setUpdateIgnored({ modName : candidate.modName }, !candidate.isUpdateIgnored) })
+	actionColumn.append(ignoreButton)
 
 	if ( !candidate.downloadURL ) {
 		const help = document.createElement('div')
 		help.className = 'small text-body-secondary mt-3'
-		help.textContent = 'This source does not provide a direct ZIP download. Open its web page and add the ZIP to a collection or scan it into the Vault afterwards.'
+		help.textContent = candidate.isModHubPrefab
+			? 'Prefab assets are kept in the Vault for reference. Open the ModHub page to check the listing and download the asset manually if needed.'
+			: 'This source does not provide a direct ZIP download. Open its web page and add the ZIP to a collection or scan it into the Vault afterwards.'
 		body.append(help)
 	}
 
@@ -1071,7 +1397,9 @@ function cardFor(candidate) {
 function setAllSelections(selected) {
 	const visibleKeys = new Set(visibleCandidates().map((candidate) => candidate.key))
 	if ( selected ) {
-		for ( const key of visibleKeys ) { selectedKeys.add(key) }
+		for ( const candidate of visibleCandidates() ) {
+			if ( !candidate.isModHubPrefab ) { selectedKeys.add(candidate.key) }
+		}
 	} else {
 		selectedKeys = new Set([...selectedKeys].filter((key) => !visibleKeys.has(key)))
 	}
@@ -1100,23 +1428,24 @@ function updateSelectionText() {
 	const stateSummary = byID('vaultUpdateStateSummary')
 
 	byID('vaultUpdateSelectionControls').classList.toggle('d-none', candidates.length === 0)
+	byID('vaultUpdateSelectAllVisible').classList.toggle('d-none', candidates.length === 0)
+	byID('vaultUpdateSelectAllVisible').disabled = isBusy || visibleCount === 0
 	if ( stateSummary !== null ) {
 		stateSummary.textContent = stateSummaryText(visible)
 	}
 	byID('vaultUpdatesSelectedCount').textContent = `Selected: ${selectedCount}`
 	if ( selectedCount === 0 ) {
-		byID('vaultUpdateSelection').textContent = '0 updates selected. Downloads are stored in the Vault only.'
+		byID('vaultUpdateSelectionText').textContent = '0 updates selected. Downloads are stored in the Vault only.'
 	} else {
 		const parts = [`${selectedCount} selected`, `${selectedDownloadableCount} downloadable`]
 		if ( selectedStateCounts.ready > 0 ) { parts.push(`${selectedStateCounts.ready} ready`) }
 		if ( selectedStateCounts.review > 0 ) { parts.push(`${selectedStateCounts.review} need review`) }
 		if ( selectedStateCounts.manual > 0 ) { parts.push(`${selectedStateCounts.manual} manual only`) }
 		if ( selectedStateCounts.packageMismatch > 0 ) { parts.push(`${selectedStateCounts.packageMismatch} package mismatch`) }
-		byID('vaultUpdateSelection').textContent = `${parts.join(' | ')}. Downloads are stored in the Vault only.`
+		byID('vaultUpdateSelectionText').textContent = `${parts.join(' | ')}. Downloads are stored in the Vault only.`
 	}
 	byID('vaultUpdatesDownloadSelected').disabled = isBusy || selectedDownloadableCount === 0
 	byID('vaultUpdatesOpenSelected').disabled = isBusy || selectedCount === 0
-	byID('vaultUpdatesSelectAll').disabled = isBusy || visibleCount === 0
 	byID('vaultUpdatesSelectReady').disabled = isBusy || visible.filter((candidate) => candidateUpdateState(candidate) === 'ready').length === 0
 	byID('vaultUpdatesSelectNone').disabled = isBusy || selectedCount === 0
 }
@@ -1312,8 +1641,10 @@ async function mapWithConcurrency(items, concurrency, worker) {
 async function loadCandidates(force = false, runRemoteChecks = false) {
 	if ( isBusy ) { return }
 	setBusy(true, 'Loading Vault...')
+	if ( runRemoteChecks ) { showUpdaterProgress('Checking Vault updates', 'Preparing the list of mods and update sources to check.', 0) }
 	clearDownloadResults()
 	const checkStartedAt = performance.now()
+	let collectionRefreshResult = null
 	// A fresh update check must never inherit selection from an older result
 	// set. Only the visible ticked rows may be downloaded.
 	selectedKeys.clear()
@@ -1321,6 +1652,9 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 	for ( const filter of document.querySelectorAll('.vault-review-reason-filter') ) { filter.checked = false }
 	syncSelectionCheckboxes()
 	try {
+		if ( runRemoteChecks ) {
+			collectionRefreshResult = await window.vault_update_IPC.prepareCollectionsForUpdateScan()
+		}
 		const vault = await window.vault_update_IPC.getVault()
 		const groups = new Map()
 		noSourceRecords = []
@@ -1376,6 +1710,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 					hashes        : [],
 					key,
 					localVersions : [],
+					modHubCategories : [],
 					modHubID      : source.modHubID,
 					modIcon       : typeof record.modIcon === 'string' && record.modIcon !== '' ? record.modIcon : null,
 					modName,
@@ -1386,6 +1721,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 					updatedTime   : 0,
 				}
 				existing.gameVersions.push(...(record.gameVersions ?? []))
+				existing.modHubCategories.push(...(record.modHubCategories ?? []), ...(record.modHubCategoryPaths ?? []))
 				if ( typeof record.hash === 'string' && record.hash !== '' ) { existing.hashes.push(record.hash) }
 				existing.localVersions.push(...(record.versions ?? []))
 				existing.tags.push(...customTags.filter((tag) => !existing.tags.includes(tag)))
@@ -1419,32 +1755,68 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		}
 		let checked = 0
 		let active = 0
+		byID('vaultUpdateTaskMessage').textContent = `Checking ${sourceGroups.length} update sources. This window will show progress and estimated time remaining.`
 		const sources = Object.fromEntries(['modhub', 'github'].map((source) => [source, {
-			cacheHits : 0, failures : 0, fresh : 0, freshMS : 0,
+			cacheHits : 0, catalogueDetailFailures : 0, catalogueDetailLookups : 0, catalogueMatches : 0, failures : 0, fresh : 0, freshMS : 0,
 			http403or429 : 0, httpErrors : 0, maxMS : 0, parseMS : 0, requestMS : 0, requests : 0, requestTimeouts : 0, shared : 0, timeouts : 0,
 		}]))
-		const updateCheckProgress = () => setProgress(Math.round((checked / Math.max(sourceGroups.length, 1)) * 90), `Checked ${checked} of ${sourceGroups.length} - ${active} active`)
+		let modHubCatalogueVersions = {}
+		let modHubCachedPageVersions = {}
+		let modHubCatalogueCategories = {}
+		if ( !force ) {
+			const modHubIDs = [...new Set(sourceGroups
+				.filter((group) => group.sourceType === 'modhub')
+				.map((group) => group.modHubID)
+				.filter((modHubID) => Number.isSafeInteger(modHubID) && modHubID > 0))]
+			if ( modHubIDs.length !== 0 ) {
+				try {
+					const catalogue = await window.vault_update_IPC.getModHubCatalogue(modHubIDs)
+					if ( catalogue?.fresh === true && typeof catalogue.versions === 'object' && catalogue.versions !== null ) {
+						modHubCatalogueVersions = catalogue.versions
+						modHubCachedPageVersions = catalogue.pageVersions ?? {}
+						modHubCatalogueCategories = catalogue.categories ?? {}
+					}
+				} catch (err) {
+					window.log.warning('Unable to use the ModHub version catalogue; checking ModHub pages instead.', err.message)
+				}
+			}
+		}
+		const updateCheckProgress = () => {
+			const percent = Math.round((checked / Math.max(sourceGroups.length, 1)) * 90)
+			const progressLabel = `Checked ${checked} of ${sourceGroups.length} - ${active} active`
+			setProgress(percent, progressLabel)
+			updateUpdaterProgress({ current : checked, currentName : active > 0 ? `${active} checks active` : '', phase : 'checking', state : checked === sourceGroups.length && active === 0 ? 'finalizing' : 'working', total : sourceGroups.length })
+		}
 		isUpdateCheckStopped = false
 		isRemoteCheckRunning = true
 		updatePauseButton()
 		updateStopButton()
+		for ( const group of sourceGroups ) {
+			group.modHubCategory = group.modHubCategories.find((category) => /prefab/iu.test(category)) ?? modHubCatalogueCategories[group.modHubID] ?? null
+			group.isModHubPrefab = group.sourceType === 'modhub' && typeof group.modHubCategory === 'string' && /prefab/iu.test(group.modHubCategory)
+		}
 		const remoteResults = await mapWithConcurrency(sourceGroups, REMOTE_CHECK_CONCURRENCY, async (group) => {
 			active++
 			updateCheckProgress()
 			const startedAt = performance.now()
 			try {
-				const remote = await (group.sourceType === 'modhub'
-					? window.vault_update_IPC.getModHub(group.modHubID, force)
-					: window.vault_update_IPC.getGitHub(group.sourceURL, force))
+				const { catalogueDetailLookup, remote } = await checkVaultUpdateSource(group, force, modHubCatalogueVersions, modHubCachedPageVersions)
 				const stats = sources[group.sourceType]
 				const diagnostics = remote.checkDiagnostics
 				for ( const key of ['requests', 'requestMS', 'requestTimeouts', 'httpErrors', 'http403or429', 'parseMS'] ) {
 					stats[key] += diagnostics?.[key] ?? 0
 				}
 				const durationMS = diagnostics?.durationMS ?? performance.now() - startedAt
-				if ( diagnostics?.cache === 'hit' ) { stats.cacheHits++ }
+				if ( diagnostics?.cache === 'catalogue' ) { stats.catalogueMatches++ }
+				else if ( diagnostics?.cache === 'catalogue-fallback' ) {
+					stats.catalogueDetailFailures++
+				} else if ( diagnostics?.cache === 'hit' ) { stats.cacheHits++ }
 				else if ( diagnostics?.cache === 'shared' ) { stats.shared++ }
 				else { stats.fresh++; stats.freshMS += durationMS }
+				if ( catalogueDetailLookup ) {
+					stats.catalogueMatches++
+					stats.catalogueDetailLookups++
+				}
 				stats.maxMS = Math.max(stats.maxMS, durationMS)
 				if ( remote.ok !== true ) { stats.failures++ }
 				if ( /timed?\s*out|timeout/iu.test(remote.error ?? '') ) { stats.timeouts++ }
@@ -1456,11 +1828,30 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 			}
 		})
 		const wasStopped = isUpdateCheckStopped
+		for ( const result of remoteResults ) {
+			if ( result === undefined ) { continue }
+			const { group, remote } = result
+			if ( group.sourceType === 'modhub' && typeof remote.category === 'string' && /prefab/iu.test(remote.category) ) {
+				group.modHubCategory = remote.category
+				group.isModHubPrefab = true
+			}
+		}
 		const reportRows = sourceGroups.map((group, index) => {
 			const remote = remoteResults[index]?.remote
-			const status = remote === undefined ? 'Not checked' : remote.ok !== true ? 'Failed' : compareVersions(remote.version, newestVersion(group.localVersions)) > 0 ? 'Update available' : 'No newer version'
-			return { detail : remote === undefined ? 'Scan stopped before this check.' : remote.ok !== true ? window.UpdateRunReport.error(remote.error) : `Local: ${group.localVersions.join(', ')}; online: ${remote.version}`, name : group.modName, source : group.sourceType, status }
+			const status = group.isModHubPrefab ? 'Manual check only' : remote === undefined ? 'Not checked' : remote.ok !== true ? 'Failed' : compareVersions(remote.version, newestVersion(group.localVersions)) > 0 ? 'Update available' : 'No newer version'
+			const detail = group.isModHubPrefab
+				? 'ModHub identifies this as a prefab asset for map makers. It is not a playable mod and cannot be version-checked or updated automatically.'
+				: remote === undefined ? 'Scan stopped before this check.' : remote.ok !== true ? window.UpdateRunReport.error(remote.error) : `Local: ${group.localVersions.join(', ')}; online: ${remote.version}${remote.detailsUnavailable ? ` (ModHub page details unavailable: ${remote.detailError})` : ''}`
+			return { detail, name : group.modName, source : group.sourceType, status }
 		})
+		if ( collectionRefreshResult?.changed === true ) {
+			reportRows.unshift({
+				detail : `Rescanned ${collectionRefreshResult.collections} tracked collections and checked ${collectionRefreshResult.scanned} collection entries. ${collectionRefreshResult.imported} Vault records were processed; ${collectionRefreshResult.skipped} entries were skipped; ${collectionRefreshResult.errors} errors occurred.`,
+				name : 'Collection refresh',
+				source : 'Tracked collections',
+				status : collectionRefreshResult.errors === 0 ? 'Completed before scan' : 'Completed with issues',
+			})
+		}
 		for ( const record of noSourceRecords ) { reportRows.push({ detail : 'No supported update source.', name : record.modName ?? record.fileName, source : '', status : 'Skipped' }) }
 		window.UpdateRunReport.show('vaultUpdateStatus', wasStopped ? 'Vault check report (stopped)' : 'Vault check report', reportRows, `${ignoredSkipped + tagSkipped + collectionSkipped} Vault records excluded by filters or Ignore Updates.`)
 		isRemoteCheckRunning = false
@@ -1469,6 +1860,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		await window.vault_update_IPC.updateScanMetadata({
 			updates : remoteResults
 				.filter((result) => result !== undefined)
+				.filter(({ group }) => !group.isModHubPrefab)
 				.map(({ group, remote }) => ({
 					hashes     : [...new Set(group.hashes)],
 					modHubID   : group.modHubID,
@@ -1481,6 +1873,36 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		for ( const result of remoteResults ) {
 			if ( result === undefined ) { continue }
 			const { group, remote } = result
+			if ( group.isModHubPrefab ) {
+				const candidate = {
+					assetName : group.fileName,
+					autoTags : group.autoTags,
+					downloadSource : null,
+					downloadURL : null,
+					fileName : group.fileName,
+					gameVersion : group.gameVersions.find((value) => Number.isInteger(value)) ?? null,
+					isModHubPrefab : true,
+					isUpdateIgnored : hasIgnoreUpdateTag(group.tags),
+					key : group.key,
+					localVersion : newestVersion(group.localVersions) ?? 'Unknown',
+					modHubCategory : group.modHubCategory,
+					modHubID : group.modHubID,
+					modHubReleased : null,
+					modHubScreenshots : [],
+					modIcon : group.modIcon,
+					modName : group.modName,
+					pageURL : remote.url ?? group.sourceURL,
+					remoteVersion : 'Manual check only',
+					sourceType : group.sourceType,
+					sourceURL : group.sourceURL,
+					tags : group.tags,
+					totalSize : group.totalSize,
+					updatedTime : group.updatedTime,
+				}
+				applyPackageMismatchState(candidate)
+				candidates.push(candidate)
+				continue
+			}
 			const decision = vaultRemoteDecision(group, remote)
 			if ( !decision.available ) { continue }
 			const candidate = {
@@ -1491,6 +1913,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				fileName      : group.fileName,
 				gameVersion   : group.gameVersions.find((value) => Number.isInteger(value)) ?? null,
 				key           : group.key,
+				isUpdateIgnored : hasIgnoreUpdateTag(group.tags),
 				localVersion  : decision.localVersion,
 				modHubID      : group.modHubID,
 				modHubReleased : remote.released ?? null,
@@ -1546,6 +1969,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 		// eslint-disable-next-line require-atomic-updates
 		isUpdateCheckStopped = false
 		setBusy(false)
+		hideUpdaterProgress()
 		updateSelectionText()
 	}
 }
@@ -1572,6 +1996,8 @@ async function downloadSelected() {
 	const manualCount = selectedKeys.size - downloads.length
 	let refreshAfterDownload = false
 	setBusy(true, 'Saving update(s) to Vault...')
+	showUpdaterProgress('Saving updates to the Vault', `Downloading and checking ${downloads.length} selected mod file${downloads.length === 1 ? '' : 's'}.`, downloads.length)
+	updateUpdaterProgress({ current : 0, phase : 'downloading', total : downloads.length })
 	clearDownloadResults()
 	try {
 		const result = await window.vault_update_IPC.downloadToVaultSelected(downloads)
@@ -1595,6 +2021,7 @@ async function downloadSelected() {
 		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault update report', downloads.map((item) => ({ detail : err.message, name : item.modName, source : item.sourceType, status : 'Unconfirmed' })))
 	} finally {
 		setBusy(false)
+		hideUpdaterProgress()
 		updateSelectionText()
 		if ( refreshAfterDownload ) { await loadCandidates(false, false) }
 	}
@@ -1610,7 +2037,12 @@ window.addEventListener('DOMContentLoaded', () => {
 		setUpdateCheckPaused(!isUpdateCheckPaused)
 	})
 	byID('vaultUpdatesStop').addEventListener('click', stopUpdateChecks)
+	byID('vaultUpdateTaskDialog').addEventListener('cancel', (event) => event.preventDefault())
+	window.vault_update_IPC.receive('vault:updateTaskProgress', receiveUpdaterProgress)
 	byID('vaultIncludeIgnoredUpdates').addEventListener('change', () => loadCandidates(false, false))
+	byID('vaultUpdateManageIgnoreList').addEventListener('click', openUpdateIgnoreList)
+	byID('vaultUpdateIgnoreClose').addEventListener('click', () => byID('vaultUpdateIgnoreDialog').close())
+	byID('vaultUpdateIgnoreSearch').addEventListener('input', renderUpdateIgnoreList)
 	byID('vaultUpdateCollectionFilter').addEventListener('change', () => loadCandidates(false, false))
 	for ( const modeInput of document.querySelectorAll('input[name="vaultUpdateCustomTagMode"], input[name="vaultUpdateAutoTagMode"]') ) {
 		modeInput.addEventListener('change', () => loadCandidates(false, false))
@@ -1629,6 +2061,12 @@ window.addEventListener('DOMContentLoaded', () => {
 		if ( byID('vaultNoSourceDialog')?.open ) { reviewNoSourceRecords() }
 	})
 	byID('vaultUpdateStateFilter').addEventListener('change', applyNeedsReviewFilter)
+	byID('vaultUpdateSearch').addEventListener('input', applyNeedsReviewFilter)
+	byID('vaultUpdateSearchClear').addEventListener('click', () => {
+		byID('vaultUpdateSearch').value = ''
+		applyNeedsReviewFilter()
+		byID('vaultUpdateSearch').focus()
+	})
 	byID('vaultUpdateReviewNoSource').addEventListener('click', reviewNoSourceRecords)
 	byID('vaultNoSourceClose').addEventListener('click', () => {
 		selectedNoSourceRecord = null
@@ -1642,7 +2080,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		if ( selectedNoSourceRecord !== null ) { openNoSourceDetail(selectedNoSourceRecord) }
 	})
 	byID('vaultUpdatesDownloadSelected').addEventListener('click', downloadSelected)
-	byID('vaultUpdatesSelectAll').addEventListener('click', () => setAllSelections(true))
+	byID('vaultUpdateSelectAllVisible').addEventListener('click', () => setAllSelections(true))
 	byID('vaultUpdatesSelectReady').addEventListener('click', selectReadyUpdates)
 	byID('vaultUpdatesSelectNone').addEventListener('click', () => setAllSelections(false))
 	byID('vaultUpdatesOpenSelected').addEventListener('click', () => {
