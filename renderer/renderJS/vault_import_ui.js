@@ -1,9 +1,11 @@
-/* global DATA */
+/* global bootstrap, DATA */
 const escapeImportValue = (value) => DATA.escapeSpecial(String(value ?? ''))
 const importRowSelectable = (row) => ['Ready', 'Choose ZIP'].includes(row.status)
 window.addEventListener('DOMContentLoaded', () => {
 	const dialog = document.getElementById('vaultImportDialog')
 	const byId = (id) => document.getElementById(id)
+	const importOpenButton = byId('vaultImportOpen')
+	const importOpenTooltip = bootstrap.Tooltip.getOrCreateInstance(importOpenButton)
 	let rows = []
 	let page = 0
 	let busy = false
@@ -83,6 +85,7 @@ window.addEventListener('DOMContentLoaded', () => {
 					''
 				byId('vaultImportStatus').textContent = `${result.cancelled ? 'Cancelled. ' : ''}${sourceText}${[...counts].map(([label, count]) => `${label}: ${count}`).join(' | ') || 'No mod ZIPs found.'}`
 			} else { byId('vaultImportStatus').textContent = options.cancelMessage ?? 'Selection cancelled.' }
+			window.taskCompletion.play(result)
 		} catch (err) { byId('vaultImportStatus').textContent = err.message }
 		finally { setBusy(false) }
 	}
@@ -103,8 +106,31 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 		render()
 	}
-	byId('vaultImportOpen').addEventListener('click', () => { dialog.showModal(); render() })
+	let importTooltipSuppressedUntilLeave = false
+	const suppressImportTooltip = () => {
+		importOpenTooltip.hide()
+		importOpenTooltip.disable()
+		importTooltipSuppressedUntilLeave = true
+	}
+	importOpenButton.addEventListener('click', () => {
+		suppressImportTooltip()
+		dialog.showModal()
+		render()
+	})
 	byId('vaultImportClose').addEventListener('click', () => dialog.close())
+	dialog.addEventListener('close', () => {
+		importOpenButton.blur()
+		importOpenTooltip.hide()
+		if ( !importOpenButton.matches(':hover') ) {
+			importOpenTooltip.enable()
+			importTooltipSuppressedUntilLeave = false
+		}
+	})
+	importOpenButton.addEventListener('mouseleave', () => {
+		if ( !importTooltipSuppressedUntilLeave || dialog.open ) { return }
+		importOpenTooltip.enable()
+		importTooltipSuppressedUntilLeave = false
+	})
 	dialog.addEventListener('cancel', (event) => { if ( busy ) { event.preventDefault() } })
 	for ( const button of dialog.querySelectorAll('[data-import-mode]') ) { button.addEventListener('click', () => switchMode(button.dataset.importMode)) }
 	byId('vaultImportResolve').addEventListener('click', () => run(() => window.vault_IPC.importLinks(byId('vaultImportURLs').value)))

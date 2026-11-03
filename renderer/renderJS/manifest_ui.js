@@ -337,6 +337,7 @@ async function importManifest(mode) {
 		} else if ( !result.canceled ) {
 			MA.byIdText('manifestStatus', `Manifest import failed: ${result.error}`)
 		}
+		if ( manifestBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} finally {
 		endManifestBusy()
 	}
@@ -371,6 +372,7 @@ async function installManifestSelection() {
 			MA.byIdText('manifestStatus', `Collection import failed: ${result.error}`)
 			manifestSelectionChanged()
 		}
+		if ( manifestBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} finally {
 		endManifestBusy()
 	}

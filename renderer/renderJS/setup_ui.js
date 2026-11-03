@@ -111,7 +111,7 @@ class PrefLib {
 		window.setup_IPC.receive('setup:vaultProgress', (progress) => { this.#handleVaultMoveProgress(progress) })
 		MA.byId('wizardBack')?.addEventListener('click', () => { this.#showWizardStep(this.currentStep - 1) })
 		MA.byId('wizardNext')?.addEventListener('click', () => { this.#showWizardStep(this.currentStep + 1) })
-		MA.byId('wizardFinish')?.addEventListener('click', () => { window.operations.close() })
+		MA.byId('wizardFinish')?.addEventListener('click', () => { window.taskCompletion.play(); window.operations.close() })
 
 		this.totalSteps = document.querySelectorAll('.wizard-panel').length || 1
 		this.#showWizardStep(1, false)
@@ -439,6 +439,7 @@ class PrefLib {
 			status.textContent = result.oldFolderDeleted === false ?
 				`Vault moved to ${result.folder}, but the old folder could not be deleted: ${result.oldFolderDeleteError}` :
 				`Vault moved to ${result.folder}.`
+			window.taskCompletion.play(result)
 		} catch (err) {
 			status.className = 'col-12 small text-danger'
 			status.textContent = `Vault folder move failed: ${err.message}`

@@ -361,6 +361,7 @@ async function downloadSelectedZIPs() {
 		} else {
 			MA.byIdHTML('updateStatus', `${I18N.defer('update_list_update_failed', false)} ${result.error}`)
 		}
+		if ( updateBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		window.UpdateRunReport.show('updateStatus', 'Collection update report', downloads.map((item) => ({ name : item.modName, status : 'Unconfirmed', detail : err.message })))
 	} finally {
@@ -523,6 +524,7 @@ async function startFromModList(modCollect, forceRemoteRefresh = false) {
 		await displayCandidates(buildCollectionCandidateMap(modCollect, {
 			titleResolver : (thisMod, currentModCollect) => doL10N(thisMod.l10n.title, currentModCollect.appSettings.force_lang),
 		}), renderID, forceRemoteRefresh)
+		if ( updateBusyDepth === 1 ) { window.taskCompletion.play(undefined) }
 	} catch (err) {
 		MA.byIdText('updateStatus', `Update list error: ${err.message}`)
 		window.UpdateRunReport.show('updateStatus', 'Collection check report', [{ name : 'Scan', status : 'Failed', detail : err.message }])
@@ -539,6 +541,7 @@ async function refreshUpdateCandidates() {
 	try {
 		const modCollect = await window.update_IPC.get()
 		await startFromModList(modCollect, true)
+		if ( updateBusyDepth === 1 ) { window.taskCompletion.play(undefined) }
 	} finally {
 		endUpdateBusy()
 		button.disabled = false

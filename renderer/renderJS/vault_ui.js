@@ -23,6 +23,7 @@ let vaultTagTreeRoots = []
 let vaultRetentionPolicy = { maximum : 10, versionCount : 3 }
 let vaultSourceFilter = ''
 let vaultHealthFilter = ''
+let vaultAddedFilter = ''
 let vaultSelectedHashes = new Set()
 let vaultSelectionAnchorHash = ''
 let vaultGroupRows = new Map()
@@ -40,6 +41,8 @@ let vaultBusyDepth = 0
 let vaultInteractionLockDepth = 0
 let vaultLockedControls = []
 let vaultTaskLockDepth = 0
+let vaultTaskETA = { averageMS : null, lastAt : 0, lastCurrent : 0 }
+let vaultRefreshCancelRequested = false
 let vaultPreviewItems = []
 let vaultPreviewIndex = 0
 let vaultPreviewGallerySequence = 0
@@ -67,6 +70,8 @@ function showVaultTaskLock(label = 'Working...', value = null, options = {}) {
 	const subtitleNode = MA.byId('vaultTaskLockSubtitle')
 	const labelNode = MA.byId('vaultTaskLockLabel')
 	const bar = MA.byId('vaultTaskLockBar')
+	const etaNode = MA.byId('vaultTaskLockETA')
+	const cancelButton = MA.byId('vaultTaskLockCancel')
 	const progress = lock?.querySelector('.progress')
 	if ( lock === null || titleNode === null || subtitleNode === null || labelNode === null || bar === null ) { return }
 	lock.classList.add('show')
@@ -75,6 +80,12 @@ function showVaultTaskLock(label = 'Working...', value = null, options = {}) {
 	titleNode.textContent = options.title ?? vaultTaskTitleForLabel(label)
 	subtitleNode.textContent = options.subtitle ?? 'Please keep the app open until this finishes.'
 	labelNode.textContent = label
+	if ( etaNode !== null ) { etaNode.textContent = options.eta ?? '' }
+	if ( cancelButton !== null ) {
+		cancelButton.classList.toggle('d-none', options.cancellable !== true)
+		cancelButton.disabled = options.cancelRequested === true
+		cancelButton.textContent = options.cancelRequested === true ? 'Cancelling...' : 'Cancel refresh'
+	}
 	if ( value === null ) {
 		progress?.removeAttribute('aria-valuenow')
 		bar.style.width = '100%'
@@ -109,9 +120,16 @@ function endVaultTaskLock() {
 	}
 	document.body.classList.remove('vault-task-locked')
 	setVaultWindowTaskBusy(false)
+	vaultRefreshCancelRequested = false
+	vaultTaskETA = { averageMS : null, lastAt : 0, lastCurrent : 0 }
 }
 
 function beginVaultBusy(label = '', value = null, options = {}) {
+	if ( options.cancellable === true ) {
+		const now = performance.now()
+		vaultRefreshCancelRequested = false
+		vaultTaskETA = { averageMS : null, lastAt : now, lastCurrent : 0 }
+	}
 	vaultBusyDepth++
 	beginVaultTaskLock(label, value, options)
 }
@@ -129,7 +147,24 @@ function handleVaultProgress(progress = {}) {
 	if ( vaultBusyDepth === 0 ) { return }
 	const label = typeof progress.label === 'string' && progress.label !== '' ? progress.label : 'Working...'
 	const value = typeof progress.value === 'number' ? progress.value : null
-	setVaultBusy(label, value)
+	let taskOptions = {}
+	if ( progress.operation === 'refreshModHub' ) {
+		const now = performance.now()
+		const current = Number.isFinite(progress.current) ? progress.current : vaultTaskETA.lastCurrent
+		const elapsed = now - vaultTaskETA.lastAt
+		const completedSinceUpdate = current - vaultTaskETA.lastCurrent
+		if ( completedSinceUpdate > 0 && elapsed > 0 ) {
+			const sampleAverage = elapsed / completedSinceUpdate
+			vaultTaskETA.averageMS = vaultTaskETA.averageMS === null ? sampleAverage : (vaultTaskETA.averageMS * 0.7) + (sampleAverage * 0.3)
+			vaultTaskETA.lastAt = now
+			vaultTaskETA.lastCurrent = current
+		}
+		const remaining = Math.max(0, (Number(progress.total) - current) * (vaultTaskETA.averageMS ?? 0))
+		const eta = vaultRefreshCancelRequested ? 'Saving results already received...' : vaultTaskETA.averageMS === null ? 'Estimating time remaining...' : `Estimated time remaining: ${formatVaultTaskETA(remaining)}`
+		const subtitle = vaultRefreshCancelRequested ? 'Stopping after the current ModHub request and saving results already received...' : undefined
+		taskOptions = { cancellable : true, cancelRequested : vaultRefreshCancelRequested, eta, subtitle }
+	}
+	setVaultBusy(label, value, taskOptions)
 	if ( progress.operation === 'moveFolder' ) {
 		MA.byIdText('vaultStatus', label)
 	}
@@ -144,6 +179,16 @@ function handleVaultProgress(progress = {}) {
 		const status = MA.byId('vaultBulkCopyStatus')
 		if ( status !== null ) { status.textContent = label }
 	}
+}
+
+function formatVaultTaskETA(milliseconds) {
+	const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000))
+	const hours = Math.floor(totalSeconds / 3600)
+	const minutes = Math.floor((totalSeconds % 3600) / 60)
+	const seconds = totalSeconds % 60
+	if ( hours > 0 ) { return `${hours} hr ${minutes} min` }
+	if ( minutes > 0 ) { return `${minutes} min ${seconds} sec` }
+	return `${seconds} sec`
 }
 
 function setVaultInteractionLocked(locked) {
@@ -678,6 +723,22 @@ function dateRangeMatches(timestamp, range) {
 		default :
 			return true
 	}
+}
+
+function recentlyAddedMatches(timestamp, range) {
+	if ( range === '' ) { return true }
+	if ( timestamp <= 0 ) { return false }
+	const ageMs = Date.now() - timestamp
+	const rangeMs = { '7d' : 7 * 24 * 60 * 60 * 1000, '24h' : 24 * 60 * 60 * 1000, '30d' : 30 * 24 * 60 * 60 * 1000 }[range]
+	return Number.isFinite(rangeMs) && ageMs >= 0 && ageMs <= rangeMs
+}
+
+function updateRecentlyAddedFilterButton() {
+	const button = MA.byId('vaultAddedFilterOpen')
+	const label = { '' : 'Any time', '7d' : 'Last 7 days', '24h' : 'Last 24 hours', '30d' : 'Last month' }[vaultAddedFilter]
+	button.textContent = `Recently added: ${label}`
+	button.classList.toggle('active', vaultAddedFilter !== '')
+	button.setAttribute('aria-pressed', (vaultAddedFilter !== '').toString())
 }
 
 function compareVaultGroups(left, right, sortMode) {
@@ -1535,6 +1596,7 @@ function filterEntries() {
 		(noteFilter === '' || (noteFilter === 'with' && group.hasNote) || (noteFilter === 'without' && !group.hasNote)) &&
 		(rollbackFilter === '' || (rollbackFilter === 'with' && group.hasRollback) || (rollbackFilter === 'without' && !group.hasRollback)) &&
 		(updateFilter === '' || (updateFilter === 'available' && group.hasVaultUpdate) || (updateFilter === 'none' && !group.hasVaultUpdate)) &&
+		recentlyAddedMatches(group.createdTime, vaultAddedFilter) &&
 		dateRangeMatches(group.updatedTime, updatedFilter)
 	).sort((left, right) => compareVaultGroups(left, right, sortMode))
 }
@@ -1594,6 +1656,8 @@ function clearQuickFilters(shouldRender = true) {
 	MA.byId('vaultNoteFilter').value = ''
 	MA.byId('vaultRollbackFilter').value = ''
 	MA.byId('vaultUpdateFilter').value = ''
+	vaultAddedFilter = ''
+	updateRecentlyAddedFilterButton()
 	MA.byId('vaultSortFilter').value = 'name-asc'
 	if ( shouldRender ) { renderFilteredVault() }
 }
@@ -1743,6 +1807,8 @@ async function ensureVaultGroupRows(body) {
 	let renderedCount = 0
 	for ( let startIndex = 0; startIndex < groupData.entries.length; startIndex += VAULT_FILE_ROW_CHUNK_SIZE ) {
 		const entries = groupData.entries.slice(startIndex, startIndex + VAULT_FILE_ROW_CHUNK_SIZE)
+		// Keep chunk rendering sequential so rows and progress remain in display order.
+		// eslint-disable-next-line no-await-in-loop
 		const rows = await renderFileRows(entries, groupData.groupIndex, groupData.customTags, startIndex)
 		if ( !body.isConnected ) { return }
 		if ( startIndex === 0 ) { body.replaceChildren() }
@@ -1762,14 +1828,20 @@ async function ensureVaultGroupRows(body) {
 			loadingStatus.textContent = `Loaded ${renderedCount.toLocaleString()} of ${groupData.entries.length.toLocaleString()} stored ZIP details...`
 			body.querySelector('.vault-file-rows-progress')?.remove()
 			body.append(loadingStatus)
+			// Yield between chunks so the renderer can paint the latest progress.
+			// eslint-disable-next-line no-await-in-loop
 			await nextFrame()
 			loadingStatus.remove()
 		}
 	}
-	body.dataset.loaded = 'true'
-	delete body.dataset.loading
+	markVaultGroupRowsLoaded(body)
 	updateVaultSelectionControls()
 	logVaultPerformance(`Vault group expansion took ${(performance.now() - startedAt).toFixed(1)} ms versions=${groupData.entries.length.toString()} rendered=${renderedCount.toString()} chunkSize=${VAULT_FILE_ROW_CHUNK_SIZE.toString()}`)
+}
+
+function markVaultGroupRowsLoaded(body) {
+	body.dataset.loaded = 'true'
+	delete body.dataset.loading
 }
 
 function fillSelect(selectID, values, firstLabel) {
@@ -1851,7 +1923,7 @@ function buildVaultTagTree() {
 				const segmentKey = normalValue(label)
 				let node = siblings.get(segmentKey)
 				if ( node === undefined ) {
-					const key = vaultTagFilterKey('modhub', JSON.stringify(path.map(normalValue)))
+					const key = vaultTagFilterKey('modhub', JSON.stringify(path.map((value) => normalValue(value))))
 					node = newVaultTagTreeNode('modhub', label, path, key)
 					siblings.set(segmentKey, node)
 					vaultTagNodeIndex.set(key, node)
@@ -1873,7 +1945,7 @@ function buildVaultTagTree() {
 			customRoot.groupIDs.add(groupID)
 		}
 	}
-	if ( customRoot.children.size > 0 ) { roots.set('\uffffcustom-tags', customRoot) }
+	if ( customRoot.children.size !== 0 ) { roots.set('\uFFFFcustom-tags', customRoot) }
 	return [...roots.values()].toSorted((left, right) => left.label.localeCompare(right.label))
 }
 
@@ -1898,7 +1970,7 @@ function makeVaultTagTreeRow(node, depth) {
 	row.className = 'vault-tag-tree-row'
 	row.classList.toggle('is-selected', vaultTagSelections.has(node.key))
 	const hasSelectedDescendant = vaultTagHasSelectedDescendant(node)
-	if ( node.children.size > 0 ) {
+	if ( node.children.size !== 0 ) {
 		const expand = document.createElement('button')
 		expand.className = 'vault-tag-tree-expand'
 		expand.type = 'button'
@@ -1937,7 +2009,7 @@ function makeVaultTagTreeRow(node, depth) {
 	item.appendChild(row)
 	const query = normalValue(vaultTagTreeQuery)
 	const shouldExpand = query !== '' || vaultExpandedTagNodes.has(node.key)
-	if ( node.children.size > 0 && shouldExpand ) {
+	if ( node.children.size !== 0 && shouldExpand ) {
 		const children = document.createElement('ul')
 		children.className = 'vault-tag-tree-children'
 		children.setAttribute('role', 'group')
@@ -1974,7 +2046,7 @@ function renderVaultTagTree(rebuild = false) {
 	const tree = MA.byId('vaultTagTree')
 	if ( tree === null ) { return }
 	if ( rebuild || vaultTagTreeRoots.length === 0 ) { vaultTagTreeRoots = buildVaultTagTree() }
-	for ( const key of [...vaultTagSelections] ) {
+	for ( const key of vaultTagSelections ) {
 		if ( !vaultTagNodeIndex.has(key) ) { vaultTagSelections.delete(key) }
 	}
 	tree.replaceChildren()
@@ -2305,6 +2377,7 @@ async function loadVault(force = false) {
 		await updateVaultSummary(vault)
 		refreshFilterOptions()
 		await renderFilteredVault()
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(undefined) }
 	} finally {
 		endVaultBusy()
 	}
@@ -2360,6 +2433,7 @@ async function exportVaultRecoveryManifest() {
 		const withoutSource = Number.isFinite(coverage.withoutSource) ? coverage.withoutSource : 0
 		const missingText = withoutSource === 0 ? '' : ` ${withoutSource} mod${withoutSource === 1 ? '' : 's'} do not have a known redownload URL yet.`
 		setStatus(`Exported Mod Manifest for ${result.modCount} Vault mod${result.modCount === 1 ? '' : 's'}: ${result.filePath}.${missingText}`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		setStatus(`Mod Manifest export failed: ${err.message}`)
 	} finally {
@@ -2391,6 +2465,7 @@ async function backupVaultUnsupportedSourceZIPs() {
 		const sizeText = await DATA.bytesToHR(result.totalBytes ?? 0)
 		const errorText = result.errors?.length > 0 ? ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be backed up; the first issue: ${result.errors[0].fileName} — ${result.errors[0].reason}` : ''
 		setStatus(`Vault ZIP backup ${result.ok ? 'completed' : 'finished with errors'}: ${result.copied} copied, ${result.alreadyPresent} already verified, ${result.errors?.length ?? 0} skipped or failed. ${result.totalFiles} unsupported-source ZIPs checked (${sizeText}). Backup folder: ${result.backupFolder}.${errorText}`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		setStatus(`Vault ZIP backup failed: ${err.message}`)
 	} finally {
@@ -2442,6 +2517,7 @@ async function moveVaultFolder() {
 			'vaultStatus',
 			`Vault moved to ${result.folder}. Updated ${result.updatedRecords} record path${result.updatedRecords === 1 ? '' : 's'} and ${result.updatedHistoryPaths} history path${result.updatedHistoryPaths === 1 ? '' : 's'}.${copyText}${oldFolderText}`
 		)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault move failed: ${err.message}`)
 	} finally {
@@ -2490,6 +2566,7 @@ async function wipeVaultForTesting() {
 		vaultSelectedHashes.clear()
 		await loadVault()
 		MA.byIdText('vaultStatus', `Vault wiped for testing. Removed ${result.records} Vault record${result.records === 1 ? '' : 's'} and cleared managed Vault files from ${result.filesFolder}.`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault wipe failed: ${err.message}`)
 	} finally {
@@ -2723,7 +2800,7 @@ async function saveVaultTags(button, shouldClear = false) {
 		status.textContent = savedTags.length === 0 ? 'Tags cleared.' : 'Tags saved.'
 		MA.byIdText('vaultStatus', savedTags.length === 0 ? `Cleared custom tags for ${modName}.` : `Saved custom tags for ${modName}.`)
 		refreshFilterOptions()
-		if ( MA.byId('vaultTextFilter').value.trim() !== '' || vaultTagSelections.size > 0 ) {
+		if ( MA.byId('vaultTextFilter').value.trim() !== '' || vaultTagSelections.size !== 0 ) {
 			await renderFilteredVault({ keepVisibleLimit : true })
 		}
 	} catch (err) {
@@ -2859,6 +2936,7 @@ async function copyVaultEntry(button) {
 			rowStatus.classList.add('text-success')
 			rowStatus.textContent = message
 		}
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		const message = `Vault copy failed: ${err.message}`
 		MA.byIdText('vaultStatus', message)
@@ -2898,6 +2976,7 @@ async function setVaultKeepPinned(button) {
 		restoreVaultViewState(viewState)
 		const entryName = result.entry?.fileName ?? vaultEntries[entryIndex]?.fileName ?? 'Vault ZIP'
 		MA.byIdText('vaultStatus', keepPinned ? `${entryName} is now kept and protected from cleanup.` : `${entryName} is no longer manually kept.`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault keep action failed: ${err.message}`)
 	} finally {
@@ -2947,6 +3026,7 @@ async function deleteVaultEntry(button) {
 		vaultSelectedHashes.delete(hash)
 		await loadVaultPreservingView()
 		MA.byIdText('vaultStatus', `Deleted ${deletedEntry.fileName} from the Vault and recovered ${await DATA.bytesToHR(deletedEntry.size ?? 0)}.`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault deletion failed: ${err.message}`)
 	} finally {
@@ -3050,6 +3130,7 @@ async function copySelectedVaultEntries() {
 		const message = `Copied ${copied} selected Vault ZIP${copied === 1 ? '' : 's'}.${replacedText}${skippedText}${errorText}${bulkCopyErrorSummary(errors)}`
 		MA.byIdText('vaultStatus', message)
 		status.textContent = message
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play({ errors }) }
 	} catch (err) {
 		const message = `Vault bulk copy failed: ${err.message}`
 		MA.byIdText('vaultStatus', message)
@@ -3099,6 +3180,7 @@ async function importCollections() {
 		await forceRefreshVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be added.`
 		MA.byIdText('vaultStatus', `Scanned ${result.scanned} collection mod${result.scanned === 1 ? '' : 's'} and updated ${result.imported} vault record${result.imported === 1 ? '' : 's'}.${errorText}`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault scan failed: ${err.message}`)
 	} finally {
@@ -3114,13 +3196,15 @@ async function refreshModHubCategories() {
 	const originalText = button.textContent
 	button.textContent = 'Refreshing ModHub...'
 	MA.byIdText('vaultStatus', 'Reading ModHub category and version data for vaulted mods. This may take a little while...')
-	beginVaultBusy('Refreshing ModHub information...', null)
+	beginVaultBusy('Refreshing ModHub information...', null, { cancellable : true })
 	try {
 		const result = await window.vault_IPC.refreshModHub()
 		await loadVault()
 		const errorText = result.errors.length === 0 ? '' : ` ${result.errors.length} ModHub page${result.errors.length === 1 ? '' : 's'} could not be read.`
 		const emptyText = result.scanned === 0 ? ' No ModHub IDs were found in the vault yet; scan collections into the vault first, then refresh ModHub information.' : ''
-		MA.byIdText('vaultStatus', `Checked ${result.scanned} ModHub-linked vault record${result.scanned === 1 ? '' : 's'} and refreshed ${result.refreshed} ModHub record${result.refreshed === 1 ? '' : 's'}.${errorText}${emptyText}`)
+		const cancelledText = result.cancelled === true ? ` Refresh cancelled after ${result.scanned} of ${result.total} ModHub listings; results already received were saved.` : ''
+		MA.byIdText('vaultStatus', `Checked ${result.scanned} ModHub-linked record${result.scanned === 1 ? '' : 's'} and refreshed ${result.refreshed} ModHub record${result.refreshed === 1 ? '' : 's'}.${cancelledText}${errorText}${emptyText}`)
+		if ( vaultBusyDepth === 1 && result.cancelled !== true ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `ModHub information refresh failed: ${err.message}`)
 	} finally {
@@ -3166,6 +3250,7 @@ async function deleteSelectedUnusedVaultFiles() {
 		const skippedText = result.skipped?.length > 0 ? ` ${result.skipped.length} item${result.skipped.length === 1 ? '' : 's'} were skipped because they are no longer eligible.` : ''
 		const errorText = result.errors?.length > 0 ? ` ${result.errors.length} item${result.errors.length === 1 ? '' : 's'} could not be deleted.` : ''
 		MA.byIdText('vaultStatus', `Deleted ${result.deleted.length} unused Vault ZIP${result.deleted.length === 1 ? '' : 's'} and recovered ${recoveredText}.${skippedText}${errorText}`)
+		if ( vaultBusyDepth === 1 ) { window.taskCompletion.play(result) }
 	} catch (err) {
 		MA.byIdText('vaultStatus', `Vault cleanup failed: ${err.message}`)
 	} finally {
@@ -3200,6 +3285,15 @@ function scrollVaultToTop() {
 	MA.byId('vaultList').scrollTo({ behavior : 'smooth', top : 0 })
 }
 
+function scrollVaultListWithControlWheel(event) {
+	if ( event.ctrlKey !== true && event.shiftKey !== true ) { return }
+	event.preventDefault()
+	const list = MA.byId('vaultList')
+	const deltaScale = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : (event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientHeight : 1)
+	const deltaY = event.shiftKey && !event.ctrlKey && event.deltaY === 0 ? event.deltaX : event.deltaY
+	list.scrollTop += deltaY * deltaScale
+}
+
 window.addEventListener('DOMContentLoaded', () => {
 	window.vault_IPC.receive('vault:closeBlocked', showVaultCloseBlocked)
 	window.vault_IPC.receive('vault:contextResult', handleVaultContextResult)
@@ -3227,6 +3321,7 @@ window.addEventListener('DOMContentLoaded', () => {
 	bindOffcanvasToggle('vaultCleanupPanel', 'vaultCleanupToggle')
 	enableTooltips(document)
 	MA.byId('vaultList').addEventListener('contextmenu', openVaultDetail)
+	MA.byId('vaultList').addEventListener('wheel', scrollVaultListWithControlWheel, { passive : false })
 	MA.byId('vaultList').addEventListener('show.bs.collapse', (event) => {
 		if ( event.target.classList.contains('vault-group-body') ) { ensureVaultGroupRows(event.target) }
 	})
@@ -3340,10 +3435,42 @@ window.addEventListener('DOMContentLoaded', () => {
 		if ( healthButton !== null ) { setHealthFilter(healthButton.dataset.healthFilter) }
 	})
 	MA.byId('vaultClearQuickFilters').addEventListener('click', () => { clearQuickFilters() })
+	MA.byId('vaultAddedFilterOpen').addEventListener('click', () => {
+		const selected = MA.byId(`vaultAddedFilter${vaultAddedFilter || 'Any'}`)
+		if ( selected !== null ) { selected.checked = true }
+		MA.byId('vaultAddedFilterDialog').showModal()
+	})
+	const applyRecentlyAddedFilter = (value) => {
+		vaultAddedFilter = value
+		updateRecentlyAddedFilterButton()
+		MA.byId('vaultAddedFilterDialog').close()
+		renderFilteredVault()
+	}
+	MA.byId('vaultAddedFilterApply').addEventListener('click', () => {
+		const value = MA.byId('vaultAddedFilterDialog').querySelector('input[name="vaultAddedFilterChoice"]:checked')?.value ?? ''
+		applyRecentlyAddedFilter(value)
+	})
+	MA.byId('vaultAddedFilterClear').addEventListener('click', () => {
+		MA.byId('vaultAddedFilterAny').checked = true
+		applyRecentlyAddedFilter('')
+	})
+	for ( const button of MA.byId('vaultAddedFilterDialog').querySelectorAll('[data-added-filter-cancel]') ) {
+		button.addEventListener('click', () => { MA.byId('vaultAddedFilterDialog').close() })
+	}
 	MA.byId('vaultClearAdvancedFilters').addEventListener('click', () => { clearAdvancedFilters() })
 	MA.byId('vaultClearFilters').addEventListener('click', clearAllFilters)
 	MA.byId('vaultImportCollections').addEventListener('click', importCollections)
 	MA.byId('vaultRefreshModHub').addEventListener('click', refreshModHubCategories)
+	MA.byId('vaultTaskLockCancel').addEventListener('click', () => {
+		if ( vaultRefreshCancelRequested ) { return }
+		vaultRefreshCancelRequested = true
+		const button = MA.byId('vaultTaskLockCancel')
+		button.disabled = true
+		button.textContent = 'Cancelling...'
+		MA.byIdText('vaultTaskLockSubtitle', 'Finishing the current ModHub request and saving results already received...')
+		MA.byIdText('vaultTaskLockETA', 'Waiting for the current ModHub request...')
+		window.vault_IPC.cancelRefreshModHub()
+	})
 	MA.byId('vaultOpenFolder').addEventListener('click', openVaultFolder)
 	MA.byId('vaultRecoveryManifest').addEventListener('click', exportVaultRecoveryManifest)
 	MA.byId('vaultZipBackup').addEventListener('click', backupVaultUnsupportedSourceZIPs)
@@ -3365,6 +3492,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		logVaultScrollFrameDelay()
 	}, { passive : true })
 	MA.byId('vaultBackToUpdates').addEventListener('click', () => { window.operations.close() })
+	updateRecentlyAddedFilterButton()
 	updateVaultBackToTopVisibility()
 	loadVault()
 })

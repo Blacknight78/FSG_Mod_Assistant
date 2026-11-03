@@ -22,7 +22,7 @@ class windowState {
 	constructor() {
 		this.loader = new LoaderLib()
 
-		MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.importjson_IPC.cancelDownload() })
+		MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.state.loader.completionCancelled = true; window.importjson_IPC.cancelDownload() })
 		MA.byIdEventIfExists('setFolderButton', () => { window.importjson_IPC.setFolder() })
 		MA.byIdEventIfExists('apply_button', () => { this.applyButton() })
 
@@ -110,6 +110,8 @@ class windowState {
 
 // MARK: LoaderLib
 class LoaderLib {
+	completionReady = false
+	completionCancelled = false
 	overlay = null
 
 	lastTotal = 1
@@ -119,7 +121,11 @@ class LoaderLib {
 		this.overlay = new bootstrap.Modal('#loadOverlay', { backdrop : 'static', keyboard : false })
 	}
 
-	hide() { this.overlay?.hide() }
+	hide() {
+		if ( this.completionReady && !this.completionCancelled ) { window.taskCompletion.play() }
+		this.completionReady = false
+		this.overlay?.hide()
+	}
 	show() { this.overlay?.show() }
 
 	hideCount() {
@@ -132,6 +138,7 @@ class LoaderLib {
 		MA.byId('loadOverlay_speed').clsShow()
 	}
 	async updateCount(count, inMB = false) {
+		this.completionReady = count >= this.lastTotal && count > 0
 		const thisCount   = inMB ? await DATA.bytesToMB(count, false) : count
 		const thisElement = MA.byId('loadOverlay_statusCurrent')
 		const thisProg    = MA.byId('loadOverlay_statusProgBarInner')
@@ -156,6 +163,8 @@ class LoaderLib {
 		}
 	}
 	updateText(mainTitle, subTitle, dlCancel) {
+		this.completionReady = false
+		this.completionCancelled = false
 		MA.byIdHTML('loadOverlay_statusMessage', mainTitle)
 		MA.byIdHTML('loadOverlay_statusDetail', subTitle)
 		MA.byIdText('loadOverlay_statusTotal', '0')

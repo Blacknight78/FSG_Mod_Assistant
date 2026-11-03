@@ -476,6 +476,21 @@ function showUpdaterProgress(title, message, total) {
 	if ( !byID('vaultUpdateTaskDialog').open ) { byID('vaultUpdateTaskDialog').showModal() }
 }
 
+function updaterProgressCurrentLabel(phase, currentName, state) {
+	const operation = phase === 'downloading' ? 'Downloading' : 'Checking'
+	if ( state === 'starting' ) { return `${operation}${currentName === '' ? '' : ` ${currentName}`}...` }
+	if ( state === 'failed' ) { return `Finished ${currentName} with an issue` }
+	if ( state === 'working' ) { return `${phase === 'checking' ? 'Checking updates' : 'Working'}: ${currentName || 'in progress'}` }
+	if ( state === 'finalizing' ) { return 'Saving update check results...' }
+	return currentName !== '' ? `Finished ${currentName}` : `${phase === 'checking' ? 'Checking updates' : 'Working'}...`
+}
+
+function updaterProgressTiming(phase, done, total, elapsed, remaining) {
+	const finishing = phase === 'checking' && done >= total && total > 0
+	const estimate = remaining === null ? (finishing ? 'Finishing up…' : 'Remaining time calculating…') : `About ${formatTaskDuration(remaining)} remaining`
+	return `Elapsed ${formatTaskDuration(elapsed)} · ${estimate}`
+}
+
 function updateUpdaterProgress({ current = 0, total = 0, currentName = '', phase = '', elapsedMS = null, state = '' } = {}) {
 	const safeTotal = Math.max(0, total)
 	const done = Math.max(0, Math.min(current, safeTotal))
@@ -486,17 +501,8 @@ function updateUpdaterProgress({ current = 0, total = 0, currentName = '', phase
 	byID('vaultUpdateTaskBar').style.width = `${visiblePercent}%`
 	byID('vaultUpdateTaskPercent').textContent = `${visiblePercent}%`
 	byID('vaultUpdateTaskCount').textContent = `${done} of ${safeTotal} complete`
-	byID('vaultUpdateTaskTiming').textContent = `Elapsed ${formatTaskDuration(elapsed)} · ${remaining === null ? (phase === 'checking' && done >= safeTotal && safeTotal > 0 ? 'Finishing up…' : 'Remaining time calculating…') : `About ${formatTaskDuration(remaining)} remaining`}`
-	const label = currentName === '' ? '' : ` ${currentName}`
-	byID('vaultUpdateTaskCurrent').textContent = state === 'starting'
-		? `${phase === 'downloading' ? 'Downloading' : 'Checking'}${label}...`
-		: state === 'failed'
-			? `Finished ${currentName} with an issue`
-			: state === 'working'
-				? `${phase === 'checking' ? 'Checking updates' : 'Working'}: ${currentName || 'in progress'}`
-				: state === 'finalizing'
-					? 'Saving update check results...'
-			: currentName !== '' ? `Finished ${currentName}` : `${phase === 'checking' ? 'Checking updates' : 'Working'}...`
+	byID('vaultUpdateTaskTiming').textContent = updaterProgressTiming(phase, done, safeTotal, elapsed, remaining)
+	byID('vaultUpdateTaskCurrent').textContent = updaterProgressCurrentLabel(phase, currentName, state)
 }
 
 function hideUpdaterProgress() {
@@ -716,8 +722,8 @@ async function setUpdateIgnored(item, shouldIgnore) {
 		await loadUpdateIgnoreMods()
 		renderUpdateIgnoreList()
 		await loadCandidates(false, false)
-	} catch (error) {
-		feedback.textContent = `Could not update the ignore list: ${error.message}`
+	} catch (err) {
+		feedback.textContent = `Could not update the ignore list: ${err.message}`
 	}
 }
 
@@ -727,8 +733,8 @@ function openUpdateIgnoreList() {
 	void loadUpdateIgnoreMods().then(() => {
 		renderUpdateIgnoreList()
 		byID('vaultUpdateIgnoreDialog').showModal()
-	}).catch((error) => {
-		byID('vaultUpdateIgnoreFeedback').textContent = `Could not load the ignore list: ${error.message}`
+	}).catch((err) => {
+		byID('vaultUpdateIgnoreFeedback').textContent = `Could not load the ignore list: ${err.message}`
 		byID('vaultUpdateIgnoreDialog').showModal()
 	})
 }
@@ -1912,8 +1918,8 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 				downloadURL   : remote.hasDownload ? remote.downloadURL : null,
 				fileName      : group.fileName,
 				gameVersion   : group.gameVersions.find((value) => Number.isInteger(value)) ?? null,
-				key           : group.key,
 				isUpdateIgnored : hasIgnoreUpdateTag(group.tags),
+				key           : group.key,
 				localVersion  : decision.localVersion,
 				modHubID      : group.modHubID,
 				modHubReleased : remote.released ?? null,
@@ -1960,6 +1966,7 @@ async function loadCandidates(force = false, runRemoteChecks = false) {
 			skipped : skipped + tagSkipped + ignoredSkipped + collectionSkipped,
 			sources,
 		})
+		if ( !wasStopped ) { window.taskCompletion.play({ failed : sources.modhub.failures + sources.github.failures }) }
 	} catch (err) {
 		setStatus(`Vault update check failed: ${err.message}`, 'danger')
 		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault check report', [{ name : 'Scan', status : 'Failed', detail : err.message }])
@@ -2016,6 +2023,7 @@ async function downloadSelected() {
 		}
 		setStatus(`Stored ${result.count} update(s) in the Vault.${manualMessage} Matching collection updates will reuse these cached ZIPs when available. Use Refresh Vault update checks to rescan all sources.`, 'success')
 		refreshAfterDownload = true
+		window.taskCompletion.play(result)
 	} catch (err) {
 		setStatus(`Vault download failed: ${err.message}`, 'danger')
 		window.UpdateRunReport.show('vaultUpdateStatus', 'Vault update report', downloads.map((item) => ({ detail : err.message, name : item.modName, source : item.sourceType, status : 'Unconfirmed' })))

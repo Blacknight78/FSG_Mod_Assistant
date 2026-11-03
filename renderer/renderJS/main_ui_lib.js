@@ -3487,6 +3487,8 @@ class ModalOverlay {
 
 // MARK: LoaderLib
 class LoaderLib {
+	completionReady = false
+	completionCancelled = false
 	overlay = null
 
 	lastTotal = 1
@@ -3496,7 +3498,11 @@ class LoaderLib {
 		this.overlay = MA.byId('loadOverlay')
 	}
 
-	hide() { this.overlay?.clsHide() }
+	hide() {
+		if ( this.completionReady && !this.completionCancelled ) { window.taskCompletion.play() }
+		this.completionReady = false
+		this.overlay?.clsHide()
+	}
 	show() { this.overlay?.clsShow() }
 
 	hideCount() {
@@ -3509,6 +3515,7 @@ class LoaderLib {
 		MA.byId('loadOverlay_speed').clsShow()
 	}
 	async updateCount(count, inMB = false) {
+		this.completionReady = count >= this.lastTotal && count > 0
 		const thisCount   = inMB ? await DATA.bytesToMB(count, false) : count
 		const thisElement = MA.byId('loadOverlay_statusCurrent')
 		const thisProg    = MA.byId('loadOverlay_statusProgBarInner')
@@ -3535,6 +3542,8 @@ class LoaderLib {
 		}
 	}
 	updateText(mainTitle, subTitle, dlCancel) {
+		this.completionReady = false
+		this.completionCancelled = false
 		MA.byIdHTML('loadOverlay_statusMessage', mainTitle)
 		MA.byIdHTML('loadOverlay_statusDetail', subTitle)
 		MA.byIdText('loadOverlay_statusTotal', '0')
@@ -4238,7 +4247,7 @@ class FileLib {
 					(typeof failureText === 'function' ? failureText(result) : failureText ?? 'Some selected mods could not be processed.') :
 					(typeof successText === 'function' ? successText(result) : successText ?? 'Selected mods processed.')
 			)
-			if ( !didFail ) { window.state.select.none() }
+			if ( !didFail ) { window.state.select.none(); window.taskCompletion.play(result) }
 			setTimeout(() => { this.overlay.hide() }, didFail ? 5000 : 1800)
 			this.statusOperationId = null
 			return result

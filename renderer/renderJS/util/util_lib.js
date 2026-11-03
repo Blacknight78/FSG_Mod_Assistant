@@ -791,16 +791,6 @@ function ensureModManagementStyles() {
 			height: 2.5rem;
 			width: 2.5rem;
 		}
-		.ma-management-floating-button {
-			position: fixed;
-			left: 0.75rem;
-			bottom: 0.75rem;
-			z-index: 1040;
-			display: flex;
-			align-items: center;
-			gap: 0.45rem;
-			box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.45);
-		}
 		.ma-management-menu-action {
 			--ma-menu-accent: var(--bs-secondary);
 			background: var(--bs-tertiary-bg);
@@ -930,11 +920,7 @@ function addModManagementButton() {
 		wrapper.className = 'ma-management-rail-tip'
 		wrapper.appendChild(button)
 		actionRail.prepend(wrapper)
-		return
 	}
-	button.className = 'btn btn-warning ma-management-floating-button'
-	button.innerHTML = '<span aria-hidden="true" class="ma-management-start-logo"></span><span>Menu</span>'
-	document.body.appendChild(button)
 }
 
 function createModManagementCanvas() {

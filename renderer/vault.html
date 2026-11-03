@@ -538,6 +538,7 @@
 							<option value="">All collections</option>
 						</select>
 					</div>
+					<button aria-pressed="false" class="btn btn-sm btn-outline-info w-100" id="vaultAddedFilterOpen" type="button">Recently added: Any time</button>
 					<select aria-label="Update status" class="form-select form-select-sm" data-bs-placement="top" data-bs-toggle="tooltip" id="vaultUpdateFilter" title="All update states: show every Vault mod. Update available: show only mods where the Vault has no current/local-newer ModHub copy. No known update: hide mods with a known newer ModHub copy.">
 						<option value="">All update states</option>
 						<option value="available">Update available</option>
@@ -946,7 +947,7 @@
 	</div>
 </dialog>
 
-<div class="vault-task-lock" id="vaultTaskLock" aria-hidden="true" role="alert" aria-live="polite">
+<div class="vault-task-lock" id="vaultTaskLock" role="alert" aria-live="polite">
 	<div class="vault-task-lock-card p-4">
 		<div class="d-flex align-items-center gap-3 mb-3">
 			<div class="spinner-border text-info flex-shrink-0" aria-hidden="true"></div>
@@ -959,8 +960,34 @@
 		<div class="progress" role="progressbar" aria-label="Vault task progress" aria-valuemin="0" aria-valuemax="100">
 			<div class="progress-bar progress-bar-striped progress-bar-animated" id="vaultTaskLockBar" style="width: 100%"></div>
 		</div>
+		<div class="small text-body-secondary mt-2" id="vaultTaskLockETA" aria-live="polite"></div>
+		<div class="d-flex justify-content-end mt-3">
+			<button class="btn btn-outline-danger d-none" id="vaultTaskLockCancel" type="button">Cancel refresh</button>
+		</div>
 	</div>
 </div>
+
+<dialog id="vaultAddedFilterDialog" class="vault-confirm-dialog" aria-labelledby="vaultAddedFilterTitle">
+	<header aria-label="Recently added filter title" class="d-flex justify-content-between align-items-start gap-3 border-bottom p-3">
+		<div>
+			<h2 id="vaultAddedFilterTitle" class="h5 mb-1">Recently added mods</h2>
+			<div class="small text-body-secondary">Show Vault mods first added within the selected period.</div>
+		</div>
+		<button class="btn-close btn-close-white" data-added-filter-cancel type="button" aria-label="Close"></button>
+	</header>
+	<fieldset class="p-3 border-0 mb-0">
+		<legend class="visually-hidden">Choose how recently mods were added</legend>
+		<div class="form-check mb-2"><input class="form-check-input" id="vaultAddedFilterAny" name="vaultAddedFilterChoice" type="radio" value=""><label class="form-check-label" for="vaultAddedFilterAny">Any time</label></div>
+		<div class="form-check mb-2"><input class="form-check-input" id="vaultAddedFilter24h" name="vaultAddedFilterChoice" type="radio" value="24h"><label class="form-check-label" for="vaultAddedFilter24h">Last 24 hours</label></div>
+		<div class="form-check mb-2"><input class="form-check-input" id="vaultAddedFilter7d" name="vaultAddedFilterChoice" type="radio" value="7d"><label class="form-check-label" for="vaultAddedFilter7d">Last 7 days</label></div>
+		<div class="form-check"><input class="form-check-input" id="vaultAddedFilter30d" name="vaultAddedFilterChoice" type="radio" value="30d"><label class="form-check-label" for="vaultAddedFilter30d">Last month (30 days)</label></div>
+	</fieldset>
+	<footer aria-label="Recently added filter actions" class="d-flex justify-content-end gap-2 border-top p-3">
+		<button class="btn btn-outline-secondary me-auto" id="vaultAddedFilterClear" type="button">Clear filter</button>
+		<button class="btn btn-outline-secondary" data-added-filter-cancel type="button">Cancel</button>
+		<button class="btn btn-primary" id="vaultAddedFilterApply" type="button">Apply</button>
+	</footer>
+</dialog>
 
 <dialog id="vaultConfirmDialog" class="vault-confirm-dialog" aria-labelledby="vaultConfirmTitle">
 	<form method="dialog">
