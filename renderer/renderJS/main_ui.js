@@ -12,6 +12,8 @@ const rendererStartupStartedAt = performance.now()
 let pendingModListPayload = null
 let modListProcessTimer = null
 let modListProcessPromise = null
+let currentVaultScanReport = null
+let visibleVaultScanReportRows = 100
 
 function logRendererPerformance(label, startedAt, extraDetail = '') {
 	const detailText = extraDetail === '' ? '' : ` ${extraDetail}`
@@ -110,19 +112,83 @@ window.main_IPC.receive('app:closeBlocked', (payload = {}) => {
 	bootstrap.Modal.getOrCreateInstance(modalNode, { backdrop : 'static' }).show()
 })
 
-window.showAppNotice = (message, title = 'FSG Mod Assistant') => {
+window.showAppNotice = (message, title = 'FSG Mod Assistant', report = null) => {
 	const modalNode = MA.byId('app_notice_modal')
 	const titleNode = MA.byId('appNoticeTitle')
 	const messageNode = MA.byId('appNoticeMessage')
+	const reportButton = MA.byId('appNoticeReportButton')
 	if ( modalNode === null || titleNode === null || messageNode === null ) { return }
 	titleNode.textContent = title
 	messageNode.textContent = message
+	currentVaultScanReport = Array.isArray(report?.rows) && report.rows.length !== 0 ? report : null
+	visibleVaultScanReportRows = 100
+	if ( reportButton !== null ) { reportButton.classList.toggle('d-none', currentVaultScanReport === null) }
 	bootstrap.Modal.getOrCreateInstance(modalNode).show()
 }
 
 window.main_IPC.receive('app:notice', (payload = {}) => {
-	window.showAppNotice(payload.message ?? '', payload.title ?? 'FSG Mod Assistant')
+	window.showAppNotice(payload.message ?? '', payload.title ?? 'FSG Mod Assistant', payload.report ?? null)
 })
+
+function renderVaultScanReport() {
+	const search = MA.byId('vaultScanReportSearch')
+	const outcome = MA.byId('vaultScanReportOutcome')
+	const rowsNode = MA.byId('vaultScanReportRows')
+	const countNode = MA.byId('vaultScanReportCount')
+	const emptyNode = MA.byId('vaultScanReportEmpty')
+	const moreButton = MA.byId('vaultScanReportMore')
+	const summary = MA.byId('vaultScanReportSummary')
+	if ( search === null || outcome === null || rowsNode === null || countNode === null || emptyNode === null || currentVaultScanReport === null ) { return }
+	const query = search.value.trim().toLocaleLowerCase()
+	const filtered = currentVaultScanReport.rows.filter((row) => {
+		const matchesOutcome = outcome.value === '' || row.outcome === outcome.value
+		const searchable = [row.file, row.collection, row.outcome, row.detail].filter((value) => typeof value === 'string').join(' ').toLocaleLowerCase()
+		return matchesOutcome && (query === '' || searchable.includes(query))
+	})
+	rowsNode.replaceChildren()
+	for ( const row of filtered.slice(0, visibleVaultScanReportRows) ) {
+		const item = document.createElement('li')
+		item.className = 'list-group-item'
+		const header = document.createElement('div')
+		header.className = 'd-flex justify-content-between align-items-start gap-3'
+		const file = document.createElement('strong')
+		file.textContent = row.file ?? 'Unknown file'
+		const badge = document.createElement('span')
+		badge.className = `badge ${row.outcome === 'Error' ? 'text-bg-danger' : row.outcome === 'Skipped' ? 'text-bg-secondary' : 'text-bg-success'}`
+		badge.textContent = row.outcome ?? 'Unknown'
+		header.append(file, badge)
+		const collection = document.createElement('div')
+		collection.className = 'small text-body-secondary mt-1'
+		collection.textContent = row.collection ?? currentVaultScanReport.collection ?? ''
+		const detail = document.createElement('div')
+		detail.className = 'mt-1'
+		detail.textContent = row.detail ?? ''
+		item.append(header, collection, detail)
+		rowsNode.appendChild(item)
+	}
+	countNode.textContent = `Showing ${Math.min(filtered.length, visibleVaultScanReportRows)} of ${filtered.length} matching entries (${currentVaultScanReport.rows.length} total).`
+	if ( summary !== null ) { summary.textContent = `${currentVaultScanReport.collection ?? 'Collection'} · ${currentVaultScanReport.rows.length} scan entries` }
+	emptyNode.classList.toggle('d-none', filtered.length !== 0)
+	if ( moreButton !== null ) { moreButton.classList.toggle('d-none', filtered.length <= visibleVaultScanReportRows) }
+}
+
+MA.byId('appNoticeReportButton')?.addEventListener('click', () => {
+	const notice = MA.byId('app_notice_modal')
+	const reportModal = MA.byId('vaultScanReportModal')
+	if ( notice === null || reportModal === null || currentVaultScanReport === null ) { return }
+	const search = MA.byId('vaultScanReportSearch')
+	const outcome = MA.byId('vaultScanReportOutcome')
+	if ( search !== null ) { search.value = '' }
+	if ( outcome !== null ) { outcome.value = '' }
+	visibleVaultScanReportRows = 100
+	renderVaultScanReport()
+	bootstrap.Modal.getOrCreateInstance(notice).hide()
+	window.setTimeout(() => bootstrap.Modal.getOrCreateInstance(reportModal).show(), 350)
+})
+
+MA.byId('vaultScanReportSearch')?.addEventListener('input', () => { visibleVaultScanReportRows = 100; renderVaultScanReport() })
+MA.byId('vaultScanReportOutcome')?.addEventListener('change', () => { visibleVaultScanReportRows = 100; renderVaultScanReport() })
+MA.byId('vaultScanReportMore')?.addEventListener('click', () => { visibleVaultScanReportRows += 100; renderVaultScanReport() })
 
 window.main_IPC.receive('app:confirmRequest', (payload = {}) => {
 	const modalNode = MA.byId('app_confirm_modal')
@@ -208,6 +274,12 @@ function topUIHandlers() {
 	MA.byIdEventIfExists('folderAddButton',    () => { window.main_IPC.folder.add() })
 	MA.byIdEventIfExists('folderEditButton',   () => { window.main_IPC.folder.edit() })
 	MA.byIdEventIfExists('folderReloadButton', () => { window.main_IPC.folder.reload() })
+	MA.byIdEventIfExists('keybindReviewButton', () => {
+		const selected = window.state.track.openCollection ?? MA.byIdValue('collectionSelect')?.replace('collection--', '') ?? ''
+		if ( selected !== '' && selected !== '0' && selected !== '999' ) { window.main_IPC.dispatchKeybindReview(selected) }
+		else { window.showAppNotice('Open a collection first, then choose Keybind review.', 'Keybind review') }
+	})
+	MA.byIdEventIfExists('modHubDownloaderButton', () => { window.main_IPC.dispatch('modhub_downloader') })
 	MA.byIdEventIfExists('batchDisableSelected', () => { window.state.action.disableSelectedMods() })
 	MA.byIdEventIfExists('batchEnableSelected',  () => { window.state.action.enableSelectedMods() })
 	MA.byIdEventIfExists('disabledOnlyToggle',   () => { window.state.toggleDisabledOnly() })
@@ -221,7 +293,7 @@ function topUIHandlers() {
 }
 
 function popUIHandlers() {
-	MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.main_IPC.cancelDownload() })
+	MA.byIdEventIfExists('loadOverlay_downloadCancelButton', () => { window.state.loader.completionCancelled = true; window.main_IPC.cancelDownload() })
 	MA.byIdEventIfExists('mismatchLaunchIgnore', () => { window.state.action.launchGame_IGNORE() })
 	MA.byIdEventIfExists('mismatchLaunchFix',    () => { window.state.action.launchGame_FIX() })
 	MA.byIdEventIfExists('collectionReadinessContinue', () => { window.state.action.launchGame_CONTINUE() })

@@ -635,6 +635,14 @@
 						<span class="main-start-logo" aria-hidden="true"></span>
 						<span class="small">Menu</span>
 					</button>
+					<button type="button" id="keybindReviewButton" class="btn btn-outline-info main-rail-button" title="Review the key bindings declared by mods in the selected collection.">
+						<i class="bi bi-keyboard fs-4" aria-hidden="true"></i>
+						<span class="small">Keybind review</span>
+					</button>
+					<button type="button" id="modHubDownloaderButton" class="btn btn-outline-success main-rail-button" title="Review ModHub links and download mods that are not already in the Vault, one at a time.">
+						<i class="bi bi-cloud-download fs-4" aria-hidden="true"></i>
+						<span class="small">ModHub downloader</span>
+					</button>
 				</div>
 				<div class="main-rail-section main-rail-section-collections border-top pt-3">
 					<div class="d-flex align-items-center justify-content-between">
@@ -1226,8 +1234,35 @@
 				</div>
 				<div class="modal-body fs-5" id="appNoticeMessage" style="white-space: pre-wrap;"></div>
 				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-primary btn-lg me-auto d-none" id="appNoticeReportButton">View report</button>
 					<button type="button" class="btn btn-primary btn-lg" data-bs-dismiss="modal">OK</button>
 				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- MARK: vault scan report modal -->
+	<div class="modal" id="vaultScanReportModal" tabindex="-1" aria-labelledby="vaultScanReportTitle">
+		<div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<div class="h4 modal-title" id="vaultScanReportTitle">Vault scan report</div>
+						<div class="text-body-secondary" id="vaultScanReportSummary"></div>
+					</div>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<div class="row g-2 mb-3">
+						<div class="col-md-8"><label class="visually-hidden" for="vaultScanReportSearch">Search report</label><input class="form-control form-control-lg" id="vaultScanReportSearch" type="search" placeholder="Search file, collection, or details"></div>
+						<div class="col-md-4"><label class="visually-hidden" for="vaultScanReportOutcome">Filter by outcome</label><select class="form-select form-select-lg" id="vaultScanReportOutcome"><option value="">All outcomes</option><option value="Scanned into Vault">Scanned into Vault</option><option value="Skipped">Skipped</option><option value="Error">Errors</option></select></div>
+					</div>
+					<div class="small text-body-secondary mb-2" id="vaultScanReportCount" aria-live="polite"></div>
+					<ul class="list-group list-unstyled" id="vaultScanReportRows"></ul>
+					<button type="button" class="btn btn-outline-primary btn-lg w-100 mt-3 d-none" id="vaultScanReportMore">Show 100 more results</button>
+					<div class="alert alert-secondary d-none mt-3" id="vaultScanReportEmpty">No scan entries match these filters.</div>
+				</div>
+				<div class="modal-footer"><button type="button" class="btn btn-primary btn-lg" data-bs-dismiss="modal">Close report</button></div>
 			</div>
 		</div>
 	</div>

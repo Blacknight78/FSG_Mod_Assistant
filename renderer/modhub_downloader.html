@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<title>ModHub Downloader</title>
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
+	<script src="renderJS/modhub_downloader_ui.js"></script>
+	<style>
+		body { background: var(--bs-body-bg); }
+		.downloader-shell { display:flex; flex-direction:column; gap:1rem; height:100vh; padding:1rem; }
+		.downloader-header { -webkit-app-region:drag; border-bottom:1px solid var(--bs-border-color); padding-bottom:.75rem; }
+		.downloader-panel { min-height:0; overflow:auto; border:1px solid var(--bs-border-color); border-radius:.5rem; }
+		.downloader-row { display:grid; grid-template-columns:auto minmax(0,1fr) minmax(9rem,auto); gap:1rem; align-items:center; padding:.85rem 1rem; border-bottom:1px solid var(--bs-border-color); }
+		.downloader-row:last-child { border-bottom:0; }
+		.downloader-row.is-skipped { opacity:.72; }
+		.downloader-name { font-weight:600; overflow-wrap:anywhere; }
+		.downloader-source { font-size:.9rem; color:var(--bs-secondary-color); overflow-wrap:anywhere; }
+		.downloader-size-result { overflow-wrap:anywhere; }
+		.downloader-status { text-align:right; }
+		.downloader-more { position:sticky; bottom:0; border-top:1px solid var(--bs-border-color); background:var(--bs-body-bg); }
+		.modhub-tag-toggle { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin-top:2px; padding:0; color:#f8f9fa; background:#34434e; border:1px solid #8aa4b8; border-radius:4px; cursor:pointer; }
+		.modhub-tag-toggle:hover, .modhub-tag-toggle:focus-visible { color:#fff; background:#126b95; outline:2px solid #7bd5ff; outline-offset:1px; }
+		.modhub-tag-toggle:disabled { cursor:default; opacity:.65; }
+		@media (max-width:700px) { .downloader-row { grid-template-columns:auto minmax(0,1fr); } .downloader-status { grid-column:2; text-align:left; } }
+	</style>
+</head>
+<body data-bs-theme="dark" class="overflow-hidden">
+	<main class="downloader-shell">
+		<header class="downloader-header d-flex align-items-center justify-content-between">
+			<div class="app-window-brand"><span class="app-window-logo" aria-hidden="true"></span><h1 class="app-window-name">ModHub Downloader</h1></div>
+			<span class="text-body-secondary" id="modHubActiveDownloads">Adjust parallel downloads during a run</span>
+		</header>
+		<div class="alert alert-info mb-0">
+			Scan ModHub refreshes the catalogue feed (FS22/FS25), checks listings against your Vault, and fetches category tags that are not cached yet. The refreshed information is saved for future scans.
+		</div>
+		<section class="border rounded p-3">
+			<div class="row g-3 align-items-end">
+				<div class="col-auto">
+					<label for="modHubGame" class="form-label">Game</label>
+					<select id="modHubGame" class="form-select">
+						<option value="25">Farming Simulator 25</option><option value="22">Farming Simulator 22</option>
+						<option value="19">Farming Simulator 19</option><option value="17">Farming Simulator 17</option>
+						<option value="15">Farming Simulator 15</option><option value="13">Farming Simulator 13</option>
+					</select>
+				</div>
+				<div class="col-auto"><label for="modHubConcurrency" class="form-label">Parallel downloads</label><select id="modHubConcurrency" class="form-select"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option></select></div>
+				<div class="col"><label for="modHubSearch" class="form-label">Find in results</label><input id="modHubSearch" class="form-control" type="search" placeholder="Search mod names"></div>
+				<div class="col-auto"><div class="d-flex flex-column gap-1">
+					<div class="form-check form-switch mb-0">
+						<input id="modHubHideExisting" class="form-check-input" type="checkbox" role="switch" checked>
+						<label class="form-check-label small" for="modHubHideExisting">Hide mods already in Vault</label>
+					</div>
+					<div class="form-check form-switch mb-0">
+						<input id="modHubHideUnavailable" class="form-check-input" type="checkbox" role="switch" checked>
+						<label class="form-check-label small" for="modHubHideUnavailable">Hide unavailable mods</label>
+					</div>
+				</div></div>
+			</div>
+			<div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+				<button type="button" class="btn btn-primary" id="modHubScan" title="Refresh the FS22/FS25 catalogue feed, compare listings with your Vault, and retrieve uncached category tags. This can take longer on the first scan; fetched information is saved for later."><i class="bi bi-search"></i> Scan ModHub</button>
+				<button type="button" class="btn btn-outline-info" id="modHubCalculateSize" disabled>Calculate selected size</button>
+				<button type="button" class="btn btn-success" id="modHubDownload" disabled><i class="bi bi-cloud-download"></i> Download selected (0)</button>
+				<button type="button" class="btn btn-outline-secondary" id="modHubSelectAll" disabled>Select all missing</button>
+				<button type="button" class="btn btn-outline-secondary" id="modHubClear">Clear results</button>
+				<button type="button" class="btn btn-outline-info" id="modHubToggleReports">View saved reports</button>
+				<button type="button" class="btn btn-outline-danger ms-auto" id="modHubCancel" hidden>Stop batch</button>
+			</div>
+		</section>
+		<div id="modHubSelectedSize" class="small text-body-secondary" role="status">Select mods to calculate their ZIP storage size.</div>
+		<div class="alert alert-secondary mb-0" id="modHubStatus" role="status" aria-live="polite">Add ModHub links, then choose Check links.</div>
+		<div id="modHubProgressWrap" class="flex-shrink-0" hidden>
+			<div class="d-flex flex-wrap justify-content-between gap-3 small mb-2"><span id="modHubProgressCount">Preparing…</span><span id="modHubDownloadSpeed">Download speed: —</span><span id="modHubProgressETA">Estimating time remaining…</span></div>
+			<div class="progress" style="height:22px"><div class="progress-bar progress-bar-striped progress-bar-animated" id="modHubProgress" role="progressbar" aria-label="ModHub task progress" aria-valuemin="0" aria-valuemax="100" style="width:0%"></div></div>
+		</div>
+		<div class="d-flex gap-3 flex-grow-1" style="min-height:0">
+		<aside class="downloader-panel p-3 flex-shrink-0" style="width:240px" aria-label="Tag filters">
+			<div class="fw-semibold mb-2">Find mods by tag</div>
+			<label class="visually-hidden" for="modHubTagSearch">Search tags</label>
+			<input id="modHubTagSearch" type="search" class="form-control form-control-sm mb-2" placeholder="Search tags">
+			<div class="small text-body-secondary mb-2">Categories include child tags.</div>
+			<div id="modHubTagTree"></div>
+			<label class="d-block small mt-3"><input id="modHubTagAll" type="checkbox"> Require every selected tag (off = any tag)</label>
+			<button id="modHubTagClear" class="btn btn-sm btn-info w-100 mt-2" type="button">Clear filters</button>
+			<div id="modHubTagSelected" class="small mt-2"></div>
+		</aside>
+		<section class="downloader-panel flex-grow-1" id="modHubResults" aria-label="ModHub download queue">
+			<div class="p-3 text-body-secondary">No catalogue scanned yet.</div>
+		</section>
+		<section class="downloader-panel flex-grow-1 p-3" id="modHubReports" aria-label="Saved ModHub download reports" hidden></section>
+		</div>
+	</main>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
+	<link rel="stylesheet" href="inc/bootstrap.min.css">
+	<link rel="stylesheet" href="inc/src/bootstrap-icons.css">
+	<link rel="stylesheet" href="inc/fsico.css">
+	<link rel="stylesheet" href="inc/src/overrides.css">
+	<script src="inc/bootstrap.bundle.min.js"></script>
+	<script src="renderJS/util/util_lib.js"></script>
+	<script src="renderJS/util/key_lookup_table.js"></script>
+	<script src="renderJS/keybind_review_ui.js"></script>
+	<style>
+		body { background: var(--bs-body-bg); }
+		.keybind-shell { display:flex; flex-direction:column; gap:1rem; height:100vh; padding:1rem; }
+		.keybind-header { -webkit-app-region:drag; border-bottom:1px solid var(--bs-border-color); padding-bottom:.75rem; }
+		.keybind-panel { min-height:0; overflow:auto; border:1px solid var(--bs-border-color); border-radius:.5rem; padding:1rem; }
+		.keybind-row { border-bottom:1px solid var(--bs-border-color); padding:.7rem .25rem; }
+		.keybind-overlap { border:1px solid var(--bs-border-color); border-left:5px solid var(--bs-warning); border-radius:.4rem; padding:.85rem; margin-bottom:.75rem; }
+		.keybind-clear-group { border:1px solid var(--bs-border-color); border-radius:.4rem; padding:0 .75rem; margin-top:.75rem; }
+		.keybind-clear-group summary { cursor:pointer; }
+		.keybind-mod-accordion { overflow:hidden; padding:0; background:#191f25; transition:border-color .15s ease, box-shadow .15s ease; }
+		.keybind-mod-accordion > summary { display:flex; align-items:center; justify-content:flex-start !important; min-height:3.25rem; padding:.7rem 1rem !important; border-left:.35rem solid #687987; background:#20272e; font-size:1.05rem; text-align:left; }
+		.keybind-mod-accordion > summary > strong { flex:1; text-align:left; }
+		.keybind-mod-accordion > summary > span:last-child { margin-left:auto; }
+		.keybind-mod-accordion > summary::-webkit-details-marker { display:none; }
+		.keybind-mod-accordion > summary::before { content:'▶'; flex:0 0 auto; margin-right:.75rem; color:#6ca9dc; font-size:.8rem; transition:transform .15s ease; }
+		.keybind-mod-accordion[open] { border-color:#4b9bd3; box-shadow:0 0 0 2px rgb(63 145 205 / 18%), 0 .45rem 1.2rem rgb(0 0 0 / 24%); }
+		.keybind-mod-accordion[open] > summary { border-left-color:#f0a000; border-bottom:1px solid #3b6f98; background:#18344b; }
+		.keybind-mod-accordion[open] > summary::before { transform:rotate(90deg); color:#ffc24a; }
+		.keybind-mod-accordion:not([open]) > summary:hover { background:#29333d; }
+		.keybind-mod-accordion > .keybind-row { margin:0 1rem; }
+		.keybind-mod-accordion > .keymap-panel { margin:1rem; }
+		.keymap-panel { background:var(--bs-tertiary-bg); border:1px solid var(--bs-border-color); border-radius:.5rem; padding:1rem; margin-bottom:1rem; }
+		.keymap-scroll { overflow-x:auto; padding:.25rem 0 .75rem; }
+		.keymap-layout { min-width:960px; }
+		.keymap-row { display:flex; gap:.55rem; align-items:stretch; margin-bottom:.4rem; }
+		.keymap-cluster { display:flex; min-width:0; gap:.22rem; }
+		.keymap-key { position:relative; display:flex; flex:var(--key-grow, 1) 1 0; align-items:flex-start; justify-content:flex-start; min-width:0; height:2.65rem; padding:.25rem .35rem; overflow:hidden; color:var(--bs-secondary-color); background:var(--bs-body-bg); border:1px solid var(--bs-border-color); border-radius:.3rem; font:inherit; font-size:.75rem; }
+		.keymap-key.is-used { color:var(--bs-body-color); background:#315d88; border-color:#69a9e8; box-shadow:inset 0 -3px 0 #193a5b; }
+		.keymap-key.is-used:hover, .keymap-key.is-used.selected { background:#4783ba; outline:2px solid #91c7ff; outline-offset:1px; }
+		.keymap-key:disabled { opacity:.65; }
+		.keymap-key-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+		.keymap-key-count { position:absolute; right:.15rem; bottom:.05rem; min-width:.95rem; padding:0 .18rem; color:#fff; background:#a85f00; border-radius:1rem; font-size:.65rem; line-height:1.1rem; text-align:center; }
+		.keymap-gap { flex:0 0 .35rem; }
+		.keymap-selection { min-height:3rem; padding:.75rem; background:var(--bs-body-bg); border:1px solid var(--bs-border-color); border-radius:.35rem; }
+		.keymap-action + .keymap-action { border-top:1px solid var(--bs-border-color); margin-top:.65rem; padding-top:.65rem; }
+		.keymap-other-control.selected { outline:2px solid #91c7ff; outline-offset:1px; }
+	</style>
+</head>
+<body data-bs-theme="dark" class="overflow-hidden">
+	<div class="keybind-shell">
+		<header class="keybind-header d-flex align-items-center justify-content-between">
+			<div class="app-window-brand"><span class="app-window-logo" aria-hidden="true"></span><h1 class="app-window-name">Keybind review</h1></div>
+			<div class="text-body-secondary" id="keybindCollectionName">Choose a collection from the main screen.</div>
+		</header>
+		<div class="alert alert-info mb-0">This report reads the selected collection’s mod bindings and the game profile’s saved bindings. You can change keyboard bindings for mod actions here; conflicts are shown before saving, and the current profile is backed up automatically. Close Farming Simulator before saving. Controller bindings and game controls can be reviewed but are not editable here.</div>
+		<div class="d-flex flex-wrap align-items-center gap-3">
+			<button type="button" class="btn btn-outline-secondary" data-ma-dispatch-window="mod_management"><i class="bi bi-arrow-left"></i> Back</button>
+			<button type="button" class="btn btn-primary" id="keybindRescan"><i class="bi bi-arrow-repeat"></i> Rescan collection</button>
+			<input type="search" class="form-control flex-grow-1" style="max-width:32rem" id="keybindSearch" placeholder="Filter by mod, action, description or key" aria-label="Filter keybinds and shared assignments">
+			<span class="text-body-secondary" id="keybindSummary">Waiting for collection…</span>
+		</div>
+		<div class="alert alert-success d-none mb-0" id="keybindEditNotice" aria-live="polite"></div>
+		<div class="keybind-panel flex-grow-1" id="keybindResults" aria-live="polite"><div class="text-body-secondary">Open a collection and select Keybind review.</div></div>
+	</div>
+	<div class="modal fade" id="keybindEditModal" tabindex="-1" aria-labelledby="keybindEditModalLabel">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h2 class="modal-title fs-5" id="keybindEditModalLabel">Change mod key binding</h2>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
+				</div>
+				<div class="modal-body">
+					<p id="keybindEditTitle" class="fw-semibold"></p>
+					<div class="alert alert-info">Press the key you want to assign. Hold Ctrl, Alt or Shift to include one modifier. Close Farming Simulator before saving.</div>
+					<div id="keybindEditCaptured" class="fs-4 mb-3">Waiting for key…</div>
+					<p id="keybindEditStatus" class="text-body-secondary" aria-live="polite">Choose a keyboard key.</p>
+					<div id="keybindEditConflicts" class="alert d-none" role="status"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" id="keybindEditSave" disabled>Save key</button>
+				</div>
+			</div>
+		</div>
+	</div>
+</body>
+</html>
