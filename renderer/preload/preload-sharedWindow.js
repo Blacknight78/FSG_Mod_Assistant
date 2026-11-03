@@ -9,6 +9,12 @@
 
 const {contextBridge, ipcRenderer, webUtils } = require('electron')
 
+contextBridge.exposeInMainWorld('taskCompletion', {
+	play : (result) => {
+		ipcRenderer.send('task:completedSound', result)
+	},
+})
+
 const pageName = window.location.pathname.split('/').pop().replace('.html', '').replace(/\d\d/, '')
 
 const pageAPI = {
@@ -122,12 +128,33 @@ const pageAPI = {
 		},
 		validAsync : new Set([]),
 	},
+	'keybind_review' : {
+		functions : {
+			getReport : (collectKey) => ipcRenderer.invoke('keybind:collectionReport', collectKey),
+			setIntentional : (payload) => ipcRenderer.invoke('keybind:setIntentional', payload),
+			previewEdit : (payload) => ipcRenderer.invoke('keybind:previewEdit', payload),
+			saveEdit : (payload) => ipcRenderer.invoke('keybind:saveEdit', payload),
+		},
+		validAsync : new Set(['keybind:collection']),
+	},
+	'modhub_downloader' : {
+		functions : {
+			cancel : () => ipcRenderer.invoke('modhub-downloader:cancel'),
+			size : (ids) => ipcRenderer.invoke('modhub-downloader:size', ids),
+			concurrency : (limit) => ipcRenderer.invoke('modhub-downloader:concurrency', limit),
+			download : (payload) => ipcRenderer.invoke('modhub-downloader:download', payload),
+			reports : () => ipcRenderer.invoke('modhub-downloader:reports'),
+			scan : (gameVersion) => ipcRenderer.invoke('modhub-downloader:scan', gameVersion),
+			review : (text) => ipcRenderer.invoke('modhub-downloader:review', text),
+		},
+		validAsync : new Set(['modhub-downloader:progress', 'modhub-downloader:closeBlocked']),
+	},
 	'main' : {
 		functions : {
 			dispatch        : (win) => {
 				const knownWindows = new Set([
 					'about', 'basegame', 'changelog', 'compare', 'debug',
-					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input',
+					'backups', 'find', 'game', 'gamelog', 'help', 'history', 'input', 'keybind_review', 'modhub_downloader',
 					'manifest', 'notes', 'recent_changes',
 					'resolve', 'savemanage', 'savetrack',
 					'update', 'update_candidates', 'version', 'wizard',
@@ -137,6 +164,7 @@ const pageAPI = {
 					ipcRenderer.send(`dispatch:${win}`)
 				}
 			},
+			dispatchKeybindReview : (collectKey) => { ipcRenderer.send('dispatch:keybind_review', collectKey) },
 			dispatchDetail : (id)                => { ipcRenderer.send('dispatch:detail', id) },
 			dispatchLog    : (file)              => { ipcRenderer.send('dispatch:gamelog', file) },
 			dispatchNotes  : (CKey)              => { ipcRenderer.send('dispatch:notes', CKey) },
@@ -383,7 +411,7 @@ const pageAPI = {
 	'vault' : {
 		functions : {
 			all        : (payload = {}) => ipcRenderer.invoke('vault:all', payload),
-		backupWithoutAutomaticSource : () => ipcRenderer.invoke('vault:backupWithoutAutomaticSource'),
+			backupWithoutAutomaticSource : () => ipcRenderer.invoke('vault:backupWithoutAutomaticSource'),
 			cleanupUnused : (payload) => ipcRenderer.invoke('vault:cleanupUnused', payload),
 			collections : () => ipcRenderer.invoke('vault:collections'),
 			context    : (payload) => ipcRenderer.send('context:vault', payload),
@@ -404,6 +432,7 @@ const pageAPI = {
 			openDetail : (payload) => ipcRenderer.invoke('vault:openDetail', payload),
 			openFolder : () => ipcRenderer.invoke('vault:openFolder'),
 			refreshModHub : () => ipcRenderer.invoke('vault:refreshModHub'),
+			cancelRefreshModHub : () => ipcRenderer.send('vault:cancelRefreshModHub'),
 			saveNote   : (payload) => ipcRenderer.invoke('vault:saveNote', payload),
 			saveTags   : (payload) => ipcRenderer.invoke('vault:saveTags', payload),
 			setBusy    : (busy) => ipcRenderer.send('vault:setBusy', busy === true),

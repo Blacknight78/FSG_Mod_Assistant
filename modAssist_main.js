@@ -11,6 +11,10 @@ const appStartupStartedAt = performance.now()
 
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, Tray, clipboard, net, session } = require('electron')
 
+ipcMain.on('task:completedSound', (_, result) => {
+	if ( require('./lib/taskCompletion').taskSucceeded(result) ) { shell.beep() }
+})
+
 const isPortable = Object.hasOwn(process.env, 'PORTABLE_EXECUTABLE_DIR')
 const gotTheLock = app.requestSingleInstanceLock()
 
@@ -22,6 +26,8 @@ const { EventEmitter } = require('node:events')
 const { AsyncLocalStorage } = require('node:async_hooks')
 const { Transform } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
+const StreamZip = require('node-stream-zip')
+const { XMLParser } = require('fast-xml-parser')
 const remoteCheckDiagnostics = new AsyncLocalStorage()
 const modUpdateDiagnostics = new AsyncLocalStorage()
 const vaultMutationContext = new AsyncLocalStorage()
@@ -31,6 +37,7 @@ let closeAppAnyway = false
 let appConfirmRequestID = 0
 const appConfirmRequests = new Map()
 const vaultWindowBusy = new Set()
+const vaultModHubRefreshCancellations = new Set()
 let rendererBusyUntil = 0
 
 function markMainRendererActivity(reason = 'unknown') {
@@ -388,7 +395,7 @@ async function deleteAllCollectionMods(collectionKey) {
 funcLib.wizard.initMain()
 
 // const { modFileCollection, modPackChecker, saveFileChecker, savegameTrack, csvFileChecker } = require('./lib/modCheckLib.js')
-const { modFileCollection, csvFileChecker, savegameTrack } = require('./lib/modCheckLib.js')
+const { modFileCollection, csvFileChecker, savegameTrack, inputBinds } = require('./lib/modCheckLib.js')
 const { parseModFirstPass, parseModLastPass, parseSaveGame } = require('fs_mod_parser_neon')
 
 const settingDefault = new (require('./lib/modAssist_window_lib.js')).defaultSettings()
@@ -401,6 +408,7 @@ serveIPC.storeCache       = new (require('./lib/modUtilLib.js')).modCacheManager
 serveIPC.storeSites       = new Store({name : 'mod_source_site', migrations : settingDefault.migrateSite, clearInvalidConfig : true})
 serveIPC.storeNote        = new Store({name : 'col_notes', clearInvalidConfig : true})
 serveIPC.storeHistory     = new Store({name : 'collection_history', clearInvalidConfig : true})
+serveIPC.storeModHubDownloads = new Store({name : 'modhub_download_reports', clearInvalidConfig : true})
 serveIPC.storeLibrary     = new Store({name : 'mod_library', clearInvalidConfig : true})
 serveIPC.storeDrive       = new Store({name : 'google_drive', clearInvalidConfig : true})
 
@@ -1134,6 +1142,7 @@ ipcMain.on('context:collection', async (event, collection) => {
 					serveIPC.windowLib.sendToValidWindow('main', 'app:notice', {
 						title   : 'Vault scan complete',
 						message : `Scanned ${collectionName} into the Vault.\n\nScanned: ${result.scanned}\nUpdated Vault records: ${result.imported}\nSkipped: ${result.skipped}${skippedText}${errorText}`,
+						report  : { collection : collectionName, rows : result.report },
 					})
 				} catch (err) {
 					sendMainLoading('hide')
@@ -1212,6 +1221,10 @@ ipcMain.on('dispatch:vault', () => {
 	attachBackgroundCloseGuard('vault', 'vault:closeBlocked')
 })
 ipcMain.on('dispatch:vault_update', () => { serveIPC.windowLib.createNamedWindow('vault_update') })
+ipcMain.on('dispatch:modhub_downloader', () => {
+	serveIPC.windowLib.createNamedWindow('modhub_downloader')
+	setTimeout(() => { attachBackgroundCloseGuard('modhub_downloader', 'modhub-downloader:closeBlocked') }, 250)
+})
 ipcMain.on('dispatch:backups', () => { serveIPC.windowLib.createNamedWindow('backups') })
 ipcMain.on('dispatch:recent_changes', () => { serveIPC.windowLib.createNamedWindow('history', { mode : 'recent' }) })
 ipcMain.on('dispatch:manifest', () => { serveIPC.windowLib.createNamedWindow('manifest') })
@@ -4710,6 +4723,7 @@ async function importCollectionsToVaultImpl(progressCallback = null, collectionK
 	let imported = 0
 	let skipped = 0
 	const errors = []
+	const report = []
 
 	let stepStartedAt = performance.now()
 	const originalRecords = getStoredModLibraryRecords()
@@ -4782,6 +4796,8 @@ async function importCollectionsToVaultImpl(progressCallback = null, collectionK
 					incrementPerformanceStat(stats, `skip_${skipReason}`)
 					addPerformanceSample(stats, `skip_${skipReason}_samples`, modPath ?? modRecord?.fileDetail?.shortName ?? 'unknown')
 					skipped++
+					const skipLabels = { folder : 'Folder, not a ZIP file', missingFile : 'File not found on disk', missingPath : 'No file path recorded', nonZip : 'Not a ZIP file' }
+					report.push({ collection : collectionNames.get(collectKey) ?? collectKey, detail : skipLabels[skipReason], file : modRecord?.fileDetail?.shortName ?? modPath ?? 'Unknown file', outcome : 'Skipped' })
 					continue
 				}
 				addPerformanceStat(stats, 'eligibilityMS', performance.now() - stepStartedAt)
@@ -4798,6 +4814,7 @@ async function importCollectionsToVaultImpl(progressCallback = null, collectionK
 				)
 				if ( incrementalHandled ) {
 					imported++
+					report.push({ collection : collectionName, detail : 'ZIP checked and processed by the Vault scan.', file : modRecord?.fileDetail?.shortName ?? modPath, outcome : 'Scanned into Vault' })
 					continue
 				}
 
@@ -4823,11 +4840,14 @@ async function importCollectionsToVaultImpl(progressCallback = null, collectionK
 					sourceHashCache,
 				})
 				imported++
+				report.push({ collection : collectionName, detail : 'ZIP checked and processed by the Vault scan.', file : modRecord?.fileDetail?.shortName ?? modPath, outcome : 'Scanned into Vault' })
 			} catch (err) {
-				errors.push({
-					file  : modRecord?.fileDetail?.shortName ?? modRecord?.fileDetail?.fullPath ?? 'unknown',
+				const error = {
 					error : err.message,
-				})
+					file  : modRecord?.fileDetail?.shortName ?? modRecord?.fileDetail?.fullPath ?? 'unknown',
+				}
+				errors.push(error)
+				report.push({ collection : collectionNames.get(collectKey) ?? collectKey, detail : error.error, file : error.file, outcome : 'Error' })
 			} finally {
 				sendProgress()
 			}
@@ -4923,6 +4943,7 @@ async function importCollectionsToVaultImpl(progressCallback = null, collectionK
 		errors,
 		imported,
 		ok : errors.length === 0,
+		report,
 		scanned,
 		skipped,
 		skipReasons,
@@ -4960,12 +4981,12 @@ async function importSingleModToVaultImpl(modID) {
 	}
 }
 
-async function refreshVaultModHubMetadata(progressCallback = null) {
-	return withVaultMutation(() => refreshVaultModHubMetadataImpl(progressCallback))
+async function refreshVaultModHubMetadata(progressCallback = null, shouldCancel = () => false) {
+	return withVaultMutation(() => refreshVaultModHubMetadataImpl(progressCallback, shouldCancel))
 }
 
 // eslint-disable-next-line complexity
-async function refreshVaultModHubMetadataImpl(progressCallback = null) {
+async function refreshVaultModHubMetadataImpl(progressCallback = null, shouldCancel = () => false) {
 	const records = getStoredModLibraryRecords()
 	for ( const [hash, record] of Object.entries(records) ) {
 		const modHubState = modHubStateForLibraryRecord(record)
@@ -4991,6 +5012,7 @@ async function refreshVaultModHubMetadataImpl(progressCallback = null) {
 	sendProgress()
 
 	for ( const modHubID of modHubIDs ) {
+		if ( shouldCancel() ) { break }
 		// Read ModHub pages sequentially to avoid hammering the service.
 		// eslint-disable-next-line no-await-in-loop
 		const metadata = await fetchModHubMetadata(modHubID, { force : true })
@@ -5004,6 +5026,10 @@ async function refreshVaultModHubMetadataImpl(progressCallback = null) {
 			})
 		}
 		sendProgress()
+	}
+	const cancelled = shouldCancel() && checked < modHubIDs.length
+	if ( cancelled && checked < modHubIDs.length && typeof progressCallback === 'function' ) {
+		progressCallback({ current : checked, label : 'Cancellation requested; saving results already received', total : modHubIDs.length, value : (checked / Math.max(modHubIDs.length, 1)) * 100 })
 	}
 
 	for ( const [hash, record] of Object.entries(records) ) {
@@ -5041,11 +5067,13 @@ async function refreshVaultModHubMetadataImpl(progressCallback = null) {
 	invalidateModLibrarySummary()
 
 	return {
+		cancelled,
 		errors,
 		ok : errors.length === 0,
 		refreshed,
-		scanned : modHubIDs.length,
+		scanned : checked,
 		summary : getModLibrarySummary(),
+		total : modHubIDs.length,
 	}
 }
 
@@ -5904,10 +5932,10 @@ function hasAutomaticVaultUpdateSource(record = {}) {
 
 function safeVaultBackupFileName(value) {
 	const originalName = String(value ?? 'mod.zip').split(/[\\/]/u).at(-1) ?? 'mod.zip'
-	let safeName = originalName
-		.replace(/[<>:"/\\|?*\x00-\x1f]/gu, '_')
-		.replace(/[. ]+$/u, '')
-		.trim()
+	let safeName = [...originalName].map((character) => {
+		const codePoint = character.codePointAt(0)
+		return /[<>:"/\\|?*]/u.test(character) || (codePoint !== undefined && codePoint < 32) ? '_' : character
+	}).join('').replace(/[. ]+$/u, '').trim()
 	if ( safeName === '' || safeName === '.' || safeName === '..' ) { safeName = 'mod.zip' }
 	if ( /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(safeName) ) { safeName = `_${safeName}` }
 	const zipBaseName = safeName.toLocaleLowerCase().endsWith('.zip') ? safeName.slice(0, -4) : safeName
@@ -5916,6 +5944,10 @@ function safeVaultBackupFileName(value) {
 
 function sendVaultZipBackupProgress(event, progress) {
 	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'vaultZipBackup', ...progress }) }
+}
+
+function sendVaultUpdateTaskProgress(event, progress) {
+	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:updateTaskProgress', progress) }
 }
 
 function vaultZipBackupRecord(hash, record, relativePath, size, backupMtimeMs) {
@@ -5938,7 +5970,7 @@ async function copyVaultBackupArchive(sourcePath, targetPath, expectedHash, onBy
 	const hash = crypto.createHash('sha256')
 	let copiedBytes = 0
 	const hashAndMeasure = new Transform({
-		transform(chunk, encoding, callback) {
+		transform(chunk, _encoding, callback) {
 			hash.update(chunk)
 			copiedBytes += chunk.length
 			onBytes?.(copiedBytes)
@@ -5957,125 +5989,119 @@ async function copyVaultBackupArchive(sourcePath, targetPath, expectedHash, onBy
 	return { copiedBytes, hash : actualHash }
 }
 
+async function inspectVaultZipBackupCandidate(storedHash, record) {
+	if ( hasAutomaticVaultUpdateSource(record) ) { return { candidate : null, skipped : null } }
+	const hash = storedHash.toLocaleLowerCase()
+	if ( !/^[a-f\d]{64}$/u.test(hash) ) { return { candidate : null, skipped : { fileName : record.fileName ?? storedHash, reason : 'Invalid Vault hash.' } } }
+	const sourcePath = record.filePath
+	if ( typeof sourcePath !== 'string' || !fs.existsSync(sourcePath) ) { return { candidate : null, skipped : { fileName : record.fileName ?? storedHash, reason : 'Vault ZIP is missing.' } } }
+	const sourceStat = await fsPromise.stat(sourcePath)
+	if ( !sourceStat.isFile() ) { return { candidate : null, skipped : { fileName : record.fileName ?? storedHash, reason : 'Vault path is not a file.' } } }
+	return { candidate : { hash, record, size : sourceStat.size, sourcePath }, skipped : null }
+}
+
+function createVaultZipBackupProgress(event, candidates, totalBytes) {
+	let completedBytes = 0
+	let lastProgressAt = 0
+	return {
+		addCompletedBytes : (size) => { completedBytes += size },
+		emit(index, item = null, currentBytes = 0, force = false) {
+			const now = Date.now()
+			if ( !force && now - lastProgressAt < 250 ) { return }
+			lastProgressAt = now
+			const totalFiles = candidates.length
+			const percent = totalBytes > 0 ? ((completedBytes + currentBytes) / totalBytes) * 100 : (totalFiles === 0 ? 100 : (index / totalFiles) * 100)
+			const fileLabel = item === null ? '' : `: ${safeVaultBackupFileName(item.record.fileName)}`
+			sendVaultZipBackupProgress(event, {
+				current : index,
+				label   : `Backing up unsupported-source ZIPs ${Math.min(index + 1, totalFiles)} of ${totalFiles}${fileLabel}`,
+				total   : totalFiles,
+				value   : Math.max(0, Math.min(100, percent)),
+			})
+		},
+	}
+}
+
+async function isVaultZipBackupTargetVerified(targetPath, prior, hash, size) {
+	if ( !fs.existsSync(targetPath) ) { return { verified : false, stat : null } }
+	const stat = await fsPromise.stat(targetPath)
+	const manifestMatches = stat.isFile() && prior?.hash === hash && prior.size === size && prior.backupMtimeMs === stat.mtimeMs
+	const verified = manifestMatches || (stat.isFile() && stat.size === size && await sha256File(targetPath) === hash)
+	return { verified, stat }
+}
+
+async function backupVaultZipCandidate(item, index, context) {
+	const { backupFolder, filesRoot, existingFiles, backupFiles, progress } = context
+	const { hash, record, size, sourcePath } = item
+	const relativePath = path.join('files', hash, safeVaultBackupFileName(record.fileName))
+	const targetPath = path.resolve(backupFolder, relativePath)
+	if ( sameFileSystemPath(targetPath, filesRoot) || !isPathInsideFolder(targetPath, filesRoot) ) {
+		progress.emit(index + 1, item, 0, true)
+		return { error : { fileName : record.fileName ?? hash, reason : 'Unsafe backup path in manifest.' }, status : 'failed' }
+	}
+	try {
+		await fsPromise.mkdir(path.dirname(targetPath), { recursive : true })
+		let target = await isVaultZipBackupTargetVerified(targetPath, existingFiles.get(hash), hash, size)
+		if ( target.verified ) {
+			progress.addCompletedBytes(size)
+			backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, target.stat.mtimeMs))
+			progress.emit(index + 1, item, 0, true)
+			return { status : 'existing' }
+		}
+		const temporaryPath = `${targetPath}.partial`
+		await fsPromise.rm(temporaryPath, { force : true })
+		const copyResult = await copyVaultBackupArchive(sourcePath, temporaryPath, hash, (currentBytes) => progress.emit(index, item, currentBytes))
+		if ( copyResult.copiedBytes !== size ) { throw new Error(`The copied size changed during backup (${copyResult.copiedBytes} of ${size} bytes).`) }
+		await fsPromise.rm(targetPath, { force : true })
+		await fsPromise.rename(temporaryPath, targetPath)
+		target = { stat : await fsPromise.stat(targetPath) }
+		backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, target.stat.mtimeMs))
+		progress.addCompletedBytes(size)
+		progress.emit(index + 1, item, 0, true)
+		return { status : 'copied' }
+	} catch (err) {
+		await fsPromise.rm(`${targetPath}.partial`, { force : true }).catch(() => {})
+		serveIPC.log.warning('mod-vault', `Vault ZIP backup failed for ${JSON.stringify(record.fileName ?? hash)}`, err.message)
+		progress.emit(index + 1, item, 0, true)
+		return { error : { fileName : record.fileName ?? hash, reason : err.message }, status : 'failed' }
+	}
+}
+
+async function readVaultZipBackupManifest(manifestPath) {
+	if ( !fs.existsSync(manifestPath) ) { return null }
+	const manifest = JSON.parse(await fsPromise.readFile(manifestPath))
+	if ( manifest?.schema !== VAULT_ZIP_BACKUP_SCHEMA || manifest?.version !== VAULT_ZIP_BACKUP_VERSION || !Array.isArray(manifest.files) ) {
+		throw new Error('The selected folder contains a different or damaged Vault backup manifest. Choose another folder or repair that backup first.')
+	}
+	return manifest
+}
+
 async function backupVaultModsWithoutAutomaticSourceImpl(event, backupFolder) {
 	const startedAt = performance.now()
-	const vaultFolder = modLibraryFolder()
-	if ( isPathInsideFolder(backupFolder, vaultFolder) ) {
-		throw new Error('Choose a backup folder outside the active Vault folder.')
-	}
-
+	if ( isPathInsideFolder(backupFolder, modLibraryFolder()) ) { throw new Error('Choose a backup folder outside the active Vault folder.') }
 	const manifestPath = path.join(backupFolder, 'vault-zip-backup.json')
-	let previousManifest = null
-	if ( fs.existsSync(manifestPath) ) {
-		previousManifest = JSON.parse(await fsPromise.readFile(manifestPath, 'utf8'))
-		if ( previousManifest?.schema !== VAULT_ZIP_BACKUP_SCHEMA || previousManifest?.version !== VAULT_ZIP_BACKUP_VERSION || !Array.isArray(previousManifest.files) ) {
-			throw new Error('The selected folder contains a different or damaged Vault backup manifest. Choose another folder or repair that backup first.')
-		}
-	}
-
+	const previousManifest = await readVaultZipBackupManifest(manifestPath)
 	const existingFiles = new Map((previousManifest?.files ?? []).filter((item) => typeof item?.hash === 'string').map((item) => [item.hash, item]))
-	const records = getStoredModLibraryRecords()
-	const skippedMissing = []
-	const candidates = []
-	for ( const [storedHash, record] of Object.entries(records) ) {
-		if ( hasAutomaticVaultUpdateSource(record) ) { continue }
-		const hash = storedHash.toLocaleLowerCase()
-		if ( !/^[a-f\d]{64}$/u.test(hash) ) {
-			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Invalid Vault hash.' })
-			continue
-		}
-		const sourcePath = record.filePath
-		if ( typeof sourcePath !== 'string' || !fs.existsSync(sourcePath) ) {
-			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Vault ZIP is missing.' })
-			continue
-		}
-		const sourceStat = await fsPromise.stat(sourcePath)
-		if ( !sourceStat.isFile() ) {
-			skippedMissing.push({ fileName : record.fileName ?? storedHash, reason : 'Vault path is not a file.' })
-			continue
-		}
-		candidates.push({ hash, record, size : sourceStat.size, sourcePath })
-	}
-
+	const inspected = await Promise.all(Object.entries(getStoredModLibraryRecords()).map(([hash, record]) => inspectVaultZipBackupCandidate(hash, record)))
+	const skippedMissing = inspected.map((result) => result.skipped).filter(Boolean)
+	const candidates = inspected.map((result) => result.candidate).filter(Boolean)
 	const totalBytes = candidates.reduce((sum, item) => sum + item.size, 0)
 	const totalFiles = candidates.length
 	const filesRoot = path.join(backupFolder, 'files')
 	await fsPromise.mkdir(filesRoot, { recursive : true })
-	let copied = 0
-	let alreadyPresent = 0
-	let completedBytes = 0
+	const progress = createVaultZipBackupProgress(event, candidates, totalBytes)
+	progress.emit(0, candidates[0] ?? null, 0, true)
 	const errors = [...skippedMissing]
 	const backupFiles = new Map(existingFiles)
-	let lastProgressAt = 0
-	const emitProgress = (index, item = null, currentBytes = 0, force = false) => {
-		const now = Date.now()
-		if ( !force && now - lastProgressAt < 250 ) { return }
-		lastProgressAt = now
-		const percent = totalBytes > 0 ? ((completedBytes + currentBytes) / totalBytes) * 100 : (totalFiles === 0 ? 100 : (index / totalFiles) * 100)
-		const fileLabel = item === null ? '' : `: ${safeVaultBackupFileName(item.record.fileName)}`
-		sendVaultZipBackupProgress(event, {
-			current : index,
-			label   : `Backing up unsupported-source ZIPs ${Math.min(index + 1, totalFiles)} of ${totalFiles}${fileLabel}`,
-			total   : totalFiles,
-			value   : Math.max(0, Math.min(100, percent)),
-		})
-	}
-	emitProgress(0, candidates[0] ?? null, 0, true)
-
-	for ( const [index, item] of candidates.entries() ) {
-		const { hash, record, size, sourcePath } = item
-		const prior = existingFiles.get(hash)
-		const relativePath = path.join('files', hash, safeVaultBackupFileName(record.fileName))
-		const targetPath = path.resolve(backupFolder, relativePath)
-		if ( sameFileSystemPath(targetPath, filesRoot) || !isPathInsideFolder(targetPath, filesRoot) ) {
-			errors.push({ fileName : record.fileName ?? hash, reason : 'Unsafe backup path in manifest.' })
-			continue
-		}
-
-		try {
-			await fsPromise.mkdir(path.dirname(targetPath), { recursive : true })
-			let targetExists = fs.existsSync(targetPath)
-			let targetStat = targetExists ? await fsPromise.stat(targetPath) : null
-			let targetVerified = targetExists === true && targetStat?.isFile() === true &&
-				prior?.hash === hash &&
-				prior.size === size &&
-				prior.backupMtimeMs === targetStat?.mtimeMs
-
-			if ( targetExists && !targetVerified && targetStat?.size === size ) {
-				targetVerified = await sha256File(targetPath) === hash
-			}
-
-			if ( targetVerified ) {
-				alreadyPresent++
-				completedBytes += size
-				targetStat = targetStat ?? await fsPromise.stat(targetPath)
-				backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, targetStat.mtimeMs))
-				emitProgress(index + 1, item, 0, true)
-				continue
-			}
-
-			const temporaryPath = `${targetPath}.partial`
-			await fsPromise.rm(temporaryPath, { force : true })
-			const copyResult = await copyVaultBackupArchive(sourcePath, temporaryPath, hash, (currentBytes) => {
-				emitProgress(index, item, currentBytes)
-			})
-			if ( copyResult.copiedBytes !== size ) {
-				throw new Error(`The copied size changed during backup (${copyResult.copiedBytes} of ${size} bytes).`)
-			}
-			await fsPromise.rm(targetPath, { force : true })
-			await fsPromise.rename(temporaryPath, targetPath)
-			targetStat = await fsPromise.stat(targetPath)
-			backupFiles.set(hash, vaultZipBackupRecord(hash, record, relativePath, size, targetStat.mtimeMs))
-			copied++
-			completedBytes += size
-			emitProgress(index + 1, item, 0, true)
-		} catch (err) {
-			await fsPromise.rm(`${targetPath}.partial`, { force : true }).catch(() => {})
-			errors.push({ fileName : record.fileName ?? hash, reason : err.message })
-			serveIPC.log.warning('mod-vault', `Vault ZIP backup failed for ${JSON.stringify(record.fileName ?? hash)}`, err.message)
-			emitProgress(index + 1, item, 0, true)
-		}
-	}
+	let copied = 0
+	let alreadyPresent = 0
+	await candidates.reduce(async (previous, item, index) => {
+		await previous
+		const result = await backupVaultZipCandidate(item, index, { backupFiles, backupFolder, existingFiles, filesRoot, progress })
+		if ( result.status === 'copied' ) { copied++ }
+		if ( result.status === 'existing' ) { alreadyPresent++ }
+		if ( result.error ) { errors.push(result.error) }
+	}, Promise.resolve())
 
 	const manifest = {
 		createdAt : previousManifest?.createdAt ?? new Date().toISOString(),
@@ -6088,7 +6114,7 @@ async function backupVaultModsWithoutAutomaticSourceImpl(event, backupFolder) {
 	const manifestTempPath = `${manifestPath}.partial`
 	await fsPromise.writeFile(manifestTempPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 	await fsPromise.rename(manifestTempPath, manifestPath)
-	emitProgress(totalFiles, null, 0, true)
+	progress.emit(totalFiles, null, 0, true)
 	serveIPC.log.info('performance', `Vault unsupported-source ZIP backup took ${(performance.now() - startedAt).toFixed(1)} ms candidates=${totalFiles} copied=${copied} existing=${alreadyPresent} errors=${errors.length} bytes=${totalBytes}`)
 	return {
 		alreadyPresent,
@@ -8039,11 +8065,448 @@ function saveCompare_open(zipMode = false) {
 
 // MARK: input bindings
 ipcMain.on('dispatch:input',    ()        => { serveIPC.windowLib.createNamedWindow('input') })
+ipcMain.on('dispatch:keybind_review', (_, collectKey) => { serveIPC.windowLib.createNamedWindow('keybind_review', { collectKey }) })
 ipcMain.handle('input:list',    ()        => funcLib.inputManage.list())
 ipcMain.handle('input:load',    (_, s)    => funcLib.inputManage.load(s))
 ipcMain.handle('input:delete',  (_, s)    => funcLib.inputManage.delete(s))
 ipcMain.handle('input:copy',    (_, s, d) => funcLib.inputManage.copy(s, d))
 ipcMain.handle('input:restore', (_, s, v) => funcLib.inputManage.restore(s, v))
+
+function keybindEditContext(collectKey) {
+	const collection = serveIPC.modCollect.getModCollection(collectKey)
+	if ( !collection ) { throw new Error('Collection not found.') }
+	const gameVersion = Number(serveIPC.modCollect.getSafeNote(collectKey, 'version')) || Number(serveIPC.storeSet.get('game_version'))
+	const settingsPath = funcLib.prefs.verGet('game_settings', gameVersion)
+	const inputPath = settingsPath ? path.join(path.dirname(settingsPath), 'inputBinding.xml') : ''
+	if ( !inputPath || !fs.existsSync(inputPath) ) { throw new Error(`No saved inputBinding.xml was found for FS${gameVersion}. Run the game and save key bindings first.`) }
+	return { collection, gameVersion, inputPath }
+}
+
+function xmlAttribute(tag, name) {
+	const match = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, 'iu').exec(tag)
+	return match?.[2] ?? null
+}
+
+function setXMLAttribute(tag, name, value) {
+	const escapedValue = String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
+	const attrRegex = new RegExp(`(\\b${name}\\s*=\\s*)(["'])(.*?)\\2`, 'iu')
+	if ( attrRegex.test(tag) ) { return tag.replace(attrRegex, `$1"${escapedValue}"`) }
+	return tag.replace(/\s*\/?>$/u, (close) => ` ${name}="${escapedValue}"${close.trimStart()}`)
+}
+
+function findActionBindingBlock(xml, action) {
+	for ( const match of xml.matchAll(/<actionbinding\b[^>]*>[\s\S]*?<\/actionbinding\s*>/giu) ) {
+		const openingTag = /^<actionbinding\b[^>]*>/iu.exec(match[0])?.[0] ?? ''
+		if ( xmlAttribute(openingTag, 'ACTION') === action ) { return { block : match[0], start : match.index } }
+	}
+	return null
+}
+
+function replaceBindingTag(tag, input, modifier) {
+	const originalIndex = xmlAttribute(tag, 'index') ?? '1'
+	const originalAxis = xmlAttribute(tag, 'axisComponent') ?? '+'
+	let updated = setXMLAttribute(tag, 'device', 'KB_MOUSE_DEFAULT')
+	updated = setXMLAttribute(updated, 'input', input)
+	updated = setXMLAttribute(updated, 'modifier', modifier)
+	updated = setXMLAttribute(updated, 'axisComponent', originalAxis)
+	return setXMLAttribute(updated, 'index', originalIndex)
+}
+
+function replaceExistingActionBinding(xml, actionInfo, bindingIndex, input, modifier) {
+	const { block, start } = actionInfo
+	const innerStart = /^<actionbinding\b[^>]*>/iu.exec(block)?.[0].length ?? 0
+	const closingStart = block.toLocaleLowerCase().lastIndexOf('</actionbinding')
+	const inner = block.slice(innerStart, closingStart)
+	const bindings = [...inner.matchAll(/<binding\b[^>]*\/?\s*>/giu)]
+	if ( bindingIndex !== null && bindingIndex >= bindings.length ) { throw new Error('This binding changed since the report was loaded. Rescan the collection and try again.') }
+	if ( bindingIndex !== null ) {
+		const target = bindings[bindingIndex]
+		const updatedBlock = block.slice(0, innerStart + target.index) + replaceBindingTag(target[0], input, modifier) + block.slice(innerStart + target.index + target[0].length)
+		return xml.slice(0, start) + updatedBlock + xml.slice(start + block.length)
+	}
+	const newline = xml.includes('\r\n') ? '\r\n' : '\n'
+	const indentation = /(?:\r?\n)([\t ]*)<binding\b/iu.exec(inner)?.[1] ?? '\t\t'
+	const childIndent = /(?:\r?\n)([\t ]*)<actionbinding\b/iu.exec(xml)?.[1] ?? '\t'
+	const addedBinding = `${newline}${indentation}<binding device="KB_MOUSE_DEFAULT" input="${input}" axisComponent="+" index="1" modifier="${modifier}"/>${newline}${childIndent}`
+	const updatedBlock = block.slice(0, closingStart) + addedBinding + block.slice(closingStart)
+	return xml.slice(0, start) + updatedBlock + xml.slice(start + block.length)
+}
+
+function appendNewActionBinding(xml, action, input, modifier) {
+	const newline = xml.includes('\r\n') ? '\r\n' : '\n'
+	const actionIndent = /(?:\r?\n)([\t ]*)<actionbinding\b/iu.exec(xml)?.[1] ?? '\t'
+	const bindingIndent = `${actionIndent}\t`
+	const newBlock = `${newline}${actionIndent}<actionbinding action="${action}">${newline}${bindingIndent}<binding device="KB_MOUSE_DEFAULT" input="${input}" axisComponent="+" index="1" modifier="${modifier}"/>${newline}${actionIndent}</actionbinding>`
+	const rootClose = /<\/inputbinding\s*>/iu
+	if ( !rootClose.test(xml) ) { throw new Error('The inputBinding.xml structure was not recognized; no changes were written.') }
+	return xml.replace(rootClose, (closingTag) => `${newBlock}${newline}${closingTag}`)
+}
+
+function replaceActionBindingXML(xml, action, bindingIndex, input, modifier) {
+	const actionInfo = findActionBindingBlock(xml, action)
+	return actionInfo === null
+		? appendNewActionBinding(xml, action, input, modifier)
+		: replaceExistingActionBinding(xml, actionInfo, bindingIndex, input, modifier)
+}
+
+async function findKeybindConflicts(inputPath, action, input, modifier, gameVersion) {
+	const profile = await new inputBinds(inputPath).getInfo()
+	if ( !profile ) { throw new Error('The saved inputBinding.xml could not be read.') }
+	const matchingActions = [...new Set((profile.actionbinding ?? [])
+		.filter((entry) => {
+			const otherAction = String(entry?.$?.ACTION ?? '')
+			return otherAction !== '' && otherAction !== action && (entry.binding ?? []).some((binding) =>
+				binding?.$?.DEVICE === 'KB_MOUSE_DEFAULT' && binding?.$?.INPUT === input && (binding?.$?.MODIFIER ?? '') === modifier)
+		})
+		.map((entry) => String(entry.$.ACTION)))]
+	return Promise.all(matchingActions.map(async (otherAction) => {
+		const localized = await serveIPC.l10n.getText(`$l10n_input_${otherAction}`, gameVersion, true)
+		const text = localized?.entry
+		const description = typeof text === 'string' && text !== `input_${otherAction.toLocaleLowerCase()}` && !/^~~.*~~$/u.test(text) ? text : null
+		return { action : otherAction, description }
+	}))
+}
+
+function assertCollectionHasActiveKeybind(collectKey, action) {
+	const mods = serveIPC.modCollect.getModListFromCollection(collectKey)
+	if ( !mods.some((mod) => !mod.fileDetail?.isDisabled && Object.hasOwn(mod.modDesc?.binds ?? {}, action)) ) {
+		throw new Error('That action is not declared by an active mod in this collection.')
+	}
+}
+
+function validateKeybindEditInput(input, modifier) {
+	if ( !/^KEY_[A-Za-z0-9_]+$/u.test(input) || (modifier !== '' && !['KEY_lctrl', 'KEY_lshift', 'KEY_lalt'].includes(modifier)) ) {
+		throw new Error('The captured keyboard key or modifier is not supported.')
+	}
+}
+
+function validateKeybindSavePayload(payload) {
+	const action = String(payload?.action ?? '')
+	const input = String(payload?.input ?? '')
+	const modifier = String(payload?.modifier ?? '')
+	const bindingIndex = payload?.bindingIndex === null ? null : Number(payload?.bindingIndex)
+	validateKeybindEditInput(input, modifier)
+	if ( bindingIndex !== null && (!Number.isInteger(bindingIndex) || bindingIndex < 0) ) {
+		throw new Error('The key binding details are invalid.')
+	}
+	return { action, bindingIndex, input, modifier }
+}
+
+function keybindConflictConfirmationKey(conflicts) {
+	return crypto.createHash('sha256').update(JSON.stringify(conflicts.map((item) => item.action).sort())).digest('hex')
+}
+
+async function saveKeybindEdit(payload) {
+	if ( serveIPC.isGameRunning ) { throw new Error('Close Farming Simulator before changing its key bindings.') }
+	const { gameVersion, inputPath } = keybindEditContext(payload?.collectKey)
+	const { action, bindingIndex, input, modifier } = validateKeybindSavePayload(payload)
+	assertCollectionHasActiveKeybind(payload.collectKey, action)
+	await assertSavedKeybindIsEditable(inputPath, action, bindingIndex)
+	const conflicts = await findKeybindConflicts(inputPath, action, input, modifier, gameVersion)
+	const confirmationKey = keybindConflictConfirmationKey(conflicts)
+	if ( conflicts.length !== 0 && payload?.confirmationKey !== confirmationKey ) { return { requiresConfirmation : true, conflicts, confirmationKey } }
+	const original = await fsPromise.readFile(inputPath, 'utf8')
+	const updated = replaceActionBindingXML(original, action, bindingIndex, input, modifier)
+	const parsed = await new inputBinds(inputPath).getInfo()
+	if ( !parsed ) { throw new Error('The active inputBinding.xml could not be parsed; no changes were written.') }
+	const backupFolder = path.join(app.getPath('userData'), 'inputSets')
+	await fsPromise.mkdir(backupFolder, { recursive : true })
+	const backupName = `Auto Keybind Backup FS${gameVersion} ${new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')}.xml`
+	const backupPath = path.join(backupFolder, backupName)
+	await fsPromise.copyFile(inputPath, backupPath)
+	const temporaryPath = `${inputPath}.${process.pid}.keybind.tmp`
+	try {
+		await fsPromise.writeFile(temporaryPath, updated, 'utf8')
+		await fsPromise.rename(temporaryPath, inputPath)
+	} catch (err) {
+		await fsPromise.rm(temporaryPath, { force : true })
+		throw err
+	}
+	const verify = await new inputBinds(inputPath).getInfo()
+	const savedAction = verify?.actionbinding?.find((entry) => entry?.$?.ACTION === action)
+	const savedBinding = savedAction?.binding?.find((binding) => binding?.$?.DEVICE === 'KB_MOUSE_DEFAULT' && binding?.$?.INPUT === input && (binding?.$?.MODIFIER ?? '') === modifier)
+	if ( !savedBinding ) {
+		await fsPromise.copyFile(backupPath, inputPath)
+		throw new Error('The key change did not verify after saving. The original profile was restored from its automatic backup.')
+	}
+	return { saved : true, backupName, gameVersion }
+}
+
+async function assertSavedKeybindIsEditable(inputPath, action, bindingIndex) {
+	if ( bindingIndex === null || bindingIndex === undefined ) { return }
+	const profile = await new inputBinds(inputPath).getInfo()
+	const currentAction = profile?.actionbinding?.find((entry) => entry?.$?.ACTION === action)
+	const currentBinding = currentAction?.binding?.[Number(bindingIndex)]
+	if ( !currentBinding ) { throw new Error('This binding changed since the report was loaded. Rescan the collection and try again.') }
+	if ( currentBinding.$?.DEVICE !== 'KB_MOUSE_DEFAULT' ) { throw new Error('Only keyboard and mouse bindings can be changed in this first editing step.') }
+}
+
+ipcMain.handle('keybind:previewEdit', async (_, payload) => {
+	const { gameVersion, inputPath } = keybindEditContext(payload?.collectKey)
+	const action = String(payload?.action ?? '')
+	assertCollectionHasActiveKeybind(payload.collectKey, action)
+	const input = String(payload?.input ?? '')
+	const modifier = String(payload?.modifier ?? '')
+	await assertSavedKeybindIsEditable(inputPath, action, payload?.bindingIndex)
+	validateKeybindEditInput(input, modifier)
+	const conflicts = await findKeybindConflicts(inputPath, action, input, modifier, gameVersion)
+	const confirmationKey = crypto.createHash('sha256').update(JSON.stringify(conflicts.map((item) => item.action).sort())).digest('hex')
+	return { conflicts, confirmationKey }
+})
+
+ipcMain.handle('keybind:saveEdit', (_, payload) => saveKeybindEdit(payload))
+
+const keybindDescriptionCache = new Map()
+const keybindL10nParser = new XMLParser({
+	attributeNamePrefix : '@_',
+	ignoreAttributes : false,
+	removeNSPrefix : true,
+	textNodeName : '#text',
+	trimValues : true,
+})
+
+function collectModActionDescriptions(xml, actionIDs, locale) {
+	const descriptions = new Map()
+	let parsed
+	try { parsed = keybindL10nParser.parse(xml) }
+	catch { return descriptions }
+	const localeOrder = [...new Set([String(locale ?? '').split(/[-_]/u)[0].toLocaleLowerCase(), 'en'].filter(Boolean))]
+	const actionsByName = new Map(actionIDs.flatMap((action) => [[`input_${action}`.toLocaleLowerCase(), action], [action.toLocaleLowerCase(), action]]))
+	const visit = (node) => {
+		if ( Array.isArray(node) ) { for ( const item of node ) { visit(item) }; return }
+		if ( node === null || typeof node !== 'object' ) { return }
+		const rawName = String(node['@_name'] ?? node['@_id'] ?? '')
+		const normalizedName = rawName.replace(/^\$?l10n_/iu, '').toLocaleLowerCase()
+		const actionName = actionsByName.get(normalizedName)
+		if ( actionName ) {
+			const candidate = [...localeOrder.map((language) => node[language]), node['@_text'], node['#text']]
+				.find((value) => typeof value === 'string' && value.trim() !== '')
+			if ( candidate && !descriptions.has(actionName) ) { descriptions.set(actionName, candidate.trim()) }
+		}
+		for ( const child of Object.values(node) ) { if ( child !== node ) { visit(child) } }
+	}
+	visit(parsed)
+	return descriptions
+}
+
+function mergeKeybindDescriptions(target, contents, actionIDs, locale) {
+	if ( typeof contents !== 'string' || contents.length > 2 * 1024 * 1024 ) { return }
+	for ( const [action, description] of collectModActionDescriptions(contents, actionIDs, locale) ) {
+		if ( !target.has(action) ) { target.set(action, description) }
+	}
+}
+
+function modLocalizationPrefix(xml) {
+	return /<l10n\b[^>]*\bfilenamePrefix\s*=\s*(["'])(.*?)\1/iu.exec(xml)?.[2]
+}
+
+function keybindLocaleSuffixes(locale) {
+	const language = String(locale ?? '').split(/[-_]/u)[0].toLocaleLowerCase()
+	return [...new Set([language, 'en'].filter(Boolean))]
+}
+
+async function readModDirectoryKeybindDescriptions(filePath, locale, actionIDs, descriptions) {
+	const modDescXML = await fsPromise.readFile(path.join(filePath, 'modDesc.xml'), 'utf8')
+	const prefix = modLocalizationPrefix(modDescXML)
+	if ( prefix && !prefix.split(/[\\/]+/u).includes('..') ) {
+		const base = prefix.replaceAll('\\', '/')
+		const localizedFiles = await Promise.all(keybindLocaleSuffixes(locale).map(async (suffix) => {
+			try { return await fsPromise.readFile(path.join(filePath, `${base}_${suffix}.xml`), 'utf8') }
+			catch { return null }
+		}))
+		for ( const contents of localizedFiles ) { mergeKeybindDescriptions(descriptions, contents, actionIDs, locale) }
+	}
+	mergeKeybindDescriptions(descriptions, modDescXML, actionIDs, locale)
+}
+
+function findModLocalizationEntry(entries, candidate) {
+	return entries[candidate] ?? Object.values(entries).find((item) => item.name.toLocaleLowerCase() === candidate.toLocaleLowerCase())
+}
+
+async function readModZipKeybindDescriptions(filePath, locale, actionIDs, descriptions) {
+	const zip = new StreamZip.async({ file : filePath })
+	try {
+		const entries = await zip.entries()
+		const modDescEntry = Object.values(entries).find((entry) => entry.name.toLocaleLowerCase() === 'moddesc.xml')
+		if ( !modDescEntry || modDescEntry.size > 2 * 1024 * 1024 ) { return }
+		const modDescXML = (await zip.entryData(modDescEntry.name)).toString('utf8')
+		const prefix = modLocalizationPrefix(modDescXML)
+		if ( prefix && !prefix.split(/[\\/]+/u).includes('..') ) {
+			const base = prefix.replaceAll('\\', '/').replace(/^\.\//u, '')
+			const localizedEntries = keybindLocaleSuffixes(locale)
+				.map((suffix) => findModLocalizationEntry(entries, `${base}_${suffix}.xml`))
+				.filter((entry) => entry && entry.size <= 2 * 1024 * 1024)
+			const localizedFiles = await Promise.all(localizedEntries.map(async (entry) => (await zip.entryData(entry.name)).toString('utf8')))
+			for ( const contents of localizedFiles ) { mergeKeybindDescriptions(descriptions, contents, actionIDs, locale) }
+		}
+		mergeKeybindDescriptions(descriptions, modDescXML, actionIDs, locale)
+	} finally { await zip.close() }
+}
+
+function cacheModKeybindDescriptions(cacheKey, descriptions) {
+	keybindDescriptionCache.set(cacheKey, descriptions)
+	if ( keybindDescriptionCache.size > 500 ) { keybindDescriptionCache.delete(keybindDescriptionCache.keys().next().value) }
+	return descriptions
+}
+
+function profileBindingSignature(binding) {
+	return JSON.stringify([
+		binding.DEVICE === 'KB_MOUSE_DEFAULT' ? 'keyboard' : (binding.DEVICE ? 'controller' : ''),
+		binding.INPUT ?? '', binding.MODIFIER ?? '', binding.AXISCOMPONENT ?? '', binding.INDEX ?? '',
+	])
+}
+
+async function getModKeybindDescriptions(mod, locale) {
+	const filePath = mod?.fileDetail?.fullPath
+	if ( typeof filePath !== 'string' || !filePath ) { return new Map() }
+	let stat
+	try { stat = await fsPromise.stat(filePath) }
+	catch { return new Map() }
+	const cacheKey = `${filePath}|${stat.size}|${stat.mtimeMs}|${locale}`
+	if ( keybindDescriptionCache.has(cacheKey) ) { return keybindDescriptionCache.get(cacheKey) }
+	const descriptions = new Map()
+	const actionIDs = Object.keys(mod.modDesc?.binds ?? {})
+	try {
+		if ( stat.isDirectory() ) { await readModDirectoryKeybindDescriptions(filePath, locale, actionIDs, descriptions) }
+		else if ( path.extname(filePath).toLocaleLowerCase() === '.zip' ) { await readModZipKeybindDescriptions(filePath, locale, actionIDs, descriptions) }
+	} catch (err) {
+		serveIPC.log?.debug?.('keybind-review', `Could not read mod action descriptions from ${path.basename(filePath)}: ${err.message}`)
+	}
+	return cacheModKeybindDescriptions(cacheKey, descriptions)
+}
+
+async function loadGameActionDescriptions(actions, gameVersion) {
+	const entries = await Promise.all([...new Set(actions)].map(async (action) => {
+		const localized = await serveIPC.l10n.getText(`$l10n_input_${action}`, gameVersion, true)
+		const entry = localized?.entry
+		const missing = typeof entry !== 'string' || entry === `input_${action.toLocaleLowerCase()}` || /^~~.*~~$/u.test(entry)
+		return [action, missing ? null : entry]
+	}))
+	return new Map(entries)
+}
+
+function appendKeybindGroup(keyGroups, signature, entry) {
+	if ( !signature || entry.binding === '' ) { return }
+	keyGroups.set(signature, [...(keyGroups.get(signature) ?? []), entry])
+}
+
+function createModKeybindRow(mod, action, declaredBinds, descriptions, profileActions, gameActionDescriptions) {
+	const hasSavedAction = profileActions.has(action)
+	const cachedDescription = mod.l10n?.actions?.[action]
+	const localizedModDescription = descriptions.get(action)
+		?? (typeof cachedDescription === 'string' ? cachedDescription : null)
+		?? cachedDescription?.[serveIPC.l10n.currentLocale]
+		?? cachedDescription?.en
+	const bindings = hasSavedAction ? profileActions.get(action).map((binding, index) => ({
+		label : [binding.MODIFIER, binding.INPUT].filter(Boolean).join(' + '),
+		signature : profileBindingSignature(binding),
+		index,
+		device : binding.DEVICE ?? '',
+	})) : (Array.isArray(declaredBinds) ? declaredBinds : [declaredBinds]).filter(Boolean).map((label) => ({ label : String(label), signature : `default:${String(label).trim().toLocaleLowerCase()}`, index : null, device : 'KB_MOUSE_DEFAULT' }))
+	return {
+		action,
+		description : localizedModDescription ?? gameActionDescriptions.get(action),
+		category : mod.modDesc?.actions?.[action] ?? 'Unknown',
+		bindings,
+		modName : mod.fileDetail?.shortName ?? mod.uuid,
+		source : hasSavedAction ? 'profile' : 'mod-default',
+	}
+}
+
+function addModRowToKeybindReport(action, row, rows, keyGroups) {
+	rows.push(row)
+	for ( const binding of row.bindings ) {
+		appendKeybindGroup(keyGroups, binding.signature, {
+			action,
+			binding : binding.label,
+			category : row.category,
+			collectionMod : true,
+			description : row.description,
+			modName : row.modName,
+			source : row.source,
+		})
+	}
+}
+
+function appendModKeybindRows(mod, descriptions, profileActions, gameActionDescriptions, rows, keyGroups) {
+	for ( const [action, declaredBinds] of Object.entries(mod.modDesc?.binds ?? {}) ) {
+		const row = createModKeybindRow(mod, action, declaredBinds, descriptions, profileActions, gameActionDescriptions)
+		addModRowToKeybindReport(action, row, rows, keyGroups)
+	}
+}
+
+async function buildCollectionModKeybindRows(collectionMods, profileActions, gameActionDescriptions, locale) {
+	const mods = []
+	const keyGroups = new Map()
+	await collectionMods.reduce(async (previous, mod) => {
+		await previous
+		const descriptions = Object.keys(mod.modDesc?.binds ?? {}).length !== 0 ? await getModKeybindDescriptions(mod, locale) : new Map()
+		appendModKeybindRows(mod, descriptions, profileActions, gameActionDescriptions, mods, keyGroups)
+	}, Promise.resolve())
+	return { keyGroups, mods }
+}
+
+function appendOtherProfileKeybinds(profileActions, collectionActionIDs, gameActionDescriptions, keyGroups) {
+	for ( const [action, bindings] of profileActions.entries() ) {
+		if ( collectionActionIDs.has(action) ) { continue }
+		for ( const binding of bindings ) {
+			const label = [binding.MODIFIER, binding.INPUT].filter(Boolean).join(' + ')
+			appendKeybindGroup(keyGroups, profileBindingSignature(binding), {
+				action,
+				binding : label,
+				category : 'Other saved action',
+				collectionMod : false,
+				description : gameActionDescriptions.get(action),
+				modName : 'Game/profile',
+				source : 'profile',
+			})
+		}
+	}
+}
+
+ipcMain.handle('keybind:collectionReport', async (_, collectKey) => {
+	await serveIPC.modCollect.renderBindConflict()
+	const collection = serveIPC.modCollect.getModCollection(collectKey)
+	if ( !collection ) { return { error : 'Collection not found.' } }
+	const gameVersion = Number(serveIPC.modCollect.getSafeNote(collectKey, 'version')) || Number(serveIPC.storeSet.get('game_version'))
+	const settingsPath = funcLib.prefs.verGet('game_settings', gameVersion)
+	const inputPath = settingsPath ? path.join(path.dirname(settingsPath), 'inputBinding.xml') : ''
+	const inputFileFound = Boolean(inputPath && fs.existsSync(inputPath))
+	const profile = inputFileFound ? await new inputBinds(inputPath).getInfo() : null
+	const profileActions = new Map()
+	for ( const actionBinding of profile?.actionbinding ?? [] ) {
+		const actionName = String(actionBinding?.$?.ACTION ?? '')
+		if ( actionName ) { profileActions.set(actionName, (actionBinding.binding ?? []).map((binding) => binding.$ ?? {})) }
+	}
+	const collectionMods = serveIPC.modCollect.getModListFromCollection(collectKey).filter((mod) => !mod.fileDetail?.isDisabled)
+	const collectionActionIDs = collectionMods.flatMap((mod) => Object.keys(mod.modDesc?.binds ?? {}))
+	const gameActionDescriptions = await loadGameActionDescriptions([...collectionActionIDs, ...profileActions.keys()], gameVersion)
+	const { keyGroups, mods } = await buildCollectionModKeybindRows(collectionMods, profileActions, gameActionDescriptions, serveIPC.l10n.currentLocale)
+	appendOtherProfileKeybinds(profileActions, new Set(mods.map((mod) => mod.action)), gameActionDescriptions, keyGroups)
+
+	const overlaps = [...keyGroups.entries()].filter(([, entries]) => entries.length > 1 && entries.some((entry) => entry.collectionMod)).map(([signature, entries]) => {
+		const fingerprint = crypto.createHash('sha256').update(`${gameVersion}|${signature}|${entries.map((item) => `${item.modName}:${item.action}`).sort().join('|')}`).digest('hex').slice(0, 20)
+		return { entries, fingerprint }
+	})
+	const intentional = serveIPC.storeSet.get('keybind_intentional_overlaps', {})
+	return {
+		collectionName : serveIPC.modCollect.mapCollectionToName(collectKey),
+		gameVersion,
+		inputFileFound,
+		profileLoaded : profile !== null,
+		mods,
+		overlaps : overlaps.map((group) => ({ ...group, intentional : intentional?.[collectKey]?.includes(group.fingerprint) ?? false })),
+	}
+})
+
+ipcMain.handle('keybind:setIntentional', (_, { collectKey, fingerprint, intentional }) => {
+	const saved = serveIPC.storeSet.get('keybind_intentional_overlaps', {})
+	const list = new Set(saved?.[collectKey] ?? [])
+	if ( intentional ) { list.add(fingerprint) } else { list.delete(fingerprint) }
+	saved[collectKey] = [...list]
+	serveIPC.storeSet.set('keybind_intentional_overlaps', saved)
+	return true
+})
 
 // MARK: version resolve
 ipcMain.on('dispatch:version', () => { serveIPC.windowLib.createNamedWindow('version') })
@@ -8222,17 +8685,53 @@ async function resolveDirectVaultImport(source) {
 	return { name : `${source.owner}/${source.repo}`, version : release.tag_name ?? '', detail : release.prerelease ? 'Prerelease' : '', assets }
 }
 
-async function downloadDirectVaultImport(asset, target) {
-	const { pipeline } = require('node:stream/promises')
+async function downloadDirectVaultImport(asset, target, onSpeed = () => {}, externalSignal = null) {
 	const { Readable } = require('node:stream')
 	const url = new URL(asset.url)
 	if ( url.protocol !== 'https:' ) { throw new Error('Only HTTPS downloads are allowed.') }
 	const headers = { 'User-Agent' : 'FS-Mod-Assistant' }
 	if ( /^cdn\d+\.giants-software\.com$/iu.test(url.hostname) ) { headers.Referer = 'https://www.farming-simulator.com/' }
-	const signal = AbortSignal.timeout(10 * 60 * 1000)
-	const response = await fetch(url, { headers, signal })
-	if ( !response.ok ) { throw new Error(`Download returned ${response.status}`) }
-	await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(target, { flags : 'wx' }), { signal })
+	const controller = new AbortController()
+	const abortFromCaller = () => { controller.abort(externalSignal.reason ?? new Error('Download batch cancelled by the user.')) }
+	if ( externalSignal?.aborted ) { abortFromCaller() }
+	else { externalSignal?.addEventListener('abort', abortFromCaller, { once : true }) }
+	let idleTimer = null
+	const resetIdleTimeout = () => {
+		clearTimeout(idleTimer)
+		idleTimer = setTimeout(() => { controller.abort(new Error('ModHub download stalled: no data received for 2 minutes.')) }, 2 * 60 * 1000)
+		idleTimer.unref?.()
+	}
+	const totalTimer = setTimeout(() => { controller.abort(new Error('ModHub download exceeded the 60-minute limit.')) }, 60 * 60 * 1000)
+	totalTimer.unref?.()
+	let sampledBytes = 0
+	let sampledAt = performance.now()
+	const meter = new Transform({ transform(chunk, _encoding, callback) {
+		sampledBytes += chunk.length
+		resetIdleTimeout()
+		callback(null, chunk)
+	} })
+	const timer = setInterval(() => {
+		const now = performance.now()
+		onSpeed(sampledBytes * 1000 / Math.max(1, now - sampledAt))
+		sampledBytes = 0
+		sampledAt = now
+	}, 1000)
+	try {
+		resetIdleTimeout()
+		const response = await fetch(url, { headers, signal : controller.signal })
+		if ( !response.ok ) { throw new Error(`Download returned ${response.status}`) }
+		onSpeed(0)
+		await pipeline(Readable.fromWeb(response.body), meter, fs.createWriteStream(target, { flags : 'wx' }), { signal : controller.signal })
+	} catch (err) {
+		if ( controller.signal.aborted && controller.signal.reason instanceof Error ) { throw controller.signal.reason }
+		throw err
+	} finally {
+		clearTimeout(idleTimer)
+		clearTimeout(totalTimer)
+		clearInterval(timer)
+		externalSignal?.removeEventListener('abort', abortFromCaller)
+		onSpeed(null)
+	}
 }
 
 function hashDirectImportFile(filePath) {
@@ -8245,7 +8744,125 @@ function hashDirectImportFile(filePath) {
 	})
 }
 
+function directImportTimeoutSignal() {
+	return AbortSignal.timeout(30000)
+}
+
+async function closeDirectImportResponse(response) {
+	await response.body?.cancel().catch(() => {})
+}
+
+function directImportZIPSizeCache() {
+	const stored = serveIPC.storeModHubDownloads.get('zipSizes', {})
+	return typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
+}
+
+function directImportCachedSize(cache, id, version) {
+	const cached = cache[id]
+	const age = Date.now() - Number(cached?.checkedAt)
+	if ( Number.isSafeInteger(cached?.bytes) && cached.bytes > 0 && cached.version === version && Number.isFinite(age) && age >= 0 && age < 7 * 24 * 60 * 60 * 1000 ) {
+		return { bytes : cached.bytes, source : 'cached' }
+	}
+	return null
+}
+
+function saveDirectImportZIPSize(cache, id, version, bytes) {
+	const updated = { ...cache, [id] : { bytes, checkedAt : Date.now(), version } }
+	const sorted = Object.entries(updated).sort((left, right) => Number(right[1]?.checkedAt ?? 0) - Number(left[1]?.checkedAt ?? 0)).slice(0, 10000)
+	serveIPC.storeModHubDownloads.set('zipSizes', Object.fromEntries(sorted))
+}
+
+function directImportResponseSize(response, ranged) {
+	const contentRange = response.headers.get('content-range')
+	const rangeTotal = /(?:\/|\*\/)(\d+)$/u.exec(contentRange ?? '')
+	const contentLength = Number(response.headers.get('content-length'))
+	if ( ranged && [206, 416].includes(response.status) && Number.isSafeInteger(Number(rangeTotal?.[1])) ) { return Number(rangeTotal[1]) }
+	return Number.isSafeInteger(contentLength) && contentLength > 0 ? contentLength : null
+}
+
+async function checkDirectImportZIPSize(url, headers, ranged) {
+	try {
+		const requestHeaders = ranged ? { ...headers, Range : 'bytes=0-0' } : headers
+		const response = await fetch(url, { headers : requestHeaders, method : ranged ? 'GET' : 'HEAD', signal : directImportTimeoutSignal() })
+		const accepted = response.ok || ranged && [206, 416].includes(response.status)
+		if ( !accepted ) {
+			const failure = `${ranged ? 'Range request' : 'HEAD'} returned HTTP ${response.status}`
+			await closeDirectImportResponse(response)
+			return { failure, size : null }
+		}
+		const size = directImportResponseSize(response, ranged)
+		await closeDirectImportResponse(response)
+		const failure = size === null ? ranged ? 'Range request succeeded but the server omitted Content-Range and file size' : 'HEAD succeeded but omitted the file size' : null
+		return { failure, size }
+	} catch (err) {
+		return { failure : err instanceof Error ? err.message : String(err), size : null }
+	}
+}
+
+async function measureDirectImportZIPSize(id, row = {}) {
+	const modHubID = String(id)
+	const version = String(row.modHubVersion ?? row.version ?? '')
+	const cache = directImportZIPSizeCache()
+	const cached = directImportCachedSize(cache, modHubID, version)
+	if ( cached !== null ) { return cached }
+	const resolved = await resolveDirectVaultImport({ id : modHubID, type : 'modhub' })
+	clearModHubListingUnavailable(modHubID)
+	const asset = resolved.assets?.[0]
+	if ( !asset?.url ) { throw new Error('ModHub did not provide a ZIP download link for this listing.') }
+	const url = new URL(asset.url)
+	if ( url.protocol !== 'https:' ) { throw new Error('ModHub returned a non-HTTPS download link; size check was blocked.') }
+	const headers = { 'User-Agent' : 'FS-Mod-Assistant', Referer : 'https://www.farming-simulator.com/' }
+	const head = await checkDirectImportZIPSize(url, headers, false)
+	if ( head.size !== null ) {
+		saveDirectImportZIPSize(cache, modHubID, version, head.size)
+		return { bytes : head.size, source : 'online' }
+	}
+	const ranged = await checkDirectImportZIPSize(url, headers, true)
+	if ( ranged.size !== null ) {
+		saveDirectImportZIPSize(cache, modHubID, version, ranged.size)
+		return { bytes : ranged.size, source : 'range request' }
+	}
+	throw new Error(`Could not read ZIP size. ${head.failure}; ${ranged.failure}.`)
+}
+
 let directImportRecordSnapshot = null
+let directImportModHubIDSnapshot = null
+const MODHUB_UNAVAILABLE_TTL_MS = 6 * 60 * 60 * 1000
+let directModHubUnavailableCache = null
+
+function modHubUnavailableCache() {
+	if ( directModHubUnavailableCache !== null ) { return directModHubUnavailableCache }
+	const stored = serveIPC.storeModHubDownloads.get('unavailableListings', {})
+	directModHubUnavailableCache = typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {}
+	return directModHubUnavailableCache
+}
+
+function isModHubListingUnavailable(id) {
+	const key = String(id)
+	const cache = modHubUnavailableCache()
+	const entry = cache[key]
+	if ( !Number.isFinite(entry?.checkedAt) ) { return false }
+	const age = Date.now() - entry.checkedAt
+	if ( age >= 0 && age < MODHUB_UNAVAILABLE_TTL_MS ) { return true }
+	if ( Object.hasOwn(cache, key) ) {
+		delete cache[key]
+		serveIPC.storeModHubDownloads.set('unavailableListings', cache)
+	}
+	return false
+}
+
+function recordModHubListingUnavailable(id) {
+	const cache = modHubUnavailableCache()
+	cache[String(id)] = { checkedAt : Date.now() }
+	serveIPC.storeModHubDownloads.set('unavailableListings', cache)
+}
+
+function clearModHubListingUnavailable(id) {
+	const cache = modHubUnavailableCache()
+	if ( !Object.hasOwn(cache, String(id)) ) { return }
+	delete cache[String(id)]
+	serveIPC.storeModHubDownloads.set('unavailableListings', cache)
+}
 
 async function registerDirectVaultImport(filePath, metadata) {
 	const hash = await hashDirectImportFile(filePath)
@@ -8263,13 +8880,24 @@ async function registerDirectVaultImport(filePath, metadata) {
 	}
 	const record = await registerModLibraryFile(filePath, metadata)
 	if ( directImportRecordSnapshot !== null ) { directImportRecordSnapshot[record.hash] = { filePath : record.libraryPath, size : record.size } }
+	if ( directImportModHubIDSnapshot !== null && metadata.modHubID !== null && typeof metadata.modHubID !== 'undefined' ) {
+		directImportModHubIDSnapshot.add(String(metadata.modHubID))
+	}
 	return record
 }
 
 const directVaultImports = new (require('./lib/vaultImportService').VaultImportService)({
-	begin : () => { directImportRecordSnapshot = getRawStoredModLibraryRecords() },
+	begin : () => {
+		directImportRecordSnapshot = getRawStoredModLibraryRecords()
+		directImportModHubIDSnapshot = new Set(Object.values(directImportRecordSnapshot).flatMap((record) => safeModArray(record?.modHubIDs)))
+	},
 	download : downloadDirectVaultImport,
-	end : () => { directImportRecordSnapshot = null },
+	size : measureDirectImportZIPSize,
+	category : async (id) => {
+		const metadata = await fetchModHubMetadata(id)
+		return metadata?.categoryPath ?? []
+	},
+	end : () => { directImportRecordSnapshot = null; directImportModHubIDSnapshot = null },
 	exists : async (hash) => {
 		const record = directImportRecordSnapshot?.[hash]
 		if ( !record || typeof record.filePath !== 'string' ) { return false }
@@ -8280,9 +8908,13 @@ const directVaultImports = new (require('./lib/vaultImportService').VaultImportS
 	},
 	hash : hashDirectImportFile,
 	insideVault : (filePath) => isPathInsideFolder(filePath, modLibraryFolder()) || sameFileSystemPath(filePath, modLibraryFolder()),
+	hasModHubID : (id) => directImportModHubIDSnapshot?.has(String(id)) === true,
 	inspect : inspectDirectVaultImport,
 	register : registerDirectVaultImport,
 	resolve : resolveDirectVaultImport,
+	isModHubUnavailable : isModHubListingUnavailable,
+	recordModHubUnavailable : recordModHubListingUnavailable,
+	clearModHubUnavailable : clearModHubListingUnavailable,
 	root : modLibraryFolder,
 	temp : () => app.getPath('temp'),
 })
@@ -8309,6 +8941,90 @@ ipcMain.handle('vault:importRun', async (event, selected) => {
 	return result
 })
 ipcMain.handle('vault:importCancel', (event) => { directVaultImports.cancel(event.sender.id) })
+ipcMain.handle('modhub-downloader:review', (event, text) => directVaultImports.resolve(
+	event.sender.id,
+	text,
+	(progress) => { if ( !event.sender.isDestroyed() ) { event.sender.send('modhub-downloader:progress', progress) } else { directVaultImports.cancel(event.sender.id) } },
+	{ concurrency : 1, maxLinks : 200, modhubOnly : true, skipExistingModHub : true, sourceLabel : 'ModHub links' }
+))
+const modHubDownloaderScanCancellations = new Set()
+ipcMain.handle('modhub-downloader:scan', async (event, gameVersion = '25') => {
+	const version = String(gameVersion)
+	if ( !['13', '15', '17', '19', '22', '25'].includes(version) ) { throw new Error('Choose a supported Farming Simulator version.') }
+	const owner = event.sender.id
+	modHubDownloaderScanCancellations.delete(owner)
+	let catalogueRefresh = { supported : false, updated : false, offline : false, results : {} }
+	if ( version === '22' || version === '25' ) {
+		if ( !event.sender.isDestroyed() ) { event.sender.send('modhub-downloader:progress', { completed : 0, total : 0, label : 'Refreshing the latest ModHub catalogue feed…' }) }
+		catalogueRefresh = { ...await funcLib.modHub.refresh(), supported : true }
+	}
+	if ( modHubDownloaderScanCancellations.has(owner) ) {
+		modHubDownloaderScanCancellations.delete(owner)
+		return { cancelled : true, rows : [], catalogueRefresh }
+	}
+	const listing = serveIPC.modCollect.modHubList?.mods ?? {}
+	const downloaderTags = getVaultTags()
+	const entries = Object.entries(listing).flatMap(([name, rawID]) => {
+		const match = /^FS(\d{2})_/iu.exec(name)
+		const id = Number(rawID)
+		if ( match === null || match[1] !== version || !Number.isSafeInteger(id) || id <= 0 ) { return [] }
+		const metadata = getCachedModHubMetadata(id)
+		const categoryPath = metadata?.categoryPath?.length > 0 ? metadata.categoryPath : (metadata?.category ?? '').split(/\s+-\s+|\s*>\s*/u).filter(Boolean)
+		return [{ categoryPath, customTags : downloaderTags[vaultNoteKey(name)]?.tags ?? [], game : `FS${version}`, id : String(id), name, version : serveIPC.modCollect.modHubVersionModHubId(id) ?? null }]
+	}).sort((left, right) => left.name.localeCompare(right.name))
+	const cachePath = version === '25' ? funcLib.modHub.path_25 : version === '22' ? funcLib.modHub.path_22 : null
+	let catalogUpdatedAt = null
+	if ( typeof cachePath === 'string' ) {
+		try { catalogUpdatedAt = fs.statSync(cachePath).mtime.toISOString() } catch { catalogUpdatedAt = null }
+	}
+	try {
+		const result = await directVaultImports.scanModHubCatalogue(
+			owner,
+			entries,
+			(progress) => { if ( !event.sender.isDestroyed() ) { event.sender.send('modhub-downloader:progress', progress) } else { directVaultImports.cancel(event.sender.id) } },
+			{ loadMissingTags : true }
+		)
+		return { ...result, catalogUpdatedAt, catalogueRefresh }
+	} finally { modHubDownloaderScanCancellations.delete(owner) }
+})
+ipcMain.handle('modhub-downloader:reports', () => serveIPC.storeModHubDownloads.get('runs', []))
+ipcMain.handle('modhub-downloader:size', (event, ids) => directVaultImports.estimateSelectedSize(event.sender.id, ids, (progress) => {
+	if ( !event.sender.isDestroyed() ) { event.sender.send('modhub-downloader:progress', progress) } else { directVaultImports.cancel(event.sender.id) }
+}))
+ipcMain.handle('modhub-downloader:concurrency', (event, limit) => directVaultImports.setDownloadLimit(event.sender.id, limit))
+ipcMain.handle('modhub-downloader:download', async (event, payload = {}) => {
+	const selected = Array.isArray(payload.selected) ? payload.selected : []
+	attachBackgroundCloseGuard('modhub_downloader', 'modhub-downloader:closeBlocked')
+	const result = await withVaultMutation(() => directVaultImports.run(
+		event.sender.id,
+		selected,
+		(progress) => { if ( !event.sender.isDestroyed() ) { event.sender.send('modhub-downloader:progress', progress) } else { directVaultImports.cancel(event.sender.id) } },
+		{ liveConcurrency : true, concurrency : payload.concurrency ?? 1, skipExistingModHub : true }
+	), true)
+	const selectedIDs = new Set(selected.map((entry) => entry?.id).filter((id) => typeof id === 'string'))
+	const report = {
+		completedAt : new Date().toISOString(),
+		game : typeof payload.gameVersion === 'string' ? `FS${payload.gameVersion}` : null,
+		items : result.rows.filter((row) => selectedIDs.has(row.id)).map((row) => ({
+			detail : row.detail ?? null,
+			fileName : row.assets?.[0]?.name ?? row.name,
+			modHubID : row.modHubID ?? null,
+			modName : row.name,
+			modHubVersion : row.modHubVersion ?? row.version ?? null,
+			zipVersion : row.version ?? null,
+			outcome : row.status === 'Ready' ? 'Not processed' : row.status,
+			url : row.source ?? null,
+		})),
+	}
+	const reports = serveIPC.storeModHubDownloads.get('runs', [])
+	serveIPC.storeModHubDownloads.set('runs', [report, ...reports].slice(0, 100))
+	serveIPC.windowLib.sendToValidWindow('vault', 'vault:refresh')
+	return { ...result, report }
+})
+ipcMain.handle('modhub-downloader:cancel', (event) => {
+	modHubDownloaderScanCancellations.add(event.sender.id)
+	directVaultImports.cancel(event.sender.id)
+})
 
 ipcMain.handle('vault:all', (_, payload = {}) => {
 	if ( payload?.force === true ) { invalidateModLibrarySummary() }
@@ -8505,11 +9221,7 @@ ipcMain.handle('vault:prepareCollectionsForUpdateScan', async (event) => {
 	if ( !serveIPC.isFoldersDirty ) { return { changed : false } }
 	return withVaultMutation(async () => {
 		if ( !serveIPC.isFoldersDirty ) { return { changed : false } }
-		const sendProgress = (progress) => {
-			if ( event.sender.isDestroyed() ) { return }
-			event.sender.send('vault:updateTaskProgress', progress)
-		}
-		sendProgress({
+		sendVaultUpdateTaskProgress(event, {
 			current : 0,
 			message : 'Collection folder changes are pending. Rescanning all tracked collections before checking updates.',
 			modName : 'Refreshing tracked collection folders',
@@ -8518,7 +9230,7 @@ ipcMain.handle('vault:prepareCollectionsForUpdateScan', async (event) => {
 			total : 1,
 		})
 		await processModFoldersAndWait()
-		sendProgress({
+		sendVaultUpdateTaskProgress(event, {
 			current : 1,
 			message : 'Folder scan complete. Adding all tracked collection mods to the Vault before checking update sources.',
 			modName : 'Tracked collection folders refreshed',
@@ -8527,7 +9239,7 @@ ipcMain.handle('vault:prepareCollectionsForUpdateScan', async (event) => {
 			total : 1,
 		})
 		const importResult = await importCollectionsToVault((progress) => {
-			sendProgress({
+			sendVaultUpdateTaskProgress(event, {
 				current : progress.current,
 				message : 'Importing all eligible ZIP mods from tracked collections into the Vault.',
 				modName : `Adding collection mods to the Vault (${progress.label})`,
@@ -8536,7 +9248,7 @@ ipcMain.handle('vault:prepareCollectionsForUpdateScan', async (event) => {
 				total : progress.total,
 			})
 		})
-		sendProgress({
+		sendVaultUpdateTaskProgress(event, {
 			current : importResult.scanned,
 			message : 'Collection refresh complete. Preparing the Vault update scan.',
 			modName : 'Collection mods added to Vault',
@@ -8669,9 +9381,14 @@ ipcMain.handle('vault:openDetail', (_, payload) => {
 	openDetailWindow(detailTarget, 'vault')
 	return { ok : true }
 })
-ipcMain.handle('vault:refreshModHub', (event) => refreshVaultModHubMetadata((progress) => {
-	if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'refreshModHub', ...progress }) }
-}))
+ipcMain.handle('vault:refreshModHub', (event) => {
+	const senderID = event.sender.id
+	vaultModHubRefreshCancellations.delete(senderID)
+	return refreshVaultModHubMetadata((progress) => {
+		if ( !event.sender.isDestroyed() ) { event.sender.send('vault:progress', { operation : 'refreshModHub', ...progress }) }
+	}, () => vaultModHubRefreshCancellations.has(senderID)).finally(() => vaultModHubRefreshCancellations.delete(senderID))
+})
+ipcMain.on('vault:cancelRefreshModHub', (event) => { vaultModHubRefreshCancellations.add(event.sender.id) })
 ipcMain.handle('vault:saveNote', async (_, payload) => {
 	try {
 		return { ok : true, ...saveVaultNote(payload) }
